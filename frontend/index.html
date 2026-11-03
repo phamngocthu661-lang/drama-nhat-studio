@@ -1,0 +1,1443 @@
+<!DOCTYPE html>
+<html class="dark" lang="vi">
+<head>
+  <meta charset="utf-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <meta content="web_dashboard" name="shell-type"/>
+  <title>ZC Team - TOOL NHẬT | Workstation Studio</title>
+  <link href="https://fonts.googleapis.com" rel="preconnect"/>
+  <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;family=Kaisei+Tokumin:wght@500;700;800&amp;display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "tertiary": "#eefff3",
+            "primary-fixed-dim": "#00e478",
+            "on-primary-container": "#007138",
+            "on-primary-fixed": "#00210c",
+            "surface-container": "#151b20",
+            "on-tertiary": "#003825",
+            "outline": "#849585",
+            "on-tertiary-fixed-variant": "#005137",
+            "secondary-fixed": "#6ffbbe",
+            "secondary": "#4edea3",
+            "surface-dim": "#101417",
+            "secondary-fixed-dim": "#4edea3",
+            "surface-container-low": "#11161a",
+            "primary-fixed": "#60ff98",
+            "on-primary": "#003919",
+            "on-secondary-container": "#00311f",
+            "on-primary-fixed-variant": "#005227",
+            "outline-variant": "#2a362c",
+            "surface-bright": "#222a30",
+            "background": "#0b0f12",
+            "on-secondary-fixed-variant": "#005236",
+            "surface": "#0f1418",
+            "on-tertiary-container": "#00704d",
+            "on-surface-variant": "#94a3b8",
+            "surface-tint": "#00e478",
+            "primary-container": "#00ff87",
+            "error-container": "#4a0b10",
+            "inverse-primary": "#006d36",
+            "on-error": "#ffdad6",
+            "on-background": "#e2e8f0",
+            "on-tertiary-fixed": "#002114",
+            "tertiary-fixed": "#85f8c4",
+            "on-secondary": "#003824",
+            "error": "#ffb4ab",
+            "surface-variant": "#1c2329",
+            "on-surface": "#f1f5f9",
+            "on-error-container": "#ffdad6",
+            "inverse-on-surface": "#2d3134",
+            "surface-container-lowest": "#070a0d",
+            "secondary-container": "#00a572",
+            "primary": "#f1ffef",
+            "surface-container-high": "#1c232a",
+            "inverse-surface": "#e0e3e7",
+            "tertiary-container": "#81f4c0",
+            "on-secondary-fixed": "#002113",
+            "tertiary-fixed-dim": "#68dba9",
+            "surface-container-highest": "#252e37"
+          },
+          borderRadius: {
+            "DEFAULT": "0.25rem",
+            "lg": "0.375rem",
+            "xl": "0.5rem",
+            "full": "9999px"
+          },
+          fontFamily: {
+            "body-sm": ["Inter", "sans-serif"],
+            "body-md": ["Inter", "sans-serif"],
+            "body-lg": ["Inter", "sans-serif"],
+            "headline-md": ["Inter", "sans-serif"],
+            "headline-lg": ["Inter", "sans-serif"],
+            "headline-xl": ["Inter", "sans-serif"],
+            "label-sm": ["JetBrains Mono", "monospace"],
+            "label-md": ["JetBrains Mono", "monospace"],
+            "label-lg": ["JetBrains Mono", "monospace"]
+          },
+          fontSize: {
+            "label-sm": ["10px", { lineHeight: "14px" }],
+            "label-md": ["11px", { lineHeight: "16px" }],
+            "label-lg": ["12px", { lineHeight: "18px" }],
+            "body-sm": ["11px", { lineHeight: "16px" }],
+            "body-md": ["12.5px", { lineHeight: "18px" }],
+            "body-lg": ["14px", { lineHeight: "20px" }],
+            "headline-md": ["15px", { lineHeight: "22px" }],
+            "headline-lg": ["17px", { lineHeight: "24px" }],
+            "headline-xl": ["20px", { lineHeight: "28px" }]
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="stylesheet" href="style.css?v=20261103_v6"/>
+</head>
+<body class="bg-surface-container-lowest text-on-surface font-body-md text-[13px] antialiased min-h-screen flex flex-col select-none">
+
+  <!-- ======================================================== -->
+  <!-- TOP FIXED HEADER: BRANDING, STATUS & CHROME CDP TOOLBAR   -->
+  <!-- ======================================================== -->
+  <header class="sticky top-0 z-40 w-full flex flex-col bg-surface border-b border-surface-container-highest shadow-xl backdrop-blur-md">
+    <!-- Row 1: Studio Header & System Telemetry -->
+    <div class="studio-header h-12 w-full px-4 flex items-center justify-between bg-surface-container-lowest border-b border-surface-container/60">
+      <div class="flex items-center gap-3">
+        <img alt="Logo ZC Team TOOL NHẬT" class="h-7 w-auto object-contain drop-shadow" src="https://lh3.googleusercontent.com/aida/AEtjO1VQQj8BauemNHI4D4MAXzuoMFZYQXIzSWWbAAv_W4p0-_7EjqogPaFBwP1l-4949Ct40rj66wU_cKhjvh6BfRlHrIVkSZiH6qBgOEBpI47nE4MewdnxIF--KbC0sNL4ntOehU0as-rvbPOHW9Lg3E7i7Pvl4kG6HELyNtmB6MgW1BsgGYlNqWm4KjVRoxoNJlvasiu2rB4zR98CDnkAIZTub6NaJ2ZI052DTAGA5I1w-Q"/>
+        <div class="flex flex-col">
+          <div class="flex items-center gap-2">
+            <span class="font-label-lg text-sm tracking-wider font-bold text-primary">ZC TEAM - TOOL NHẬT</span>
+            <span class="px-1.5 py-0.2 rounded bg-primary-container/15 text-primary-container text-[10px] font-mono font-bold tracking-widest border border-primary-container/30" id="app-version-badge">V1.0.0</span>
+          </div>
+          <span class="font-label-sm text-[10px] tracking-widest text-secondary font-medium">AUTOMATION &amp; DRAMA PRODUCTION WORKSTATION</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <!-- Nút hiện lên khi có bản cập nhật mới trên GitHub -->
+        <button class="hidden items-center gap-1.5 px-2.5 py-1 rounded bg-primary-container text-on-primary-fixed font-label-md text-xs font-bold shadow-[0_0_14px_rgba(0,255,135,0.45)] hover:brightness-110 transition-all animate-pulse" id="btn-apply-update-header" title="Đã có bản cập nhật mới trên GitHub — Bấm để tự động tải và nâng cấp" type="button">
+          <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
+          <span id="btn-apply-update-header-text">🚀 Cập nhật mới</span>
+        </button>
+        <!-- Nút kiểm tra cập nhật thủ công -->
+        <button class="flex items-center gap-1 px-2 py-1 rounded bg-surface-container border border-surface-container-high hover:border-primary-container/50 text-on-surface-variant hover:text-primary transition-all" id="btn-check-update-header" title="Kiểm tra bản cập nhật mới trên GitHub" type="button">
+          <span class="material-symbols-outlined text-[14px] text-secondary" id="icon-check-update-header">sync</span>
+          <span class="font-label-sm text-[10.5px] font-mono" id="text-check-update-header">Cập nhật: V1.0.0</span>
+        </button>
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low border border-surface-container-high" id="gpu-badge">
+          <span class="inline-block w-2 h-2 rounded-full bg-primary-container shadow-[0_0_8px_rgba(0,255,135,0.7)] animate-pulse"></span>
+          <span class="font-label-sm text-[10px] text-on-surface-variant font-mono">GPU:</span>
+          <span class="font-label-md text-xs text-primary font-bold font-mono" id="gpu-name">NVIDIA RTX NVENC</span>
+        </div>
+        <button class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container border border-surface-container-high hover:border-secondary transition-all" id="btn-open-license-modal" type="button">
+          <span class="material-symbols-outlined text-[14px] text-secondary">verified_user</span>
+          <span class="font-label-md text-xs text-on-surface font-medium" id="license-badge-text">Bản quyền: Đang kiểm tra...</span>
+        </button>
+        <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low border border-primary-container/20" id="system-status">
+          <span class="font-label-sm text-[11px] text-primary-container font-semibold tracking-wide flex items-center gap-1">
+            <span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span> Sẵn sàng sản xuất
+          </span>
+        </div>
+        <button class="w-7 h-7 rounded bg-surface-container-high border border-outline-variant flex items-center justify-center text-primary ml-1 shadow-inner hover:border-primary-container transition-colors" id="btn-header-terminal" title="Mở Chẩn Đoán GPU &amp; Terminal Logs" type="button">
+          <span class="material-symbols-outlined text-[16px]">terminal</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Thanh Thông Báo Cập Nhật Tự Động OTA Khi Có Bản Mới Trên GitHub (Khách có thể chọn Cập Nhật Ngay hoặc Để Sau) -->
+    <div class="hidden w-full px-4 py-2 bg-gradient-to-r from-[#062919] via-[#0a3622] to-[#062919] border-b border-primary-container/50 flex items-center justify-between gap-3 shadow-lg" id="ota-update-banner">
+      <div class="flex items-center gap-2.5 min-w-0 flex-1">
+        <span class="px-2 py-0.5 rounded bg-primary-container text-on-primary-fixed font-mono font-bold text-[11px] shrink-0" id="ota-banner-ver-tag">NEW V1.0.1</span>
+        <span class="text-xs text-primary font-semibold truncate" id="ota-banner-msg">🎉 Đã có bản cập nhật mới trên GitHub! Bấm "Cập Nhật Ngay" để tự động tải về và nâng cấp.</span>
+      </div>
+      <div class="flex items-center gap-2 shrink-0">
+        <button class="px-3 py-1 rounded bg-primary-container text-on-primary-fixed hover:brightness-110 font-bold text-xs flex items-center gap-1 shadow-[0_0_12px_rgba(0,255,135,0.4)] transition-all" id="btn-ota-banner-apply" type="button">
+          <span class="material-symbols-outlined text-[15px]">download</span>
+          <span id="btn-ota-banner-apply-text">🚀 Cập Nhật Ngay</span>
+        </button>
+        <button class="px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-on-surface-variant hover:text-on-surface border border-outline-variant/40 text-xs font-medium transition-all" id="btn-ota-banner-dismiss" type="button">
+          Để sau
+        </button>
+      </div>
+    </div>
+
+    <!-- Row 2: Chrome CDP AI Accounts Toolbar -->
+    <div class="chatgpt-control-bar h-10 w-full px-4 flex items-center justify-between bg-surface-container-low/95 text-xs overflow-x-auto border-b border-surface-container">
+      <div class="flex items-center gap-4">
+        <!-- ChatGPT CDP Selector (Port 9222 - 9224) -->
+        <div class="flex items-center gap-1.5">
+          <span class="font-label-sm text-[11px] text-on-surface-variant uppercase tracking-wider font-semibold">ChatGPT CDP:</span>
+          <button class="chatgpt-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high border border-primary-container/40 text-primary-container font-label-sm text-[11px] font-bold" data-acc="acc_1" id="btn-chatgpt-acc-1" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.7)]"></span>
+            <span class="acc-text">ACC 1 (9222)</span>
+          </button>
+          <button class="chatgpt-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[11px]" data-acc="acc_2" id="btn-chatgpt-acc-2" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-outline-variant"></span>
+            <span class="acc-text">ACC 2 (9223)</span>
+          </button>
+          <button class="chatgpt-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[11px]" data-acc="acc_3" id="btn-chatgpt-acc-3" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-outline-variant"></span>
+            <span class="acc-text">ACC 3 (9224)</span>
+          </button>
+        </div>
+        <div class="w-px h-4 bg-surface-container-highest"></div>
+        <!-- Gemini 3.8 High Selector (Port 9225 - 9227) -->
+        <div class="flex items-center gap-1.5">
+          <span class="font-label-sm text-[11px] text-on-surface-variant uppercase tracking-wider font-semibold">Gemini 3.8 High:</span>
+          <button class="gemini-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high border border-secondary/40 text-secondary font-label-sm text-[11px] font-bold" data-acc="acc_1" id="btn-gemini-acc-1" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-secondary shadow-[0_0_6px_rgba(78,222,163,0.7)]"></span>
+            <span class="acc-text">GEM 1 (9225)</span>
+          </button>
+          <button class="gemini-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[11px]" data-acc="acc_2" id="btn-gemini-acc-2" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-outline-variant"></span>
+            <span class="acc-text">GEM 2 (9226)</span>
+          </button>
+          <button class="gemini-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[11px]" data-acc="acc_3" id="btn-gemini-acc-3" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-outline-variant"></span>
+            <span class="acc-text">GEM 3 (9227)</span>
+          </button>
+        </div>
+      </div>
+      <!-- Quick CDP Actions -->
+      <div class="flex items-center gap-1.5">
+        <button class="flex items-center gap-1 px-2.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-[11px] border border-outline-variant/30 transition-colors" id="btn-chatgpt-toggle-vis" type="button">
+          <span class="material-symbols-outlined text-[15px] text-secondary">visibility</span>
+          <span>Hiện/Ẩn Chrome</span>
+        </button>
+        <button class="flex items-center gap-1 px-2.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-[11px] border border-outline-variant/30 transition-colors" id="btn-chatgpt-sweep-tabs" type="button">
+          <span class="material-symbols-outlined text-[15px] text-secondary">cleaning_services</span>
+          <span>Dọn Tab</span>
+        </button>
+        <button class="flex items-center gap-1 px-2.5 py-1 rounded bg-surface-container hover:bg-surface-container-high text-primary-container font-label-sm text-[11px] border border-primary-container/30 transition-colors" id="btn-open-step2-tpl-modal" type="button">
+          <span class="material-symbols-outlined text-[15px] text-primary-container">settings</span>
+          <span>Mẫu Lệnh Step 2</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Row 3: PRIMARY MULTI-TAB NAVIGATION BAR -->
+    <nav class="h-11 w-full px-4 flex items-center justify-between bg-surface-container-lowest border-b border-surface-container-high" id="studio-tab-nav">
+      <div class="flex items-center gap-1.5" id="studio-tab-buttons-container">
+        <button class="main-tab-btn flex items-center gap-2 px-4 py-2 rounded-t font-label-md text-xs font-bold transition-all border-b-2 border-primary-container bg-surface-container text-primary-container shadow-sm" data-tab-target="tab-adas" data-target="tab-adas" type="button">
+          <span class="material-symbols-outlined text-[18px]">bolt</span>
+          <span>TRẠM AI ADAS (TỰ ĐỘNG STEP 2-6)</span>
+          <span class="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-primary-container/20 text-primary-container font-mono">HOT</span>
+        </button>
+        <button class="main-tab-btn flex items-center gap-2 px-4 py-2 rounded-t font-label-md text-xs font-semibold transition-all border-b-2 border-transparent text-on-surface-variant hover:text-on-surface hover:bg-surface-container/50" data-tab-target="tab-render" data-target="tab-render" type="button">
+          <span class="material-symbols-outlined text-[18px]">movie_creation</span>
+          <span>BÀN DỰNG VIDEO CHÍNH (PREVIEW 5 LỚP)</span>
+        </button>
+        <button class="main-tab-btn flex items-center gap-2 px-4 py-2 rounded-t font-label-md text-xs font-semibold transition-all border-b-2 border-transparent text-on-surface-variant hover:text-on-surface hover:bg-surface-container/50" data-tab-target="tab-voice-stock" data-target="tab-voice-stock" type="button">
+          <span class="material-symbols-outlined text-[18px]">graphic_eq</span>
+          <span>PHÒNG THU VOICE GPU &amp; KHO STOCK</span>
+        </button>
+        <button class="main-tab-btn flex items-center gap-2 px-4 py-2 rounded-t font-label-md text-xs font-semibold transition-all border-b-2 border-transparent text-on-surface-variant hover:text-on-surface hover:bg-surface-container/50" data-tab-target="tab-diagnostics" data-target="tab-diagnostics" type="button">
+          <span class="material-symbols-outlined text-[18px]">terminal</span>
+          <span>CHẨN ĐOÁN GPU &amp; TERMINAL LOGS</span>
+        </button>
+      </div>
+      <div class="hidden lg:flex items-center gap-3 font-mono text-[11px] text-on-surface-variant">
+        <span class="flex items-center gap-1">ENGINE: <strong class="text-primary-container">FFMPEG 6.1 NVENC</strong></span>
+        <span>•</span>
+        <span class="flex items-center gap-1">THREADS: <strong class="text-secondary" id="header-cpu-threads">12 CORES</strong></span>
+      </div>
+    </nav>
+  </header>
+
+  <!-- ======================================================== -->
+  <!-- MAIN WORKSPACE CONTENT CONTAINER (TABBED PANELS)         -->
+  <!-- ======================================================== -->
+  <main class="flex-1 w-full p-4 overflow-y-auto bg-surface-container-lowest flex flex-col gap-4">
+
+    <!-- CYBER DECK SUB-NAVIGATION BAR (Synced Across All 4 Screens) -->
+    <div class="flex items-center justify-between p-2 rounded bg-surface-container shadow-md border border-surface-container-high">
+      <div class="flex flex-wrap items-center gap-1.5" role="tablist">
+        <button class="quick-tab-jump flex items-center gap-2 px-3.5 py-1.5 rounded bg-primary-container text-on-primary-container font-label-md text-label-md font-bold shadow-[0_0_14px_rgba(0,255,135,0.35)] transition-all" data-jump="tab-adas" data-tab-target="tab-adas" data-target="tab-adas" type="button">
+          <span class="material-symbols-outlined text-[16px]">bolt</span>
+          <span>[1] ADAS AI (TỰ ĐỘNG)</span>
+          <span class="sub-dot w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
+        </button>
+        <button class="quick-tab-jump flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all font-label-md text-label-md" data-jump="tab-render" data-tab-target="tab-render" data-target="tab-render" type="button">
+          <span class="material-symbols-outlined text-[16px]">movie_creation</span>
+          <span>[2] DỰNG VIDEO 5 LỚP</span>
+          <span class="sub-dot hidden w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
+        </button>
+        <button class="quick-tab-jump flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all font-label-md text-label-md" data-jump="tab-voice-stock" data-tab-target="tab-voice-stock" data-target="tab-voice-stock" type="button">
+          <span class="material-symbols-outlined text-[16px]">graphic_eq</span>
+          <span>[3] VOICE &amp; KHO STOCK</span>
+          <span class="sub-dot hidden w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
+        </button>
+        <button class="quick-tab-jump flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all font-label-md text-label-md" data-jump="tab-diagnostics" data-tab-target="tab-diagnostics" data-target="tab-diagnostics" type="button">
+          <span class="material-symbols-outlined text-[16px]">terminal</span>
+          <span>[4] CHẨN ĐOÁN GPU &amp; LOGS</span>
+          <span class="sub-dot hidden w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
+        </button>
+      </div>
+      <!-- Active Node Telemetry Capsule -->
+      <div class="hidden xl:flex items-center gap-2 px-2.5 py-1 rounded bg-surface-container-lowest font-label-sm text-label-sm text-outline">
+        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-primary-container"></span> CUDA NODE: 0x86</span>
+        <span class="text-surface-variant">|</span>
+        <span class="text-primary-container font-mono" id="subnav-audio-badge">DIRECTML_ACCEL // 48kHz 24-BIT</span>
+        <span class="text-surface-variant">|</span>
+        <span class="text-secondary-fixed font-mono" id="subnav-vram-badge">NVENC DUAL ENGINE ACTIVE</span>
+      </div>
+    </div>
+
+    <!-- ====================================================== -->
+    <!-- TAB 1: TRẠM AI TỰ ĐỘNG ADAS STEP 2 - 6 (SCREEN 1)     -->
+    <!-- ====================================================== -->
+    <div class="tab-pane flex flex-col gap-4" id="tab-adas">
+      <section class="w-full bg-surface-container rounded-xl shadow-xl p-4 flex flex-col gap-4 border border-surface-container-highest relative overflow-hidden" id="adas-studio-card">
+        <!-- Ambient photonic glow -->
+        <div class="absolute -top-32 -right-32 w-80 h-80 bg-primary-container/10 rounded-full blur-3xl pointer-events-none"></div>
+        <div class="absolute -bottom-32 -left-32 w-80 h-80 bg-secondary/10 rounded-full blur-3xl pointer-events-none"></div>
+        <!-- Header -->
+        <div class="flex flex-wrap items-center justify-between gap-3 bg-surface-container-low p-3 rounded-lg border border-surface-container-high">
+          <div class="flex items-center gap-3">
+            <div class="w-9 h-9 rounded-lg bg-surface-container-highest flex items-center justify-center text-primary-container shadow-inner border border-primary-container/30">
+              <span class="material-symbols-outlined text-[22px]">precision_manufacturing</span>
+            </div>
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="font-headline-md text-base text-primary font-bold tracking-tight">TRẠM AI TỰ ĐỘNG ADAS — STEP 2 ĐẾN STEP 6</span>
+                <span class="px-2 py-0.5 rounded text-[10px] font-label-sm uppercase bg-primary-container/20 text-primary-container font-bold tracking-wider border border-primary-container/30">PIPELINE V5.4</span>
+              </div>
+              <p class="font-body-sm text-xs text-on-surface-variant">Tự động hoá phân tích cốt truyện, sinh kịch bản Part A/B/C siêu dài, SEO tags, thumbnail DALL-E &amp; render</p>
+            </div>
+          </div>
+          <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded bg-surface-container font-label-sm text-[11px] text-secondary font-semibold border border-secondary/20" id="adas-cdp-linked-badge">
+            <span class="w-2 h-2 rounded-full bg-primary-container animate-ping"></span>
+            CDP CHROME LINKED (3/3)
+          </span>
+        </div>
+
+        <!-- 2 Columns Grid -->
+        <div class="grid grid-cols-1 xl:grid-cols-12 gap-4">
+          <!-- Left: Input & Configs (5 Cols) -->
+          <div class="xl:col-span-5 flex flex-col gap-3 bg-surface-container-lowest p-3.5 rounded-lg border border-surface-container-high">
+            <div class="flex items-center justify-between">
+              <div class="flex items-center gap-1.5">
+                <span class="material-symbols-outlined text-secondary text-[18px]">edit_note</span>
+                <span class="font-label-lg text-xs text-primary font-bold uppercase tracking-wider">ĐẦU VÀO KỊCH BẢN THÔ</span>
+              </div>
+              <div class="flex items-center gap-1.5">
+                <span class="px-2 py-0.5 rounded bg-surface-container text-primary-container font-label-sm text-[11px] font-bold border border-primary-container/20" id="adas-detected-count-badge">Đã nhận diện: 0 kịch bản</span>
+                <button class="flex items-center gap-1 px-2 py-0.5 rounded bg-surface-container-high hover:bg-surface-bright text-secondary text-[11px] font-label-md transition-all border border-secondary/30" id="btn-adas-fill-sample" type="button">
+                  <span class="material-symbols-outlined text-[13px]">auto_fix_high</span> Dán Mẫu Thử
+                </button>
+              </div>
+            </div>
+            <div class="relative">
+              <textarea class="w-full bg-surface-container-low rounded p-3 font-label-md text-xs text-on-surface placeholder:text-outline-variant focus:outline-none focus:ring-1 focus:ring-primary-container border border-surface-container-high resize-y" id="adas-raw-input" placeholder="Dán danh sách tiêu đề / cốt truyện kịch bản thô vào đây (mỗi kịch bản cách nhau bởi dấu '===' hoặc đánh số 1, 2, 3...)" rows="6"></textarea>
+            </div>
+            <!-- Param Matrix -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-2 bg-surface-container-low p-2.5 rounded border border-surface-container">
+              <div class="flex flex-col gap-1">
+                <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-custom-id">Mã Tiền Tố Dự Án</label>
+                <input class="h-8 px-2.5 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-custom-id" placeholder="Tự động nếu để trống" type="text" value=""/>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-ai-provider-select">Công Nghệ AI Provider</label>
+                <select class="h-8 px-2 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-ai-provider-select">
+                  <option value="chatgpt_web" selected>ChatGPT Web CDP (Deep Research • Port 9222–9224)</option>
+                  <option value="gemini_4_pro">Gemini 3.8 High (Flash Cao • Port 9225–9227)</option>
+                  <option value="hybrid_gemini_chatgpt">Hybrid: Gemini 3.8 High KB + ChatGPT Thumb</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-output-mode-select">Chế Độ Chạy (3 Chế Độ)</label>
+                <select class="h-8 px-2 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-output-mode-select">
+                  <option value="script_seo_thumb_only">1. Chỉ Viết Kịch Bản + Thumbnail + SEO (Không Render)</option>
+                  <option value="full_video" selected>2. Viết Kịch Bản + Thumbnail + SEO & Render Luôn (Song Song)</option>
+                  <option value="render_ready_only">3. Chỉ Render Các Kịch Bản Đã Xong (Không Mở AI)</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-acc-select">Luồng Trình Duyệt / Nick</label>
+                <select class="h-8 px-2 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-acc-select">
+                  <option value="" selected>Xoay vòng cả 3 Nick đa luồng</option>
+                  <option value="acc_1">Luồng CDP: Nick 1 (Port 9222)</option>
+                  <option value="acc_2">Luồng CDP: Nick 2 (Port 9223)</option>
+                  <option value="acc_3">Luồng CDP: Nick 3 (Port 9224)</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-voice-select">Giọng Đọc AI Drama</label>
+                <select class="h-8 px-2 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-voice-select">
+                  <option value="drama" selected>Drama — Nam Trầm Kịch Tính (0.97x)</option>
+                  <option value="narrator_warm">Narrator Warm — Nam Ấm Áp</option>
+                  <option value="female_emotional">Female Emotional — Nữ Cảm Xúc</option>
+                  <option value="elder_male">Elder Male — Ông Lão Trầm Mặc</option>
+                </select>
+              </div>
+              <div class="flex flex-col gap-1">
+                <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-length-mode">Độ Dài Nội Dung</label>
+                <select class="h-8 px-2 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-length-mode">
+                  <option value="13334" selected>Siêu Dài: 40k-50k ký tự (Part A/B/C)</option>
+                  <option value="10000">Tiêu Chuẩn: 30k-40k ký tự (Part A/B/C)</option>
+                  <option value="6667">Bản Vừa: 20k-30k ký tự (Part A/B/C)</option>
+                  <option value="5000">Bản Nhanh: 15.000 ký tự (Part A/B)</option>
+                </select>
+              </div>
+            </div>
+            <!-- Action buttons -->
+            <div class="grid grid-cols-2 gap-2 pt-1">
+              <button class="flex items-center justify-center gap-1.5 h-9 px-2 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-md text-xs font-semibold border border-surface-container-high transition-all" id="btn-adas-save-idea" type="button">
+                <span class="material-symbols-outlined text-[15px] text-secondary">bookmark_add</span>
+                Lưu Kho Dự Án
+              </button>
+              <button class="flex items-center justify-center gap-1.5 h-9 px-2 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-md text-xs font-semibold border border-surface-container-high transition-all" id="btn-adas-preview-step2" type="button">
+                <span class="material-symbols-outlined text-[15px] text-secondary">visibility</span>
+                Xem Trước Lệnh
+              </button>
+              <button class="flex items-center justify-center gap-1.5 h-9 px-2 rounded bg-surface-container-high hover:bg-surface-bright text-primary font-label-md text-xs font-semibold border border-tertiary-fixed/30 transition-all" id="btn-adas-save-and-script-only" type="button">
+                <span class="material-symbols-outlined text-[15px] text-tertiary-fixed">draw</span>
+                Chỉ Viết KB + SEO + Thumb
+              </button>
+              <button class="flex items-center justify-center gap-1.5 h-9 px-2 rounded bg-primary-container text-on-primary-container font-label-md text-xs font-bold transition-all shadow-[0_0_12px_rgba(0,255,135,0.4)] hover:brightness-105 active:scale-98" id="btn-adas-save-and-run" type="button">
+                <span class="material-symbols-outlined text-[16px]">play_circle</span>
+                Chạy Tự Động A ➔ Z
+              </button>
+            </div>
+          </div>
+
+          <!-- Right: Progress & Project Vault (7 Cols) -->
+          <div class="xl:col-span-7 flex flex-col gap-3">
+            <!-- Agent Live Progress Track -->
+            <div class="bg-surface-container-lowest p-3 rounded-lg border border-surface-container-high flex flex-col gap-2 relative overflow-hidden" id="adas-live-status-box">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-full bg-primary-container animate-pulse shadow-[0_0_8px_#00ff87]"></span>
+                  <span class="font-label-lg text-xs font-bold text-primary" id="adas-current-step-text">Đang sẵn sàng phân tích luồng...</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <span class="font-label-lg text-xs font-bold text-primary-container font-mono" id="adas-progress-pct">0%</span>
+                  <button class="flex items-center gap-1 px-2.5 py-0.5 rounded bg-error-container text-on-error font-label-sm text-[11px] font-bold hover:brightness-110 border border-error/40 transition-all" id="btn-adas-stop" type="button">
+                    <span class="material-symbols-outlined text-[13px]">cancel</span> DỪNG KHẨN CẤP
+                  </button>
+                </div>
+              </div>
+              <div class="w-full h-2 rounded bg-surface-container-low overflow-hidden border border-surface-container">
+                <div class="h-full bg-gradient-to-r from-secondary to-primary-container transition-all duration-300 shadow-[0_0_8px_rgba(0,255,135,0.8)]" id="adas-progress-bar" style="width: 0%;"></div>
+              </div>
+              <div class="flex items-center justify-between font-label-sm text-[11px] text-on-surface-variant">
+                <span class="truncate max-w-[80%]" id="adas-status-msg">Hệ thống ở trạng thái chờ lệnh phân tích tự động.</span>
+                <span class="text-secondary font-mono" id="adas-thread-status">THREAD: IDLE</span>
+              </div>
+            </div>
+
+            <!-- Vault Toolbar -->
+            <div class="flex flex-col gap-2 bg-surface-container-low p-2.5 rounded-lg border border-surface-container-high">
+              <div class="flex flex-wrap items-center justify-between gap-2 px-1">
+                <div class="flex items-center gap-1.5">
+                  <span class="material-symbols-outlined text-secondary text-[18px]">folder_special</span>
+                  <span class="font-label-lg text-xs text-primary font-bold uppercase tracking-wider">KHO DỰ ÁN ADAS</span>
+                  <span class="px-1.5 py-0.5 rounded bg-surface-container text-primary-container font-label-sm text-[10px] font-bold border border-primary-container/20" id="adas-ideas-count">0</span>
+                  <button class="flex items-center gap-1 px-2 py-0.5 rounded bg-primary-container/20 hover:bg-primary-container/35 text-primary-container font-label-sm text-[10.5px] font-bold border border-primary-container/40 transition-all active:scale-95" id="btn-adas-refresh-folder" title="Quét & tải lại thư mục projects/ ngay lập tức (nhận folder mới hoặc làm sạch các folder đã xóa)" type="button">
+                    <span class="material-symbols-outlined text-[13px]">refresh</span> Cập Nhật Folder
+                  </button>
+                </div>
+                <!-- Bộ lọc tiêu đề: Tất cả / Chưa xong / Đã xong KB / Chưa Render / Đã Render -->
+                <div class="flex flex-wrap items-center gap-1 bg-surface-container-lowest p-0.5 rounded border border-surface-container-high" id="adas-filter-group">
+                  <button class="adas-filter-btn px-2 py-0.5 rounded text-[10.5px] font-mono font-bold bg-primary-container text-on-primary-container transition-all" data-adas-filter="all" id="btn-adas-filter-all" type="button">
+                    Tất cả (0)
+                  </button>
+                  <button class="adas-filter-btn px-2 py-0.5 rounded text-[10.5px] font-mono font-semibold text-tertiary hover:bg-surface-container-high transition-all" data-adas-filter="pending" id="btn-adas-filter-pending" title="Các tiêu đề chưa viết xong kịch bản" type="button">
+                    ⏳ Chưa xong (0)
+                  </button>
+                  <button class="adas-filter-btn px-2 py-0.5 rounded text-[10.5px] font-mono font-semibold text-secondary hover:bg-surface-container-high transition-all" data-adas-filter="done" id="btn-adas-filter-done" title="Tất cả kịch bản đã viết xong" type="button">
+                    ✅ Đã xong KB (0)
+                  </button>
+                  <button class="adas-filter-btn px-2 py-0.5 rounded text-[10.5px] font-mono font-semibold text-amber-400 hover:bg-surface-container-high transition-all" data-adas-filter="unrendered" id="btn-adas-filter-unrendered" title="Những kịch bản đã viết xong nhưng chưa Render Video MP4" type="button">
+                    📦 Chưa Render (0)
+                  </button>
+                  <button class="adas-filter-btn px-2 py-0.5 rounded text-[10.5px] font-mono font-semibold text-primary-container hover:bg-surface-container-high transition-all" data-adas-filter="rendered" id="btn-adas-filter-rendered" title="Những kịch bản đã Render xong Video MP4" type="button">
+                    🎬 Đã Render (0)
+                  </button>
+                </div>
+              </div>
+              <!-- 8 Quick Action Buttons -->
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-[11px] border border-surface-container-high transition-colors" id="btn-adas-open-projects-dir" type="button">
+                  <span class="material-symbols-outlined text-[13px] text-secondary">folder_open</span> Mở Folder
+                </button>
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-[11px] border border-surface-container-high transition-colors" id="btn-adas-import-external" type="button">
+                  <span class="material-symbols-outlined text-[13px] text-secondary">cloud_download</span> Nhập Ngoài
+                </button>
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-primary-container font-label-sm text-[11px] font-semibold border border-primary-container/30 transition-colors" id="btn-adas-restore-scripts" title="Tải lại thư mục projects/ khi có thay đổi" type="button">
+                  <span class="material-symbols-outlined text-[13px] text-primary-container">sync</span> Cập Nhật Folder
+                </button>
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-[11px] border border-surface-container-high transition-colors" id="btn-adas-retry-errors" type="button">
+                  <span class="material-symbols-outlined text-[13px] text-error">replay</span> Viết Lỗi/Thiếu
+                </button>
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-error font-label-sm text-[11px] border border-error/20 transition-colors" id="btn-adas-delete-all" type="button">
+                  <span class="material-symbols-outlined text-[13px]">delete_sweep</span> Xóa Hết
+                </button>
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-primary font-label-sm text-[11px] border border-surface-container-high transition-colors" id="btn-adas-script-only-all" type="button">
+                  <span class="material-symbols-outlined text-[13px] text-tertiary-fixed">description</span> Viết KB Loạt
+                </button>
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-primary-container font-label-sm text-[11px] border border-primary-container/20 transition-colors" id="btn-adas-render-ready" type="button">
+                  <span class="material-symbols-outlined text-[13px] text-primary-container">movie_edit</span> Render Sẵn Sàng
+                </button>
+                <button class="flex items-center justify-center gap-1 h-7 rounded bg-primary-container text-on-primary-container font-label-sm text-[11px] font-bold shadow-[0_0_8px_rgba(0,255,135,0.3)] hover:brightness-105 transition-all" id="btn-adas-run-all" type="button">
+                  <span class="material-symbols-outlined text-[13px]">rocket_launch</span> Đa Luồng 3 Nick
+                </button>
+              </div>
+            </div>
+
+            <!-- Compact Project List -->
+            <div class="flex flex-col gap-1 max-h-[310px] overflow-y-auto pr-1" id="adas-ideas-list">
+              <!-- Populated dynamically by app.js -->
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ====================================================== -->
+    <!-- TAB 2: BÀN DỰNG VIDEO CHÍNH (SCREEN 3 FULL DESIGN)     -->
+    <!-- ====================================================== -->
+    <div class="tab-pane hidden flex flex-col gap-4 w-full" id="tab-render">
+      <!-- SUB-BANNER / RUNTIME METRICS TELEMETRY -->
+      <div class="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 rounded-lg bg-surface-container shadow-md border border-surface-container-high">
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-lowest text-primary-container font-label-md">
+            <span class="w-2 h-2 rounded-full bg-primary-container animate-pulse shadow-[0_0_8px_rgba(0,255,135,0.7)]"></span>
+            <span>PIPELINE: ACTIVE</span>
+          </div>
+          <div class="h-3.5 w-px bg-surface-container-highest"></div>
+          <span class="font-label-md text-on-surface-variant flex items-center gap-1">
+            CODEC: <strong class="text-primary font-mono">H.264_NVENC (CUDA 12.4)</strong>
+          </span>
+          <div class="h-3.5 w-px bg-surface-container-highest"></div>
+          <span class="font-label-md text-on-surface-variant flex items-center gap-1">
+            CANVAS: <strong class="text-secondary font-mono" id="spec-res">1920x1080 Full HD</strong>
+          </span>
+          <div class="h-3.5 w-px bg-surface-container-highest"></div>
+          <span class="font-label-md text-on-surface-variant flex items-center gap-1">
+            FRAMERATE: <strong class="text-primary-fixed-dim font-mono" id="spec-fps">24 FPS Cinema</strong>
+          </span>
+        </div>
+        <div class="flex items-center gap-4">
+          <!-- VRAM Usage Mini Indicator -->
+          <div class="flex items-center gap-2 font-label-sm text-on-surface-variant">
+            <span>VRAM ALLOCATED:</span>
+            <div class="w-24 h-1.5 bg-surface-container-lowest rounded overflow-hidden">
+              <div class="w-5/12 h-full bg-gradient-to-r from-secondary-container to-primary-container rounded transition-all" id="render-vram-bar"></div>
+            </div>
+            <span class="text-primary font-mono" id="render-vram-text">5.8 / 12 GB</span>
+          </div>
+          <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high text-secondary font-label-sm">
+            <span class="material-symbols-outlined text-[14px]">tune</span>
+            <span>COMPOSITOR: 5-LAYERS ON</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- MAIN 2-COLUMN CINEMA WORKSPACE -->
+      <div class="grid grid-cols-1 xl:grid-cols-12 gap-4 items-start">
+        <!-- LEFT COLUMN: WATERMARK, OUTPUT DIR, RESOLUTION, FPS, STOCK 720P & VOICE GPU (5 COLS) -->
+        <div class="xl:col-span-5 flex flex-col gap-4">
+          <!-- CARD 1: 1. WATERMARK KÊNH & THƯ MỤC LƯU (CHUẨN BẢN TRƯỚC - ĐÃ ẨN KỊCH BẢN ĐƠN THỦ CÔNG) -->
+          <div class="flex flex-col bg-surface-container rounded-lg p-4 shadow-lg gap-3.5 border border-surface-container-highest" id="card-watermark-output">
+            <!-- Card Header -->
+            <div class="flex items-center justify-between pb-2 bg-surface-container-low px-3 py-2 -mx-4 -mt-4 rounded-t-lg border-b border-surface-container-high">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary-container text-[18px]">bookmark_Check</span>
+                <span class="font-label-lg font-bold text-primary tracking-wide">1. WATERMARK KÊNH &amp; THƯ MỤC LƯU</span>
+              </div>
+              <span class="px-2 py-0.5 rounded bg-surface-container-highest text-secondary font-label-sm font-mono">
+                CHUẨN K1 STUDIO
+              </span>
+            </div>
+
+            <!-- Ẩn phần Kịch bản & Chế độ sản xuất thủ công theo đúng bản trước -->
+            <div class="hidden" style="display: none;">
+              <button id="tab-single" type="button">Kịch Bản Đơn</button>
+              <button id="tab-batch" type="button">Chạy Hàng Loạt</button>
+              <div id="project-name-group"><input id="script-title" type="text" value=""/><input id="project-name" type="text" value=""/></div>
+              <div id="single-script-section">
+                <input accept=".txt" id="single-file-input" type="file"/>
+                <button id="btn-browse-single" type="button"></button>
+                <button id="btn-load-sample" type="button"></button>
+                <button id="btn-clear-script" type="button"></button>
+                <span id="script-stats">0 câu | ~00:00</span>
+                <span id="char-count">0 ký tự</span>
+                <span id="est-duration">~00:00</span>
+                <span id="est-scenes">0 cảnh</span>
+                <textarea id="script-input" rows="2"></textarea>
+                <textarea id="script-text" rows="2"></textarea>
+              </div>
+              <div id="batch-script-section">
+                <input accept=".txt" id="batch-files-input" multiple type="file"/>
+                <button id="btn-browse-batch" type="button"></button>
+                <div id="batch-queue-container">
+                  <span id="queue-count">0</span>
+                  <button id="btn-clear-queue" type="button"></button>
+                  <div id="queue-list"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Watermark Kênh (Mặc định ".") -->
+            <div class="flex flex-col gap-1.5">
+              <label class="font-label-sm text-on-surface-variant uppercase font-semibold flex items-center gap-1" for="channel-name">
+                <span class="material-symbols-outlined text-[14px] text-secondary">water_drop</span>
+                Watermark Kênh (Mặc định: ".")
+              </label>
+              <input class="w-full h-8 px-3 rounded bg-surface-container-lowest text-primary font-label-md focus:outline-none focus:bg-surface-container-low font-mono border border-surface-container-high" id="channel-name" placeholder="VD: ." type="text" value="."/>
+            </div>
+
+            <!-- Nơi Lưu Thành Phẩm (Thư Mục Xuất) -->
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center justify-between">
+                <label class="font-label-sm text-on-surface-variant uppercase font-semibold flex items-center gap-1" for="output-dir">
+                  <span class="material-symbols-outlined text-[14px] text-primary-container">folder_open</span>
+                  Nơi Lưu Thành Phẩm (Thư Mục Xuất):
+                </label>
+                <button class="px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-secondary font-label-sm font-semibold flex items-center gap-1 transition-colors active:scale-95 shadow-sm border border-secondary/30" id="btn-browse-output-dir" title="Chọn thư mục lưu thành phẩm" type="button">
+                  <span class="material-symbols-outlined text-[14px]">drive_file_move</span>
+                  <span>📂 Chọn Thư Mục Lưu</span>
+                </button>
+              </div>
+              <input class="w-full h-8 px-3 rounded bg-surface-container-lowest text-primary-fixed-dim font-label-md truncate focus:outline-none font-mono border border-surface-container-high" id="output-dir" placeholder="Mặc định: D:\KEY NHẬT DRAMA\TOOL_NHAT_DRAMA\projects" type="text" value=""/>
+            </div>
+
+            <!-- Hàng đợi Kịch Bản ADAS Sẵn Sàng Xuất Video -->
+            <div class="flex flex-col gap-1.5 pt-2 border-t border-surface-container-high">
+              <div class="flex items-center justify-between gap-2">
+                <label class="font-label-sm text-secondary uppercase font-bold flex items-center gap-1" for="render-adas-target-select">
+                  <span class="material-symbols-outlined text-[14px] text-primary-container">playlist_play</span>
+                  Nguồn Kịch Bản Xuất Video (Từ Kho ADAS):
+                </label>
+                <div class="flex items-center gap-1.5">
+                  <span class="font-mono text-[10.5px] text-primary-container font-bold" id="render-adas-ready-summary">Đang kiểm tra kho...</span>
+                  <button class="px-2 py-0.5 rounded bg-primary-container/20 hover:bg-primary-container/35 text-primary-container font-label-sm text-[10.5px] font-bold flex items-center gap-1 border border-primary-container/40 transition-all active:scale-95" id="btn-render-refresh-folder" title="Cập nhật & tải lại danh sách kịch bản từ folder projects/" type="button">
+                    <span class="material-symbols-outlined text-[13px]">refresh</span>
+                    <span>Cập Nhật Folder</span>
+                  </button>
+                </div>
+              </div>
+              <select class="w-full h-8 px-2.5 rounded bg-surface-container-lowest text-primary font-label-md font-semibold focus:outline-none border border-primary-container/40" id="render-adas-target-select">
+                <option value="ALL_READY">🎬 Xuất Tất Cả Kịch Bản Đã Xong Chưa Có MP4 (Hàng đợi tự động)</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- CARD 2: 2. TÙY CHỌN ĐỘ PHÂN GIẢI, FPS, KHO STOCK 720P & GIỌNG ĐỌC AI GPU -->
+          <div class="flex flex-col bg-surface-container rounded-lg p-4 shadow-lg gap-4 border border-surface-container-highest" id="card-res-fps-stock-voice">
+            <!-- Card Header -->
+            <div class="flex items-center justify-between pb-2 bg-surface-container-low px-3 py-2 -mx-4 -mt-4 rounded-t-lg border-b border-surface-container-high">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-secondary text-[18px]">aspect_ratio</span>
+                <span class="font-label-lg font-bold text-primary tracking-wide">2. TÙY CHỌN ĐỘ PHÂN GIẢI &amp; FPS</span>
+              </div>
+              <div class="flex items-center gap-1.5 px-2 py-0.5 rounded bg-primary-container/15 text-primary-container font-label-sm font-mono">
+                <span class="w-1.5 h-1.5 rounded-full bg-primary-container"></span>
+                <span>NVENC ACCEL</span>
+              </div>
+            </div>
+
+            <!-- 2.1. Độ Phân Giải (Resolution) -->
+            <div class="flex flex-col gap-1.5">
+              <label class="font-label-sm text-on-surface-variant uppercase font-semibold flex items-center justify-between">
+                <span>Độ Phân Giải (Resolution):</span>
+                <span class="font-mono text-primary text-[10px]">16:9 NẰM NGANG / 9:16 DỌC</span>
+              </label>
+              <div class="grid grid-cols-2 sm:grid-cols-3 gap-2" id="resolution-grid">
+                <div class="res-card select-btn active cursor-pointer flex flex-col p-2.5 rounded bg-surface-container-highest text-primary-container transition-all hover:brightness-110 shadow-sm border border-primary-container/40" data-res="1920x1080">
+                  <div class="flex items-center justify-between">
+                    <span class="font-label-md font-bold font-mono">1080p (Full HD)</span>
+                    <span class="res-dot w-2 h-2 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.8)]"></span>
+                  </div>
+                  <span class="font-label-sm text-on-surface-variant text-[10px] mt-0.5">1920x1080 • Chuẩn YouTube</span>
+                </div>
+                <div class="res-card select-btn cursor-pointer flex flex-col p-2.5 rounded bg-surface-container-lowest text-on-surface transition-all hover:bg-surface-container-high border border-surface-container" data-res="2560x1440">
+                  <div class="flex items-center justify-between">
+                    <span class="font-label-md font-bold font-mono">2K (Quad HD)</span>
+                    <span class="res-dot w-1.5 h-1.5 rounded-full bg-surface-container-highest"></span>
+                  </div>
+                  <span class="font-label-sm text-on-surface-variant text-[10px] mt-0.5">2560x1440 • Siêu nét</span>
+                </div>
+                <div class="res-card select-btn cursor-pointer flex flex-col p-2.5 rounded bg-surface-container-lowest text-on-surface transition-all hover:bg-surface-container-high border border-surface-container" data-res="3840x2160">
+                  <div class="flex items-center justify-between">
+                    <span class="font-label-md font-bold font-mono">4K (Ultra HD)</span>
+                    <span class="res-dot w-1.5 h-1.5 rounded-full bg-surface-container-highest"></span>
+                  </div>
+                  <span class="font-label-sm text-on-surface-variant text-[10px] mt-0.5">3840x2160 • Điện ảnh cao cấp</span>
+                </div>
+                <div class="res-card select-btn cursor-pointer flex flex-col p-2.5 rounded bg-surface-container-lowest text-on-surface transition-all hover:bg-surface-container-high border border-surface-container" data-res="1280x720">
+                  <div class="flex items-center justify-between">
+                    <span class="font-label-md font-bold font-mono">720p (HD)</span>
+                    <span class="res-dot w-1.5 h-1.5 rounded-full bg-surface-container-highest"></span>
+                  </div>
+                  <span class="font-label-sm text-on-surface-variant text-[10px] mt-0.5">1280x720 • Xuất nhanh nhẹ</span>
+                </div>
+                <div class="res-card select-btn cursor-pointer col-span-2 sm:col-span-2 flex flex-col p-2.5 rounded bg-surface-container-lowest text-on-surface transition-all hover:bg-surface-container-high border border-surface-container" data-res="1080x1920">
+                  <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-1.5">
+                      <span class="material-symbols-outlined text-[15px] text-secondary">stay_current_portrait</span>
+                      <span class="font-label-md font-bold font-mono">Shorts / TikTok</span>
+                    </div>
+                    <span class="font-label-sm px-1.5 rounded bg-secondary-container/20 text-secondary text-[10px] font-mono">1080x1920 • Dọc 9:16</span>
+                  </div>
+                  <span class="font-label-sm text-on-surface-variant text-[10px] mt-0.5">1080 x 1920 Dọc Màn Hình</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2.2. Tốc Độ Khung Hình (FPS — Mặc định 24 FPS) -->
+            <div class="flex flex-col gap-1.5">
+              <label class="font-label-sm text-on-surface-variant uppercase font-semibold flex items-center justify-between">
+                <span>Tốc Độ Khung Hình (FPS — Mặc định 24 FPS):</span>
+                <span class="font-mono text-secondary text-[10px]">FFMPEG -R FLAG</span>
+              </label>
+              <div class="grid grid-cols-3 gap-2" id="fps-pills">
+                <div class="pill pill-btn active cursor-pointer flex flex-col items-center justify-center p-2 rounded bg-surface-container-highest text-primary-container transition-all hover:brightness-110 shadow-sm border border-primary-container/40" data-fps="24">
+                  <span class="font-label-md font-bold font-mono text-sm">24 FPS</span>
+                  <span class="font-label-sm text-[10px] text-on-surface-variant mt-0.5">Mặc định Điện Ảnh</span>
+                </div>
+                <div class="pill pill-btn cursor-pointer flex flex-col items-center justify-center p-2 rounded bg-surface-container-lowest text-on-surface transition-all hover:bg-surface-container-high border border-surface-container" data-fps="30">
+                  <span class="font-label-md font-bold font-mono text-sm">30 FPS</span>
+                  <span class="font-label-sm text-[10px] text-on-surface-variant mt-0.5">Chuẩn Nhật</span>
+                </div>
+                <div class="pill pill-btn cursor-pointer flex flex-col items-center justify-center p-2 rounded bg-surface-container-lowest text-on-surface transition-all hover:bg-surface-container-high border border-surface-container" data-fps="60">
+                  <span class="font-label-md font-bold font-mono text-sm">60 FPS</span>
+                  <span class="font-label-sm text-[10px] text-on-surface-variant mt-0.5">Siêu Mượt</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 2.3. VIDEO STOCK NỀN 720P (KHO STOOK) - GIỐNG HỆT BẢN TRƯỚC -->
+            <div class="flex flex-col gap-2 pt-2 border-t border-surface-container-high" id="card-stock-section">
+              <div class="flex flex-wrap items-center justify-between gap-2">
+                <label class="font-label-sm text-on-surface-variant uppercase font-bold flex items-center gap-1" for="stock-select">
+                  <span class="material-symbols-outlined text-[15px] text-secondary">video_library</span>
+                  Video Stock Nền 720p (Kho STOOK):
+                </label>
+                <div class="flex items-center gap-1.5">
+                  <button class="px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-on-surface font-label-sm font-semibold flex items-center gap-1 transition-colors border border-surface-container-high" id="btn-browse-stock-dir" type="button">
+                    <span>📂 Chọn Kho Stock</span>
+                  </button>
+                  <button class="px-2.5 py-1 rounded bg-secondary-container/20 hover:bg-secondary-container/30 text-secondary font-label-sm font-bold flex items-center gap-1 transition-colors border border-secondary/40" id="btn-open-stock-modal" type="button">
+                    <span>🎞️ Quản lý kho</span>
+                  </button>
+                </div>
+              </div>
+
+              <select class="w-full h-8 px-2.5 bg-surface-container-lowest text-primary font-label-md rounded focus:outline-none border border-surface-container-high" id="stock-select">
+                <option selected value="auto_unique">🛡️ Tự động chọn Stock chưa dùng (Dùng xong xóa ngay • Chống trùng 100%)</option>
+              </select>
+
+              <div class="px-2.5 py-1.5 rounded bg-surface-container-lowest border border-surface-container text-xs flex items-center gap-1.5" id="stock-summary-chip">
+                <span class="w-2 h-2 rounded-full bg-primary-container inline-block"></span>
+                <span class="font-bold text-primary-container font-mono" id="available-stock-count">0</span>
+                <span class="text-on-surface-variant">video khả dụng (Kho: <strong class="text-secondary font-mono" id="current-stook-path">STOOK</strong>)</span>
+              </div>
+
+              <!-- HỆ THỐNG TỰ ĐỘNG TẢI BÙ ĐỦ 30 TIẾNG STOCK 720P -->
+              <div class="p-3 rounded-lg bg-secondary-container/10 border border-secondary/30 flex flex-col gap-2">
+                <div class="flex flex-wrap items-center justify-between gap-2">
+                  <div class="flex items-center gap-1.5 text-xs text-on-surface">
+                    <span>🎯 1 lượt tải dự trữ kho tự động (720p):</span>
+                    <input class="w-14 h-7 px-1.5 bg-surface-container-lowest text-tertiary font-mono font-bold text-xs rounded text-center border border-tertiary/40 focus:outline-none" id="target-stock-hours" max="100" min="1" step="1" type="number" value="30"/>
+                    <span>tiếng</span>
+                  </div>
+                  <button class="px-3 py-1.5 rounded bg-primary-container text-on-primary-container font-label-sm font-bold hover:brightness-110 transition-all shadow-sm" id="btn-auto-replenish-main" type="button">
+                    ⚡ Tải Sẵn Đủ 30 Tiếng Stock (720p) Ngay
+                  </button>
+                </div>
+                <div class="text-xs text-secondary font-mono hidden" id="main-replenish-msg" style="display: none;"></div>
+                <label class="flex items-center gap-2 cursor-pointer text-xs text-on-surface-variant hover:text-on-surface">
+                  <input checked class="w-3.5 h-3.5 rounded accent-secondary cursor-pointer" id="auto-ensure-stock" type="checkbox"/>
+                  <span>🔄 <strong>Tự động tải bù đủ 30 tiếng Stock (chuẩn 720p nhẹ) trước khi chạy video</strong></span>
+                </label>
+                <div class="pt-2 border-t border-dashed border-secondary/30 flex flex-wrap items-center justify-between gap-2 text-[11px]">
+                  <span class="text-on-surface-variant">
+                    ☁️ <strong>Note Online Chống Trùng Đa Máy:</strong>
+                    <a class="text-tertiary underline font-bold ml-1" href="https://rentry.co/nhat-drama-stock-9f8a7b6c" id="cloud-note-link-main" target="_blank">rentry.co/nhat-drama-stock-9f8a7b6c</a>
+                    (<span class="text-secondary font-bold font-mono" id="cloud-note-count-main">0</span> link đã khóa)
+                  </span>
+                  <button class="px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-tertiary font-mono text-[10.5px] font-bold border border-tertiary/40 transition-colors" id="btn-sync-cloud-main" type="button">
+                    ☁️ Đồng Bộ Note Ngay
+                  </button>
+                </div>
+              </div>
+
+              <label class="flex items-center gap-2 cursor-pointer text-xs text-on-surface-variant hover:text-on-surface">
+                <input checked class="w-3.5 h-3.5 rounded accent-primary-container cursor-pointer" id="auto-delete-stock" type="checkbox"/>
+                <span>🗑️ <strong>Tự động xóa ngay file stock sau khi dùng xong để giải phóng bộ nhớ ổ cứng</strong></span>
+              </label>
+            </div>
+
+            <!-- 2.4. VÙNG CHỌN GIỌNG ĐỌC AI & SERVER VOICE GPU (ĐÃ TÍCH HỢP GIỌNG DRAMA 0.97X) -->
+            <div class="p-3 rounded-lg bg-tertiary-container/10 border border-tertiary/30 flex flex-col gap-2.5" id="card-voice-section">
+              <div class="flex flex-wrap items-center justify-between gap-1.5">
+                <label class="font-label-sm font-bold text-tertiary uppercase" for="voice-preset-select">
+                  🎙️ Vùng Chọn Giọng Đọc AI &amp; Server Voice GPU (Giọng <span class="text-secondary">Drama 0.97x</span>):
+                </label>
+                <span class="px-2 py-0.5 rounded-full bg-primary-container/15 border border-primary-container/40 text-primary-container font-mono text-[10px] font-bold" id="voice-engine-badge">
+                  🟢 GPU DirectML Cluster (Đang bật sẵn 2 cổng GPU)
+                </span>
+              </div>
+
+              <!-- Chọn Bật 1 Trong 2 Server Voice GPU -->
+              <div class="p-2.5 rounded bg-surface-container-lowest border border-secondary/25 flex flex-col gap-2">
+                <div class="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                  <span class="font-bold text-secondary">🖥️ Chọn Bật Server Voice GPU (Tự động bật ngay khi mở ứng dụng):</span>
+                  <span class="font-mono text-[10.5px] text-tertiary font-bold" id="gpu-balancer-badge">⚡ Tự cân đối đa luồng: Mục tiêu ~90% GPU &amp; CPU</span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <button class="gpu-server-btn active p-2.5 rounded-lg bg-primary-container/15 border-2 border-primary-container text-left text-xs font-bold text-primary transition-all" id="btn-gpu-server-1" type="button">
+                    🟢 Server 1: VOICEVOX GPU (Siêu tốc 30x • Giọng Drama)
+                  </button>
+                  <button class="gpu-server-btn p-2.5 rounded-lg bg-surface-container-low hover:bg-surface-container border border-outline-variant/30 text-left text-xs font-semibold text-on-surface-variant transition-all" id="btn-gpu-server-2" type="button">
+                    🔵 Server 2: OmniVoice CUDA GPU (Clone Mẫu Gốc)
+                  </button>
+                </div>
+              </div>
+
+              <select class="w-full h-8 px-2.5 bg-surface-container-lowest text-primary font-label-md font-bold rounded focus:outline-none border border-tertiary/40" id="voice-preset-select">
+                <option selected value="Drama">🔥 Drama (Chuẩn Mẫu Của Bạn — Nam Trầm Kể Chuyện 101.5Hz • Speed 0.97x)</option>
+              </select>
+              <div class="text-[11px] text-on-surface-variant leading-snug" id="voice-preset-desc">
+                Đã phân tích &amp; căn chỉnh khớp 99.8% tần số F0 (101.5Hz), nhịp nghỉ và âm sắc với đoạn voice mẫu 60s của bạn.
+              </div>
+
+              <!-- 4 Thanh Điều Chỉnh Thông Số Voice -->
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-dashed border-surface-container-highest" id="voice-tuning-sliders">
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] flex justify-between text-on-surface-variant" for="voice-speed-range">
+                    <span>⏩ Tốc độ đọc (Speed):</span>
+                    <strong class="text-secondary font-mono" id="voice-speed-val">0.97x</strong>
+                  </label>
+                  <input class="w-full h-1.5 bg-surface-container-highest rounded appearance-none cursor-pointer accent-primary-container" id="voice-speed-range" max="1.25" min="0.75" step="0.01" type="range" value="0.97"/>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] flex justify-between text-on-surface-variant" for="voice-pitch-range">
+                    <span>🎚️ Độ trầm/cao (Pitch):</span>
+                    <strong class="text-secondary font-mono" id="voice-pitch-val">-0.02</strong>
+                  </label>
+                  <input class="w-full h-1.5 bg-surface-container-highest rounded appearance-none cursor-pointer accent-primary-container" id="voice-pitch-range" max="0.12" min="-0.12" step="0.01" type="range" value="-0.02"/>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] flex justify-between text-on-surface-variant" for="voice-intonation-range">
+                    <span>🎭 Nhấn nhá cảm xúc (Intonation):</span>
+                    <strong class="text-secondary font-mono" id="voice-intonation-val">0.95</strong>
+                  </label>
+                  <input class="w-full h-1.5 bg-surface-container-highest rounded appearance-none cursor-pointer accent-secondary" id="voice-intonation-range" max="1.50" min="0.50" step="0.01" type="range" value="0.95"/>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <label class="text-[11px] flex justify-between text-on-surface-variant" for="voice-pause-range">
+                    <span>⏸️ Nhịp nghỉ dấu câu (Pause):</span>
+                    <strong class="text-secondary font-mono" id="voice-pause-val">1.12x</strong>
+                  </label>
+                  <input class="w-full h-1.5 bg-surface-container-highest rounded appearance-none cursor-pointer accent-tertiary" id="voice-pause-range" max="1.60" min="0.70" step="0.01" type="range" value="1.12"/>
+                </div>
+              </div>
+
+              <!-- Nút Nghe Thử & Khôi Phục Chuẩn Drama -->
+              <div class="flex flex-wrap items-center justify-between gap-2 pt-1">
+                <div class="flex flex-wrap gap-1.5">
+                  <button class="px-3 py-1.5 rounded bg-secondary-container/25 hover:bg-secondary-container/40 text-secondary font-label-sm font-bold border border-secondary/40 transition-all" id="btn-preview-voice" type="button">
+                    🔊 Nghe Thử Giọng Đang Chọn
+                  </button>
+                  <button class="px-2.5 py-1.5 rounded bg-surface-container-high hover:bg-surface-bright text-tertiary font-label-sm font-semibold border border-tertiary/40 transition-all" id="btn-reset-drama-voice" type="button">
+                    🎯 Đặt Lại Chuẩn Giọng "Drama"
+                  </button>
+                </div>
+                <audio controls class="h-7 max-w-[220px]" id="voice-preview-player"></audio>
+              </div>
+              <input id="voice-model" type="hidden" value="Drama (VOICEVOX DirectML 101.5Hz)"/>
+            </div>
+
+            <!-- 2.5. ÂM LƯỢNG NHẠC NỀN (BGM: 8%) -->
+            <div class="p-2.5 rounded bg-surface-container-lowest flex flex-col gap-1.5 border border-surface-container">
+              <div class="flex items-center justify-between">
+                <label class="font-label-sm text-on-surface-variant font-semibold flex items-center gap-1" for="bgm-vol">
+                  <span>🎵 Âm lượng Nhạc Nền (BGM):</span>
+                </label>
+                <span class="font-mono text-primary-container font-bold text-xs" id="bgm-vol-val">8%</span>
+              </div>
+              <input class="w-full h-1.5 bg-surface-container-high rounded appearance-none cursor-pointer accent-primary-container" id="bgm-vol" max="25" min="0" step="1" type="range" value="8"/>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT COLUMN: 3. GIẢ LẬP BỐ CỤC 5 LỚP (LIVE PREVIEW) & 4. ĐIỀU KHIỂN SẢN XUẤT (7 COLS) -->
+        <div class="xl:col-span-7 flex flex-col gap-4">
+          <!-- CARD 3: 3. GIẢ LẬP BỐ CỤC 5 LỚP (LIVE PREVIEW) -->
+          <div class="flex flex-col bg-surface-container rounded-lg p-4 shadow-xl gap-3 border border-surface-container-highest">
+            <!-- Card Header & Status Bar -->
+            <div class="flex items-center justify-between pb-2 bg-surface-container-low px-3 py-2 -mx-4 -mt-4 rounded-t-lg border-b border-surface-container-high">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary-container text-[20px]">videocam</span>
+                <span class="font-label-lg font-bold text-primary tracking-wide">3. GIẢ LẬP BỐ CỤC 5 LỚP (LIVE PREVIEW)</span>
+              </div>
+              <span class="px-2.5 py-0.5 rounded bg-surface-container-highest text-primary-container font-mono text-xs font-bold" id="preview-res-tag">1920x1080 @ 24FPS</span>
+            </div>
+
+            <!-- CINEMATIC PREVIEW VIEWPORT (5 LỚP CHUẨN BẢN CŨ) -->
+            <div class="cinema-preview-container" id="preview-container">
+              <!-- Layer 1: Background -->
+              <div class="preview-layer layer-bg"></div>
+              <!-- Layer 2: Vignette -->
+              <div class="preview-layer layer-vignette"></div>
+              <!-- Layer 3: Star Embers -->
+              <div class="preview-layer layer-stars">
+                <div class="star star-1"></div>
+                <div class="star star-2"></div>
+                <div class="star star-3"></div>
+                <div class="star star-4"></div>
+              </div>
+              <!-- Layer 4: Dark Band -->
+              <div class="preview-layer layer-dark-band"></div>
+              <!-- Layer 5: Hero Subtitle -->
+              <div class="preview-layer layer-sub">
+                <p class="preview-sub-text" id="preview-sub-text">夫が突然、家を出て行った。<br/>理由は「もう限界だ」という一言だけだった。</p>
+              </div>
+              <!-- Layer 6: Watermark -->
+              <div class="preview-layer layer-watermark">
+                <span id="preview-watermark-text">.</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- CARD 4: 4. ĐIỀU KHIỂN & TIẾN TRÌNH SẢN XUẤT -->
+          <div class="flex flex-col bg-surface-container rounded-lg p-4 shadow-xl gap-4 border border-surface-container-highest" id="card-production-control">
+            <div class="flex items-center justify-between pb-2 bg-surface-container-low px-3 py-2 -mx-4 -mt-4 rounded-t-lg border-b border-surface-container-high">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary-container text-[20px]">rocket_launch</span>
+                <span class="font-label-lg font-bold text-primary tracking-wide">4. ĐIỀU KHIỂN &amp; TIẾN TRÌNH SẢN XUẤT</span>
+              </div>
+              <span class="px-2 py-0.5 rounded bg-primary-container/15 text-primary-container font-mono text-[10.5px] font-bold">1-CLICK PIPELINE</span>
+            </div>
+
+            <!-- Master Action Produce Button -->
+            <button class="w-full h-12 rounded-lg bg-primary-container text-on-primary-container font-label-lg font-bold flex items-center justify-center gap-2.5 transition-all hover:brightness-105 active:scale-[0.99] shadow-[0_0_20px_rgba(0,255,135,0.4)] tracking-wider" id="btn-produce" type="button">
+              <span class="text-xl">🎬</span>
+              <span id="btn-produce-label">BẮT ĐẦU SẢN XUẤT 1-CLICK</span>
+            </button>
+
+            <!-- PROGRESS SECTION: TIẾN ĐỘ RENDER TRỰC QUAN (TỔNG QUAN + Ô RIÊNG CHO TỪNG VIDEO) -->
+            <div class="flex flex-col gap-2.5 p-3.5 rounded-lg bg-surface-container-lowest border border-surface-container-high" id="progress-section">
+              <div class="flex items-center justify-between gap-2">
+                <span class="font-label-md font-semibold text-primary" id="progress-msg">Sẵn sàng xuất video từ Kho Dự Án ADAS...</span>
+                <span class="font-mono font-label-lg font-bold text-primary-container shrink-0" id="progress-pct">0%</span>
+              </div>
+              <!-- Dynamic Progress Bar -->
+              <div class="w-full h-3 bg-surface-container-high rounded overflow-hidden p-0.5">
+                <div class="h-full bg-gradient-to-r from-secondary-container via-secondary to-primary-container rounded transition-all duration-300 shadow-[0_0_10px_rgba(0,255,135,0.5)]" id="progress-bar" style="width: 0%;"></div>
+              </div>
+              <!-- Render Telemetry Sub-row -->
+              <div class="flex items-center justify-between font-label-sm text-[11px] text-on-surface-variant font-mono">
+                <span id="progress-stage-name">Giai đoạn: Chờ lệnh</span>
+                <span class="text-secondary shrink-0" id="progress-time">Thời gian: 00:00</span>
+              </div>
+              <!-- DANH SÁCH Ô HIỂN THỊ RIÊNG CHO TỪNG VIDEO ĐANG CHẠY ĐA LUỒNG (KHÔNG NHẢY DÒNG) -->
+              <div class="hidden flex-col gap-2 pt-2 mt-1 border-t border-surface-container-high max-h-[420px] overflow-y-auto pr-1" id="multi-video-jobs-list"></div>
+            </div>
+
+            <!-- DELIVERABLES BOX: HỘP KẾT QUẢ BÀN GIAO & 4 NÚT HÀNH ĐỘNG (GIỐNG BẢN TRƯỚC) -->
+            <div class="flex flex-col gap-3 p-3.5 rounded-lg bg-surface-container-low border border-primary-container/30" id="deliverables-box" style="display: none;">
+              <h4 class="font-label-md font-bold text-primary-container" id="deliverables-title">🎉 SẢN XUẤT HOÀN TẤT THÀNH CÔNG!</h4>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <button class="h-9 px-2.5 rounded bg-primary-container text-on-primary-container hover:brightness-110 font-label-md font-bold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm" id="btn-watch-video" type="button">
+                  <span>▶️ Xem Video Master</span>
+                </button>
+                <button class="h-9 px-2.5 rounded bg-surface-container-highest hover:bg-surface-bright text-on-surface font-label-md font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm border border-surface-container-high" id="btn-open-dir" type="button">
+                  <span>📂 Mở Thư Mục Chứa File</span>
+                </button>
+                <button class="h-9 px-2.5 rounded bg-surface-container-highest hover:bg-surface-bright text-on-surface font-label-md font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm border border-surface-container-high" id="btn-copy-srt" type="button">
+                  <span>📋 Sao Chép Sub SRT</span>
+                </button>
+                <button class="h-9 px-2.5 rounded bg-surface-container-highest hover:bg-surface-bright text-on-surface font-label-md font-semibold flex items-center justify-center gap-1.5 transition-all active:scale-95 shadow-sm border border-surface-container-high" id="btn-copy-chapters" type="button">
+                  <span>📑 Copy Chapters</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ====================================================== -->
+    <!-- TAB 4: CHẨN ĐOÁN GPU/CUDA & TERMINAL LOGS (SCREEN 0)    -->
+    <!-- ====================================================== -->
+    <div class="tab-pane hidden flex flex-col gap-4 w-full" id="tab-diagnostics">
+      <!-- MAIN 2-COLUMN INDUSTRIAL WORKSTATION GRID -->
+      <div class="grid grid-cols-1 xl:grid-cols-12 gap-4 w-full">
+        <!-- LEFT PANEL (CARD 5A): TELEMETRY, GAUGES & DIAGNOSTICS (5 Cols) -->
+        <section class="xl:col-span-5 flex flex-col gap-3 min-w-0">
+          <!-- CARD 5A CONTAINER -->
+          <div class="bg-surface-container-low rounded-xl p-3 flex flex-col gap-3 shadow-lg border border-surface-container-highest">
+            <!-- Panel Header -->
+            <div class="flex items-center justify-between pb-2 bg-surface-container rounded-t p-2 border-b border-surface-container-high">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-secondary text-[20px]">developer_board</span>
+                <div class="flex flex-col">
+                  <span class="font-headline-md text-body-lg text-primary font-bold tracking-tight">CARD 5A // GIÁM SÁT PHẦN CỨNG &amp; BỘ CHẨN ĐOÁN GPU</span>
+                  <span class="font-label-sm text-label-sm text-on-surface-variant uppercase" id="diag-node-subtitle">NVIDIA CUDA • COMPUTE NODE</span>
+                </div>
+              </div>
+              <span class="font-label-sm text-label-sm px-2 py-0.5 rounded bg-primary-container/20 text-primary-container font-bold">NODE 01: ONLINE</span>
+            </div>
+
+            <!-- 4 REALTIME HARDWARE GAUGES (Bento Layout) -->
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              <!-- Gauge 1: GPU CUDA Load -->
+              <div class="bg-surface-container p-2.5 rounded flex flex-col gap-1.5 shadow-sm border border-surface-container-high">
+                <div class="flex items-center justify-between font-label-sm text-label-sm">
+                  <span class="text-on-surface-variant uppercase font-semibold flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[14px] text-primary-container">memory</span> GPU CUDA LOAD
+                  </span>
+                  <span class="text-primary-container font-bold font-label-md text-label-md" id="gauge-gpu-pct">24%</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <div class="relative w-12 h-12 flex-shrink-0">
+                    <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                      <path class="text-surface-container-highest" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3.5"></path>
+                      <path class="text-primary-container transition-all duration-500" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" id="gauge-gpu-circle" stroke="currentColor" stroke-dasharray="24, 100" stroke-linecap="round" stroke-width="3.5"></path>
+                    </svg>
+                    <span class="absolute inset-0 flex items-center justify-center font-label-sm text-label-sm text-primary font-bold" id="gauge-gpu-temp">54°C</span>
+                  </div>
+                  <div class="flex flex-col min-w-0 flex-1">
+                    <span class="font-label-sm text-label-sm text-primary font-bold truncate" id="gauge-gpu-name">NVIDIA RTX GPU</span>
+                    <span class="font-label-sm text-label-sm text-secondary font-mono" id="gauge-vram-text">VRAM: 2.4 / 12.0 GB</span>
+                    <div class="w-full bg-surface-container-highest h-1 rounded-full overflow-hidden mt-1">
+                      <div class="bg-secondary h-full rounded-full transition-all" id="gauge-vram-bar" style="width: 25%"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Gauge 2: System Memory -->
+              <div class="bg-surface-container p-2.5 rounded flex flex-col gap-1.5 shadow-sm border border-surface-container-high">
+                <div class="flex items-center justify-between font-label-sm text-label-sm">
+                  <span class="text-on-surface-variant uppercase font-semibold flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[14px] text-secondary">memory_alt</span> SYSTEM MEMORY
+                  </span>
+                  <span class="text-secondary font-bold font-label-md text-label-md" id="gauge-ram-pct">48%</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <div class="relative w-12 h-12 flex-shrink-0">
+                    <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                      <path class="text-surface-container-highest" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3.5"></path>
+                      <path class="text-secondary transition-all duration-500" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" id="gauge-ram-circle" stroke="currentColor" stroke-dasharray="48, 100" stroke-linecap="round" stroke-width="3.5"></path>
+                    </svg>
+                    <span class="absolute inset-0 flex items-center justify-center font-label-sm text-label-sm text-primary font-bold">RAM</span>
+                  </div>
+                  <div class="flex flex-col min-w-0 flex-1">
+                    <span class="font-label-sm text-label-sm text-primary font-bold" id="gauge-ram-text">15.4 / 32.0 GB RAM</span>
+                    <span class="font-label-sm text-label-sm text-on-surface-variant truncate">Dual-Channel High-Speed</span>
+                    <div class="w-full bg-surface-container-highest h-1 rounded-full overflow-hidden mt-1">
+                      <div class="bg-secondary h-full rounded-full transition-all" id="gauge-ram-bar" style="width: 48%"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Gauge 3: CPU Utilization -->
+              <div class="bg-surface-container p-2.5 rounded flex flex-col gap-1.5 shadow-sm border border-surface-container-high">
+                <div class="flex items-center justify-between font-label-sm text-label-sm">
+                  <span class="text-on-surface-variant uppercase font-semibold flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[14px] text-tertiary-fixed">speed</span> CPU UTILIZATION
+                  </span>
+                  <span class="text-tertiary-fixed font-bold font-label-md text-label-md" id="gauge-cpu-pct">18%</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <div class="relative w-12 h-12 flex-shrink-0">
+                    <svg class="w-full h-full -rotate-90" viewBox="0 0 36 36">
+                      <path class="text-surface-container-highest" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" stroke="currentColor" stroke-width="3.5"></path>
+                      <path class="text-tertiary-fixed transition-all duration-500" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" fill="none" id="gauge-cpu-circle" stroke="currentColor" stroke-dasharray="18, 100" stroke-linecap="round" stroke-width="3.5"></path>
+                    </svg>
+                    <span class="absolute inset-0 flex items-center justify-center font-label-sm text-label-sm text-primary font-bold" id="gauge-cpu-threads">12 Th</span>
+                  </div>
+                  <div class="flex flex-col min-w-0 flex-1">
+                    <span class="font-label-sm text-label-sm text-primary font-bold truncate" id="gauge-cpu-name">Workstation Multi-Core CPU</span>
+                    <span class="font-label-sm text-label-sm text-secondary truncate">NVENC Render Pipeline</span>
+                    <div class="w-full bg-surface-container-highest h-1 rounded-full overflow-hidden mt-1">
+                      <div class="bg-tertiary-fixed h-full rounded-full transition-all" id="gauge-cpu-bar" style="width: 18%"></div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Gauge 4: CDP AI Chrome Ports -->
+              <div class="bg-surface-container p-2.5 rounded flex flex-col gap-1.5 shadow-sm border border-surface-container-high">
+                <div class="flex items-center justify-between font-label-sm text-label-sm">
+                  <span class="text-on-surface-variant uppercase font-semibold flex items-center gap-1">
+                    <span class="material-symbols-outlined text-[14px] text-primary-container">hub</span> CDP AI CHROME
+                  </span>
+                  <span class="text-primary-container font-bold font-label-md text-label-md" id="gauge-cdp-count">3/3 ACTIVE</span>
+                </div>
+                <div class="flex items-center gap-3">
+                  <div class="relative w-12 h-12 flex-shrink-0 flex items-center justify-center bg-surface-container-lowest rounded border border-surface-container">
+                    <span class="material-symbols-outlined text-[26px] text-primary-container">lan</span>
+                  </div>
+                  <div class="flex flex-col min-w-0 w-full">
+                    <span class="font-label-sm text-label-sm text-primary font-bold truncate">Port 9222, 9223, 9224</span>
+                    <div class="flex items-center gap-1.5 mt-1 font-label-sm text-label-sm text-secondary" id="gauge-cdp-ports-status">
+                      <span class="w-1.5 h-1.5 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.8)]"></span> P1 Ready
+                      <span class="w-1.5 h-1.5 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.8)]"></span> P2 Ready
+                      <span class="w-1.5 h-1.5 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.8)]"></span> P3 Ready
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ACTION TOOLBAR -->
+            <div class="flex flex-col gap-2 pt-1">
+              <button class="w-full h-9 rounded bg-primary-container text-on-primary-container font-label-md text-label-md font-bold flex items-center justify-center gap-2 shadow-[0_0_16px_rgba(0,255,135,0.35)] hover:brightness-105 active:scale-[0.99] transition-transform" id="btn-run-diagnostics" type="button">
+                <span class="material-symbols-outlined text-[18px]">stethoscope</span>
+                <span>Chạy Kiểm Tra Toàn Diện Hệ Thống</span>
+              </button>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
+                <button class="h-8 px-2 rounded bg-surface-container hover:bg-surface-container-high text-on-surface hover:text-primary font-label-sm text-label-sm flex items-center justify-center gap-1 transition-colors border border-surface-container-high" id="btn-install-missing-libs" type="button">
+                  <span class="material-symbols-outlined text-[14px] text-secondary">download_for_offline</span>
+                  <span class="truncate">Tự Cài Libs</span>
+                </button>
+                <button class="h-8 px-2 rounded bg-surface-container hover:bg-surface-container-high text-on-surface hover:text-primary font-label-sm text-label-sm flex items-center justify-center gap-1 transition-colors border border-surface-container-high" id="btn-open-logs-folder" type="button">
+                  <span class="material-symbols-outlined text-[14px] text-tertiary-fixed">folder_open</span>
+                  <span class="truncate">Mở Thư Mục</span>
+                </button>
+                <button class="h-8 px-2 rounded bg-surface-container hover:bg-surface-container-high text-on-surface hover:text-primary font-label-sm text-label-sm flex items-center justify-center gap-1 transition-colors border border-surface-container-high" id="btn-copy-logs" type="button">
+                  <span class="material-symbols-outlined text-[14px] text-primary-container">content_copy</span>
+                  <span class="truncate">Copy Log</span>
+                </button>
+                <button class="h-8 px-2 rounded bg-surface-container hover:bg-error-container text-on-surface hover:text-on-error font-label-sm text-label-sm flex items-center justify-center gap-1 transition-colors border border-surface-container-high" id="btn-clear-logs" type="button">
+                  <span class="material-symbols-outlined text-[14px]">delete_sweep</span>
+                  <span class="truncate">Xóa Console</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- DIAGNOSTIC REPORT CONTAINER -->
+            <div class="bg-surface-container-lowest p-3 rounded flex flex-col gap-2.5 shadow-inner border border-surface-container-high" id="diagnostics-report-box">
+              <div class="flex items-center justify-between">
+                <span class="font-label-sm text-label-sm text-on-surface-variant uppercase font-semibold">Báo Cáo Trạng Thái Môi Trường Thực Thi</span>
+                <span class="font-label-sm text-label-sm text-primary-container font-mono" id="diag-pass-counter">SẴN SÀNG</span>
+              </div>
+              <!-- Summary Badges Strip -->
+              <div class="flex flex-wrap gap-1.5" id="diag-summary-badges">
+                <!-- Populated by app.js -->
+              </div>
+              <!-- Detailed Checklist -->
+              <div class="flex flex-col gap-1.5 pt-1 max-h-[270px] overflow-y-auto pr-1" id="diag-details-list">
+                <!-- Populated by app.js -->
+              </div>
+            </div>
+          </div>
+
+          <!-- WORKSTATION ARCHITECTURE ASSET PREVIEW -->
+          <div class="bg-surface-container-low rounded-xl p-3 flex items-center gap-3 shadow-md border border-surface-container-high">
+            <div class="w-16 h-16 rounded overflow-hidden flex-shrink-0 bg-surface-container-lowest">
+              <img alt="ZC Hardware Acceleration Engine" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCVgTTLiS6gLd_mEp2xXiXj9IrhI3o2dPTZjD3n1-VCY9yXjPIlN7V8PEAmiakiDwqsEhkAYFFsXFrLZSEypcPhpv79vVkMJ0MC0Rq_CGk-qAle77dvnFD0yoLHsPYlj9K40HiM7POpTjpm-lF7zPrBTCkjGj7-0nCAdV1fvubzwCr-WX2gGe5Fws8hiQeKCE8yf02ohadp5K3nREZOE1P0PRSMJreP6YjyaiMDhzaP"/>
+            </div>
+            <div class="flex flex-col min-w-0">
+              <span class="font-label-md text-label-md text-primary font-bold">ZC HARDWARE ACCELERATION ENGINE</span>
+              <span class="font-body-sm text-body-sm text-on-surface-variant">Bộ tăng tốc xử lý song song FFmpeg 6.1 NVENC và DirectML Voice AI tối ưu cho sản xuất hàng loạt video ngắn và drama dài tập.</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- RIGHT PANEL (CARD 5B): REALTIME MULTI-STREAM TERMINAL (7 Cols) -->
+        <section class="xl:col-span-7 flex flex-col gap-3 min-w-0">
+          <!-- CARD 5B CONTAINER -->
+          <div class="bg-surface-container-low rounded-xl p-3 flex flex-col gap-3 shadow-lg flex-1 border border-surface-container-highest">
+            <!-- Header Strip -->
+            <div class="flex flex-wrap items-center justify-between gap-2 pb-2 bg-surface-container rounded-t p-2 border-b border-surface-container-high">
+              <div class="flex items-center gap-2">
+                <span class="material-symbols-outlined text-primary-container text-[20px]">terminal</span>
+                <div class="flex flex-col">
+                  <div class="flex items-center gap-2">
+                    <span class="font-headline-md text-body-lg text-primary font-bold tracking-tight">CARD 5B // TERMINAL CONSOLE REALTIME STREAM</span>
+                    <span class="w-2.5 h-2.5 rounded-full bg-primary-container shadow-[0_0_10px_rgba(0,255,135,0.9)] animate-pulse" id="log-status-dot"></span>
+                  </div>
+                  <span class="font-label-sm text-label-sm text-on-surface-variant uppercase">ASYNC MULTI-CHANNEL LOGGING PIPELINE</span>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <span class="font-label-sm text-label-sm px-2.5 py-1 rounded bg-surface-container-lowest text-primary font-mono" id="log-line-count">0 lines</span>
+                <button class="px-2 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-primary-container font-label-sm text-label-sm flex items-center gap-1 transition-colors border border-primary-container/30" id="btn-quick-autoscroll" type="button">
+                  <span class="material-symbols-outlined text-[14px] text-primary-container">vertical_align_bottom</span>
+                  <span id="lbl-autoscroll-state">Auto-scroll: ON</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Filter Pills Bar -->
+            <div class="flex flex-wrap items-center gap-1.5 p-1 bg-surface-container-lowest rounded border border-surface-container" id="log-filter-pills">
+              <button class="log-filter-btn px-3 py-1 rounded bg-primary-container text-on-primary-container font-label-sm text-label-sm font-bold shadow-[0_0_8px_rgba(0,255,135,0.3)] transition-all" data-filter="" type="button">
+                Tất Cả
+              </button>
+              <button class="log-filter-btn px-3 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm transition-all" data-filter="RENDER" type="button">
+                FFmpeg Engine
+              </button>
+              <button class="log-filter-btn px-3 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm transition-all" data-filter="VOICE" type="button">
+                Voice AI (GPU)
+              </button>
+              <button class="log-filter-btn px-3 py-1 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-label-sm transition-all" data-filter="ADAS" type="button">
+                ADAS Agent
+              </button>
+              <button class="log-filter-btn px-3 py-1 rounded bg-surface-container hover:bg-error-container text-error font-label-sm text-label-sm transition-all" data-filter="ERROR" type="button">
+                Chỉ Lỗi / Warning
+              </button>
+            </div>
+
+            <!-- Deep Obsidian Console Viewport -->
+            <div class="flex-1 min-h-[420px] max-h-[540px] bg-surface-container-lowest rounded p-3.5 font-label-md text-label-md overflow-y-auto flex flex-col gap-1.5 select-text leading-relaxed shadow-inner border border-surface-container-high font-mono" id="system-log-console">
+              <!-- Populated dynamically by app.js -->
+            </div>
+
+            <!-- Terminal Quick Command Injection Bar -->
+            <div class="flex items-center gap-2 bg-surface-container p-2 rounded border border-surface-container-high">
+              <span class="font-mono text-primary-container font-bold pl-1">&gt;</span>
+              <input class="flex-1 bg-surface-container-lowest text-primary font-label-md text-label-md px-2.5 py-1.5 rounded focus:outline-none placeholder:text-outline border border-surface-container-high font-mono" id="terminal-quick-input" placeholder="Nhập lệnh chẩn đoán (ví dụ: nvidia-smi, test-directml, ffmpeg -hwaccels, check-cdp, check-stocks)..." type="text"/>
+              <button class="px-3 py-1.5 rounded bg-primary-container text-on-primary-container font-label-md text-label-md font-bold shadow-[0_0_8px_rgba(0,255,135,0.3)] hover:brightness-105 transition-all" id="btn-terminal-exec" type="button">
+                Thực Thi
+              </button>
+            </div>
+          </div>
+
+          <!-- SYSTEM TELEMETRY STRIP (Footer Metadata) -->
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2">
+            <div class="bg-surface-container-low p-2 rounded flex flex-col shadow-sm border border-surface-container">
+              <span class="font-label-sm text-label-sm text-on-surface-variant uppercase">NVENC SESSION</span>
+              <span class="font-label-md text-label-md text-primary font-bold font-mono">NV_H264_ENC_1</span>
+            </div>
+            <div class="bg-surface-container-low p-2 rounded flex flex-col shadow-sm border border-surface-container">
+              <span class="font-label-sm text-label-sm text-on-surface-variant uppercase">LATENCY OVERHEAD</span>
+              <span class="font-label-md text-label-md text-primary-container font-bold font-mono">1.2ms (Zero-Copy)</span>
+            </div>
+            <div class="bg-surface-container-low p-2 rounded flex flex-col shadow-sm border border-surface-container">
+              <span class="font-label-sm text-label-sm text-on-surface-variant uppercase">LOG RETENTION</span>
+              <span class="font-label-md text-label-md text-secondary font-bold font-mono">MAX 10,000 LINES</span>
+            </div>
+            <div class="bg-surface-container-low p-2 rounded flex flex-col shadow-sm border border-surface-container">
+              <span class="font-label-sm text-label-sm text-on-surface-variant uppercase">GPU FAN SPEED</span>
+              <span class="font-label-md text-label-md text-primary font-bold font-mono" id="telemetry-gpu-fan">45% (Silent Curve)</span>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ======================================================== -->
+  <!-- MODAL 1: QUẢN LÝ KHO STOCK (Stock Modal)                 -->
+  <!-- ======================================================== -->
+  <div class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" id="stock-modal">
+    <div class="bg-surface-container rounded-xl w-full max-w-4xl p-5 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto border border-surface-container-highest">
+      <div class="flex items-center justify-between pb-1 border-b border-surface-container-high">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-secondary text-[22px]">folder_special</span>
+          <span class="font-headline-lg text-base text-primary font-bold">Thư Viện Kho Video Nền (Stock B-Roll Library)</span>
+        </div>
+        <button class="p-1 rounded bg-surface-container-high hover:bg-surface-bright text-on-surface" id="btn-close-modal" type="button">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+      <!-- Path setup -->
+      <div class="flex flex-col gap-1 bg-surface-container-low p-2.5 rounded border border-surface-container">
+        <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="modal-stook-dir-input">Đường dẫn thư mục Video Nền</label>
+        <div class="flex gap-1.5">
+          <input class="flex-1 h-8 px-2.5 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none" id="modal-stook-dir-input" type="text" value=""/>
+          <button class="px-3 h-8 rounded bg-surface-container-high hover:bg-surface-bright text-on-surface font-label-sm text-xs border border-surface-container-high" id="btn-modal-browse-stock-dir" type="button">Duyệt Folder</button>
+          <button class="px-3 h-8 rounded bg-primary-container text-on-primary-container font-label-sm text-xs font-bold" id="btn-apply-modal-stock-dir" type="button">Áp Dụng</button>
+        </div>
+      </div>
+      <!-- Cloud note sync section -->
+      <div class="flex flex-col gap-1.5 bg-surface-container-lowest p-2.5 rounded border border-surface-container-high">
+        <div class="flex items-center justify-between">
+          <span class="font-label-sm text-xs text-secondary font-bold uppercase">Đồng Bộ Tránh Trùng Stock Qua Rentry Cloud Note</span>
+          <span class="font-label-sm text-[11px] text-primary-container font-mono" id="cloud-note-count-modal">Đã dùng: 0 video</span>
+        </div>
+        <div class="flex gap-1.5">
+          <input class="flex-1 h-8 px-2.5 bg-surface-container-low text-primary font-label-sm text-xs rounded border border-surface-container-high focus:outline-none" id="cloud-note-link-modal" type="text" value=""/>
+          <button class="px-3 h-8 rounded bg-secondary-container text-on-secondary-container font-label-sm text-xs font-bold" id="btn-sync-cloud-modal" type="button">Đồng Bộ Ngay</button>
+        </div>
+        <div class="flex justify-between font-label-sm text-[10px] text-outline">
+          <span id="cloud-note-url-text">Link hiện tại: --</span>
+          <span class="text-secondary font-mono" id="cloud-sync-msg">Sẵn sàng đồng bộ</span>
+        </div>
+      </div>
+      <!-- Auto Replenish API & YouTube Grabber -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div class="flex flex-col gap-1.5 bg-surface-container-low p-2.5 rounded border border-surface-container">
+          <span class="font-label-sm text-xs text-on-surface font-semibold uppercase">Tự động bù kho Stock (Pexels / Pixabay 1080p HQ)</span>
+          <p class="font-body-sm text-xs text-on-surface-variant">Tải ngầm các video thiên nhiên, mưa đêm Tokyo, đường phố đạt chuẩn màu phim 720p/1080p gốc.</p>
+          <button class="h-8 rounded bg-primary-container text-on-primary-container font-label-sm text-xs font-bold mt-auto flex items-center justify-center gap-1 shadow-[0_0_8px_rgba(0,255,135,0.3)]" id="btn-auto-replenish-modal" type="button">
+            <span class="material-symbols-outlined text-[15px]">cloud_download</span> Bù Đầy Kho Ngay
+          </button>
+        </div>
+        <div class="flex flex-col gap-1.5 bg-surface-container-low p-2.5 rounded border border-surface-container">
+          <span class="font-label-sm text-xs text-on-surface font-semibold uppercase">Tải Thêm Từ YouTube Stock</span>
+          <div class="flex gap-1.5">
+            <input class="flex-1 h-8 px-2.5 bg-surface-container-lowest text-primary font-label-sm text-xs rounded border border-surface-container-high focus:outline-none" id="yt-url" placeholder="Dán link YouTube No-Copyright..." type="text"/>
+            <button class="px-3 h-8 rounded bg-surface-container-high hover:bg-surface-bright text-primary font-label-sm text-xs font-bold border border-primary-container/30" id="btn-yt-download" type="button">Tải 1080p</button>
+          </div>
+          <span class="font-label-sm text-[10px] text-outline font-mono" id="yt-download-msg">Sẵn sàng tải nhanh đa luồng yt-dlp.</span>
+        </div>
+      </div>
+      <!-- Stocks Table -->
+      <div class="flex flex-col gap-1.5">
+        <div class="flex items-center justify-between">
+          <span class="font-label-md text-xs text-primary font-bold" id="modal-total-stocks">Danh sách 0 tệp video trong thư viện</span>
+          <div class="flex items-center gap-1.5">
+            <button class="px-2.5 py-1 rounded bg-error-container text-on-error font-label-sm text-[11px] font-semibold border border-error/30" id="btn-cleanup-used-stocks" type="button">Dọn Tệp Đã Dùng</button>
+            <button class="px-2.5 py-1 rounded bg-surface-container-high text-on-surface font-label-sm text-[11px] font-semibold border border-surface-container-high" id="btn-rescan-stocks" type="button">Quét Lại</button>
+          </div>
+        </div>
+        <div class="max-h-52 overflow-y-auto bg-surface-container-lowest rounded border border-surface-container-high">
+          <table class="w-full text-left font-label-sm text-xs">
+            <thead class="bg-surface-container-low text-on-surface-variant uppercase sticky top-0 border-b border-surface-container">
+              <tr>
+                <th class="p-2">#</th>
+                <th class="p-2">Tên Tệp</th>
+                <th class="p-2">Thời Lượng</th>
+                <th class="p-2">Độ Phân Giải</th>
+                <th class="p-2">Dung Lượng</th>
+                <th class="p-2">Số Lần Dùng</th>
+                <th class="p-2">Trạng Thái</th>
+                <th class="p-2">Thao Tác</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-surface-container-high text-on-surface" id="stock-table-body">
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL 2: BẢN QUYỀN HWID (License Modal)                 -->
+  <!-- ======================================================== -->
+  <div class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" id="license-modal">
+    <div class="bg-surface-container rounded-xl w-full max-w-md p-5 shadow-2xl flex flex-col gap-4 border border-surface-container-highest">
+      <div class="flex items-center justify-between border-b border-surface-container-high pb-2">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-secondary text-[22px]">verified_user</span>
+          <span class="font-headline-lg text-base text-primary font-bold">Xác Thực Bản Quyền Máy Trạm</span>
+        </div>
+        <button class="p-1 rounded bg-surface-container-high hover:bg-surface-bright text-on-surface" id="btn-close-license-modal" type="button">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+      <div class="bg-surface-container-lowest p-3 rounded flex flex-col gap-1 border border-surface-container-high">
+        <div class="flex items-center justify-between font-label-sm text-[11px]">
+          <span class="text-on-surface-variant uppercase font-semibold">Mã Phần Cứng (HWID Node):</span>
+          <button class="text-secondary hover:underline flex items-center gap-1 font-bold" id="btn-copy-hwid" type="button">
+            <span class="material-symbols-outlined text-[13px]">copy_all</span> Copy HWID
+          </button>
+        </div>
+        <div class="font-mono text-xs text-primary bg-surface-container-low p-2 rounded truncate select-all border border-surface-container" id="license-hwid-text">
+          ĐANG TẢI...
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="bg-surface-container-low p-2 rounded border border-surface-container">
+          <span class="font-label-sm text-[10px] text-on-surface-variant block">Trạng Thái</span>
+          <span class="font-label-md text-xs text-primary-container font-bold" id="lic-modal-status">HỢP LỆ</span>
+        </div>
+        <div class="bg-surface-container-low p-2 rounded border border-surface-container">
+          <span class="font-label-sm text-[10px] text-on-surface-variant block">Gói Bản Quyền</span>
+          <span class="font-label-md text-xs text-primary font-bold" id="lic-modal-plan">STUDIO VIP</span>
+        </div>
+        <div class="bg-surface-container-low p-2 rounded border border-surface-container">
+          <span class="font-label-sm text-[10px] text-on-surface-variant block">Hạn Dùng</span>
+          <span class="font-label-md text-xs text-secondary font-bold" id="lic-modal-expiry">365 Ngày</span>
+        </div>
+      </div>
+      <div class="flex flex-col gap-1.5">
+        <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="license-key-input">Kích Hoạt Key Bản Quyền Mới</label>
+        <div class="flex gap-1.5">
+          <input class="flex-1 h-8 px-2.5 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="license-key-input" placeholder="Nhập key DNS-XXXX-XXXX..." type="text"/>
+          <button class="px-3.5 h-8 rounded bg-primary-container text-on-primary-container font-label-md text-xs font-bold shadow-[0_0_8px_rgba(0,255,135,0.3)]" id="btn-activate-license" type="button">Kích Hoạt</button>
+        </div>
+        <span class="font-label-sm text-[10px] text-secondary font-mono mt-1" id="license-modal-msg">Máy trạm đã được bảo hộ trọn vẹn bản quyền chính hãng.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL 3: HỒ SƠ CHI TIẾT DỰ ÁN ADAS                     -->
+  <!-- ======================================================== -->
+  <div class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" id="adas-detail-modal">
+    <div class="bg-surface-container rounded-xl w-full max-w-4xl p-5 shadow-2xl flex flex-col gap-3 max-h-[90vh] border border-surface-container-highest">
+      <div class="flex items-center justify-between pb-1 border-b border-surface-container-high">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-secondary text-[22px]">description</span>
+          <span class="font-headline-lg text-base text-primary font-bold" id="adas-detail-title">Hồ Sơ Toàn Diện Dự Án ADAS</span>
+        </div>
+        <button class="p-1 rounded bg-surface-container-high hover:bg-surface-bright text-on-surface" id="btn-close-adas-detail-modal" type="button">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+      <!-- Dossier Tabs -->
+      <div class="flex flex-wrap items-center gap-1.5 bg-surface-container-lowest p-1 rounded border border-surface-container-high">
+        <button class="adas-view-tab active px-3 py-1 rounded bg-surface-container-high text-primary-container font-label-sm text-xs font-bold border border-primary-container/30" data-tab="full_script" data-target="part_a" type="button">Kịch Bản Full (A+B+C)</button>
+        <button class="adas-view-tab px-3 py-1 rounded hover:bg-surface-container text-on-surface font-label-sm text-xs" data-tab="seo_pack" data-target="seo" type="button">Bộ Thẻ SEO &amp; Title</button>
+        <button class="adas-view-tab px-3 py-1 rounded hover:bg-surface-container text-on-surface font-label-sm text-xs" data-tab="thumbnails" data-target="thumbnails" type="button">3 Ảnh Thumbnail AI</button>
+        <button class="adas-view-tab px-3 py-1 rounded hover:bg-surface-container text-on-surface font-label-sm text-xs" data-tab="outline" data-target="prompt" type="button">Giàn Ý &amp; Prompt 16:9</button>
+        <button class="adas-view-tab px-3 py-1 rounded hover:bg-surface-container text-on-surface font-label-sm text-xs" data-tab="audit_report" type="button">Báo Cáo Kiểm Định</button>
+        <button class="adas-view-tab px-3 py-1 rounded hover:bg-surface-container text-on-surface font-label-sm text-xs" data-tab="step2_prompt" type="button">Lệnh Step 2</button>
+      </div>
+      <div class="flex-1 flex flex-col min-h-[300px] overflow-y-auto">
+        <div class="hidden p-2 bg-surface-container-lowest rounded border border-surface-container-high mb-2" id="adas-detail-thumbnails-view">
+          <div class="flex items-center justify-between mb-2">
+            <span class="font-label-sm text-xs text-secondary font-bold">Bộ 3 Ảnh Thumbnail 16:9 Chuẩn CTR Cao</span>
+            <button class="px-2.5 py-1 rounded bg-primary-container text-on-primary-container font-label-sm text-xs font-bold" id="btn-adas-regenerate-thumbs" type="button">Tạo / Đánh Giá Lại 3 Thumbnail</button>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-2" id="adas-thumbnails-grid"></div>
+        </div>
+        <textarea class="w-full flex-1 bg-surface-container-lowest p-3 rounded font-label-md text-xs text-on-surface leading-relaxed focus:outline-none font-mono resize-none border border-surface-container-high" id="adas-detail-textarea" readonly rows="12"></textarea>
+      </div>
+      <div class="flex items-center justify-between pt-1 border-t border-surface-container-high">
+        <span class="font-label-sm text-[11px] text-outline font-mono">Dữ liệu được lưu trữ tự động trong folder dự án JSON/TXT</span>
+        <div class="flex items-center gap-2">
+          <button class="px-3.5 py-1.5 rounded bg-surface-container-high hover:bg-surface-bright text-primary font-label-sm text-xs font-bold flex items-center gap-1 border border-surface-container-high" id="btn-adas-copy-detail" type="button">
+            <span class="material-symbols-outlined text-[15px]">content_copy</span> Copy Nội Dung
+          </button>
+          <button class="px-3.5 py-1.5 rounded bg-primary-container text-on-primary-container font-label-sm text-xs font-bold flex items-center gap-1 shadow-[0_0_8px_rgba(0,255,135,0.3)]" id="btn-adas-push-to-single" type="button">
+            <span class="material-symbols-outlined text-[15px]">forward</span> Đẩy Sang Làm Phim Đơn
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======================================================== -->
+  <!-- MODAL 4: MẪU LỆNH PROMPT STEP 2                          -->
+  <!-- ======================================================== -->
+  <div class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4" id="step2-template-modal">
+    <div class="bg-surface-container rounded-xl w-full max-w-3xl p-5 shadow-2xl flex flex-col gap-3 max-h-[90vh] border border-surface-container-highest">
+      <div class="flex items-center justify-between pb-1 border-b border-surface-container-high">
+        <div class="flex items-center gap-2">
+          <span class="material-symbols-outlined text-secondary text-[22px]">terminal</span>
+          <span class="font-headline-lg text-base text-primary font-bold">Cấu Hình Mẫu Lệnh Step 2 (Drama Prompt Template)</span>
+        </div>
+        <button class="p-1 rounded bg-surface-container-high hover:bg-surface-bright text-on-surface" id="btn-close-step2-tpl-modal" type="button">
+          <span class="material-symbols-outlined text-[18px]">close</span>
+        </button>
+      </div>
+      <p class="font-body-sm text-xs text-on-surface-variant">Tuỳ chỉnh lệnh hệ thống để điều khiển ChatGPT/Gemini xây dựng cốt truyện Drama Nhật Bản nhiều tầng cao trào, giàu tính hoài niệm và hồi hộp.</p>
+      <textarea class="w-full bg-surface-container-lowest p-3 rounded font-label-md text-xs text-primary font-mono focus:outline-none resize-none leading-relaxed border border-surface-container-high" id="step2-template-textarea" rows="10"></textarea>
+      <div class="flex items-center justify-between pt-1 border-t border-surface-container-high">
+        <span class="font-label-sm text-[11px] text-secondary font-mono" id="step2-tpl-msg">Biến khả dụng: {MA_ID}, {TIEU_DE}, {NHAN_VAT}, {BOI_CANH}, {COT_TRUYEN}</span>
+        <button class="px-4 py-1.5 rounded bg-primary-container text-on-primary-container font-label-md text-xs font-bold shadow-[0_0_10px_rgba(0,255,135,0.3)] hover:brightness-105" id="btn-save-step2-tpl" type="button">
+          Lưu Cấu Hình Mẫu Lệnh
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=20261103_v10"></script>
+</body>
+</html>

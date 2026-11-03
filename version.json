@@ -1,0 +1,8 @@
+{
+  "version": "V1.0.0",
+  "build_number": 100,
+  "released_at": "2026-11-03 16:30:00",
+  "repo": "phamngocthu661-lang/drama-nhat-studio",
+  "branch": "main",
+  "changelog": "Phiên bản chính thức V1.0.0: Hệ thống Kịch bản 3 Part chuẩn Nhật, Render Đa luồng tối đa 5 video song song (<90% CPU/GPU) với 5 ô tiến trình riêng biệt, Kho Stock Pexels/Pixabay 100% tự động, Kiểm định MP4 4 tầng chống lỗi ngắt giữa chừng và Tự động Cập nhật OTA qua GitHub."
+}

@@ -1,0 +1,134 @@
+================================================================================
+   CHI TIẾT BẢN CẬP NHẬT NHANH TỔNG HỢP — DRAMA NHẬT STUDIO
+   (Bản tích hợp đầy đủ toàn bộ các nâng cấp & sửa lỗi mới nhất đến Lần 43)
+================================================================================
+
+MỚI NHẤT TRONG BẢN CẬP NHẬT LẦN 33 -> 43 (03/11/2026):
+  + Giao diện Workstation Studio mới (Industrial Cyber Deck) tích hợp bộ lọc
+    dự án (Tất cả / Chưa xong / Đã xong) hiển thị 1 dòng siêu gọn, giữ nguyên
+    chuẩn 4 Card phần Xuất Video và Giả Lập Bố Cục 5 Lớp (Live Preview) nguyên bản.
+  + Nâng cấp tải Video Stock: Tải link nào Update & Khóa ngay lập tức link đó
+    (cả ID PX_*, PB_*, YouTube ID và URL gốc) lên Cloud Note Online Rentry và
+    used_stock_links.json để chống tải trùng 100% giữa các máy.
+  + Tách riêng Cổng & Profile Chrome cho Gemini (cổng 9225-9227, GEMINI_PROFILE_1..3)
+    độc lập hoàn toàn với ChatGPT (cổng 9222-9224), tích hợp khóa Model 3.8 High.
+  + Ghi file nguyên tử (Atomic Write) cho saved_ideas.json + saved_ideas_backup.json,
+    bảo vệ 100% danh sách kịch bản chờ khi chạy 9 luồng song song (300+ kịch bản).
+  + Tải Video Stock từ Pexels & Pixabay API chỉ chọn chuẩn 720p & 1080p, GIỮ
+    NGUYÊN BẢN GỐC 100% (-c copy, không drop frame, không re-encode): Tốc độ tải
+    & tạo 1 giờ Stock (2 cuộn 30p) chỉ mất ~5 giây, tự động đổi link dự phòng nếu
+    gặp lỗi mạng và không bao giờ bị treo ở cuộn cuối.
+  + Tích hợp bộ đôi API Pexels Video & Pixabay Video (Chuẩn 720p/1080p CDN Siêu Tốc)
+    kết hợp Panniantong/agent-reach + yt-dlp-ejs + youtube_cookies.txt.
+  + Sửa triệt để hàm tự động mở Chrome CDP (ensure_chrome_debug_browser_open) và
+    đóng gói kèm sẵn youtube_cookies.txt + Panniantong/agent-reach + yt-dlp-ejs.
+  + Sửa triệt để lỗi mở ứng dụng bị MÀN HÌNH ĐEN (#0a0d14) trên máy khách:
+    Chuyển sang cơ chế Cửa sổ Chromium App Native (--app) tự động nhận diện
+    Chrome/Edge trên máy khách, hoạt động 100% kể cả khi chạy quyền Admin hoặc
+    máy khách thiếu WebView2 Runtime / bật VPN Proxy.
+  + Tự động Retry tối đa 3 lần khi viết kịch bản bị lỗi + Bổ sung nút [🔁 Viết Lại]
+    thủ công trên từng kịch bản và nút [🔁 Viết Lại Mã Lỗi / Thiếu].
+  + Tinh gọn giao diện (mặc định Watermark = ".", tốc độ 24 FPS, tải Stock 30 tiếng
+    độ phân giải 720p và tự động xóa ngay Stock đã dùng để giải phóng bộ nhớ).
+  + Sửa nút mở thư mục [📂] luôn bật cửa sổ Explorer lên trên cùng ngay cả khi đang chạy.
+
+I. HƯỚNG DẪN CẬP NHẬT NHANH TRONG 5 GIÂY (KHÔNG MẤT KỊCH BẢN & KEY BẢN QUYỀN)
+--------------------------------------------------------------------------------
+Bạn có thể chọn 1 trong 2 cách dưới đây (cả 2 cách đều GIỮ NGUYÊN 100% các kịch
+bản đã tạo P01..P20 trong projects/, saved_ideas.json, Key bản quyền license.json
+và tài khoản ChatGPT trong BROWSER_PROFILE):
+
+[Cách 1]: Giải nén đè trực tiếp
+  1. Tắt cửa sổ ứng dụng Drama_Nhat_Studio đang mở.
+  2. Giải nén toàn bộ file trong Drama_Nhat_Studio_Ban_Update_Nhanh.zip đè trực
+     tiếp (Replace the files in the destination) vào thư mục đang cài ứng dụng.
+  3. Bấm đúp vào Cap_Nhat_Nhanh.bat (hoặc Drama_Nhat_Studio.exe) để mở lại app.
+
+[Cách 2]: Giải nén ra thư mục con rồi bấm Cap_Nhat_Nhanh.bat
+  1. Nếu bạn bấm chuột phải vào Drama_Nhat_Studio_Ban_Update_Nhanh.zip -> chọn
+     "Extract All..." (ra thư mục Drama_Nhat_Studio_Ban_Update_Nhanh\).
+  2. Bạn chỉ cần mở thư mục vừa giải nén và bấm đúp vào file Cap_Nhat_Nhanh.bat:
+     - Công cụ sẽ tự động tắt tiến trình Voice CPU cũ, tự động chép toàn bộ file
+       mới vào đúng thư mục chính của bạn (cả gốc lẫn app/) và tự động bật lại app!
+
+================================================================================
+II. TỔNG HỢP CHI TIẾT 7 HẠNG MỤC NÂNG CẤP TRONG BẢN UPDATE NÀY
+================================================================================
+
+1. BẬT SẴN SERVER VOICE GPU NGAY KHI MỞ APP & CHỌN 1 TRONG 2 SERVER GPU
+   - Tự động tắt tiến trình run.exe chế độ CPU cũ (nếu còn chạy ngầm) và khởi
+     động cụm 2 Worker GPU (--use_gpu trên cổng 50021 & 50022) ngay khi mở app.
+   - Tự động nạp sẵn (warmup_speaker) model giọng "Drama" (speaker_id=13,
+     speedScale=0.97, pitchScale=-0.02) lên VRAM GPU để không bị trễ câu đầu.
+   - Tốc độ tạo âm thanh trên GPU đạt gấp ~30 lần thời lượng thực (kịch bản
+     45.000 chữ tạo xong âm thanh chỉ trong ~35-45 giây).
+   - Cho phép chọn bật 1 trong 2 Server Voice GPU ngay trên giao diện:
+     + [Server 1]: VOICEVOX DirectML GPU (2 Cổng 50021/50022 • Tốc độ 30x)
+     + [Server 2]: OmniVoice CUDA GPU (Zero-Shot Clone từ file mẫu .wav)
+
+2. NHẬN DIỆN 100% GIỌNG ĐỌC MỚI KHI ẤN RENDER VIDEO
+   - Khi bấm [Render MP4] hay [Chạy Đa Luồng], giao diện đính kèm trực tiếp cấu
+     hình voice_config đang chọn gửi xuống Backend.
+   - Tự động kiểm tra chữ ký giọng đọc (assets/voice_signature.json). Nếu bạn vừa
+     đổi giọng hoặc chỉnh Speed/Pitch/Intonation/Pause, hệ thống tự động xóa
+     master_voice.wav cũ và tổng hợp lại ngay bằng giọng mới trên Server GPU.
+   - Loại bỏ hoàn toàn việc tự ý rơi ngầm về OmniVoice CPU chậm chạp.
+
+3. TỰ ĐỘNG CÂN ĐỐI ĐA LUỒNG RENDER TỐI ĐA ~90% GPU & CPU
+   - Bộ điều phối tài nguyên động (HardwareResourceBalancer) đo tải thời gian
+     thực của % GPU (Core + NVENC + VRAM) và % CPU + % RAM, hiển thị trên thanh
+     trạng thái: "⚡ Tự cân đối 90%: GPU X% • CPU Y%".
+   - Khi bấm Render nhiều video cùng lúc, ứng dụng tự động mở Pool Đa Luồng (tối
+     đa 3 video chạy song song): Vừa ghép FFmpeg NVENC (-preset p2) cho Video 1
+     vừa tạo sẵn Voice GPU cho Video 2 & 3 và chạy song song nhiều luồng FFmpeg
+     khi tải máy còn dưới 88%-90%.
+
+4. KHẮC PHỤC TRIỆT ĐỂ LỖI KỊCH BẢN THIẾU PART VẪN BÁO ĐẠT (P16, P17) & NÚT [VIẾT TIẾP]
+   - Tách riêng 3 Đoạn Chat Độc Lập cho từng Part (Chat #3A cho PART A, Chat #3B
+     cho PART B, Chat #3C cho PART C) kèm Story Bible + 400 chữ cuối Part trước
+     để không bao giờ bị tràn bộ nhớ ngữ cảnh trên ChatGPT.
+   - Cơ chế Mở Đoạn Chat Cứu Hộ tự động nếu lượt viết bị nghẽn giữa chừng.
+   - Chốt chặn 3 Part nghiêm ngặt: Bắt buộc đủ cả 3 file part_a.txt, part_b.txt,
+     part_c.txt (>= 9.500 chữ/Part và tổng >= 35.000 chữ) mới được báo Xong.
+   - Tự động sửa trạng thái cho P16 (15,848 chữ) và P17 (32,684 chữ) ngay khi bạn
+     mở ứng dụng: Giữ nguyên các Part đã viết, hiển thị nhãn màu cam:
+     "⚠️ Thiếu Part B, C (1/3 Part • 15,848 chữ)" kèm nút [▶️ Viết Tiếp] để chỉ
+     viết bù đúng Part còn thiếu!
+   - Sửa lỗi giao diện: Nhãn trạng thái không bao giờ tràn đè lên nút [Render MP4].
+
+5. KHÓA CỐ ĐỊNH MODEL VIẾT KỊCH BẢN Ở CHẾ ĐỘ "Thinking effort: Medium"
+   - Điều khiển chính xác Thanh trượt 3 nấc mới (Power Slider: 0=Instant,
+     1=Medium, 2=High) của ChatGPT Web về đúng mức "Thinking effort: Medium"
+     ngay khi mở tab, khi tạo đoạn chat mới và trước mỗi lần gửi lệnh viết.
+
+6. MỖI KỊCH BẢN CHỈ TẠO ĐÚNG 1 THUMBNAIL DUY NHẤT ({MA_ID}_THUMBNAIL_1.png)
+   - Tại STEP 6 và STEP 7: Chỉ yêu cầu và tạo 1 ảnh Thumbnail Master duy nhất
+     ({MA_ID}_THUMBNAIL_1.png) chuẩn Full HD 1920x1080 (16:9, 6 dòng chữ Nhật)
+     cho mỗi kịch bản thay vì 3 ảnh như trước, tiết kiệm 2/3 thời gian tạo ảnh.
+   - Đổi nút trên dòng dự án từ [🖼️ 3 Thumb] thành [🖼️ Thumb].
+
+7. BẢO TOÀN KỊCH BẢN KHI UPDATE & CHẶN VĨNH VIỄN TIÊU ĐỀ ĐÃ XÓA
+   - Không bao giờ đóng gói saved_ideas.json hay settings.json vào ZIP để không
+     ghi đè mất dữ liệu của bạn.
+   - Bổ sung nút [🔄 Khôi Phục Kịch Bản Cũ] và sổ đen deleted_ideas.json chặn
+     vĩnh viễn các tiêu đề nháp đã xóa không bao giờ tự load lại khi bật app.
+
+8. CHẾ ĐỘ MỚI: CHỈ VIẾT KỊCH BẢN + SEO + THUMBNAIL (KHÔNG RENDER VIDEO MP4)
+   - Bổ sung hộp chọn Chế Độ Chạy và nút [📝 Chỉ Viết KB + SEO + Thumb (Không Render)]
+     giúp chạy đa luồng tạo sẵn toàn bộ Kịch bản 3 Part + SEO + Thumbnail 16:9
+     trước mà không khởi chạy tạo Voice/Render MP4.
+   - Bổ sung nút [📂 Mở Folder Kịch Bản] và sửa triệt để lỗi bấm nút [📂] trên từng
+     dòng kịch bản khi đang chạy đa luồng.
+
+9. ĐA LUỒNG 3 ACC CHATGPT WEB & GEMINI 4 PRO WEB BỀN VỮNG 100%
+   - Khắc phục triệt để lỗi reload tab về trang chủ (#studio_login_guard) và lỗi
+     kẹt GenUI Renderer ở STEP 3 trên ChatGPT Web.
+   - Tối ưu Fast DOM Injection (< 5ms) cho Gemini 4 Pro Web khi bơm lệnh dài.
+
+10. TINH GỌN GIAO DIỆN & THÔNG SỐ MẶC ĐỊNH MỚI (WATERMARK "." • 24FPS • STOCK 30H 720P)
+   - Ẩn phần nhập kịch bản thủ công cũ, chỉ giữ lại ô Watermark Kênh (mặc định ".")
+     và Nơi Lưu Thành Phẩm; căn chỉnh lại toàn bộ các nút trong Trạm AI không tràn khung.
+   - Tốc độ khung hình mặc định: 24 FPS.
+   - Mặc định 1 lượt tải Stock: 30 Tiếng ở độ phân giải 720p nhẹ & nhanh; dùng xong
+     Stock nào tự động xóa ngay Stock đó để giải phóng bộ nhớ ổ cứng.
+================================================================================

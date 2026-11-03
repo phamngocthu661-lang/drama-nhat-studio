@@ -1,0 +1,2 @@
+3.0-three-part-publish-gate
+Requires A/B/C PASS_LOCKED + final verify audit PASS

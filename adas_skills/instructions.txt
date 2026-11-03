@@ -1,0 +1,110 @@
+# PROJECT INSTRUCTIONS — SIMPLE WRITE ↔ AUDIT LOOP v3.2
+
+## CORE PRINCIPLE
+Sau STEP 1–3, sản xuất kịch bản chỉ dùng:
+
+**STEP 4 — WRITE / PATCH SCRIPT**
+
+**STEP 5 — AUDIT / REPAIR TICKETS**
+
+Nếu chưa đạt: STEP 4 → STEP 5 → STEP 4 → STEP 5 cho đến khi >=95.
+
+Không có pre-audit, delta-audit riêng, verification step riêng, replan step riêng hay quality gate trung gian.
+
+# STEP 1 — RESEARCH
+Dùng `01_research_outlier_skill.zip`.
+
+# STEP 2 — IDEA / TITLE / THUMBNAIL
+Dùng `02_idea_title_packaging_skill.zip`.
+
+Khóa:
+- LOCKED_TITLE
+- LOCKED_TITLE_PROMISE
+- TITLE_FACTS
+- TITLE_LOCKED: YES
+
+Từ đây không đổi title.
+
+# STEP 3 — STORY ARCHITECTURE
+Dùng `03_story_architecture_logic_skill.zip`.
+
+Tạo Story Bible, Timeline, Character Knowledge, Causal Chain, Setup/Payoff, scene plan A/B/C, TITLE_FACT_MAP.
+
+STEP 3 chỉ thiết kế một lần trước khi viết.
+Trong vòng sửa sau audit không quay STEP 3; lỗi lớn thì STEP 5 yêu cầu STEP 4 rewrite đúng PART lỗi.
+
+# STEP 4 — WRITE / PATCH SCRIPT
+Dùng `04_longform_script_writer_skill.zip`.
+
+## BUILD MODE
+- PART A: 13.334–16.000 pure chars
+- PART B: 13.334–17.000
+- PART C: 13.334–17.000
+- TOTAL: 40.001–50.000
+
+Chỉ khi TOTAL PASS mới chuyển STEP 5.
+Không pre-audit. Không tự chấm điểm.
+
+## PATCH MODE
+Nhận repair tickets từ STEP 5.
+Chỉ sửa PART/scene bị lỗi.
+Part PASS_LOCKED không được sửa.
+Sửa xong quay thẳng STEP 5.
+
+# STEP 5 — AUDIT / REPAIR TICKETS
+Dùng `05_script_auditor_100_skill.zip`.
+
+STEP 5:
+- đọc full script;
+- chấm /100;
+- khóa phần tốt;
+- chỉ ra chính xác phần cần sửa.
+
+STEP 5 không rewrite script, không đổi title, không tạo bước xác nhận khác.
+
+Nếu score <95:
+- PASS_LOCKED_PARTS
+- REPAIR_TICKETS
+- PARTS_TO_PATCH
+- RETURN_TO_STEP_4_PATCH
+
+Nếu score >=95 → STEP 6.
+
+## Anti-loop
+Nếu 2 vòng liên tiếp điểm không tăng:
+- không micro-patch tiếp;
+- STEP 5 phát 1 ROOT_CAUSE_REWRITE_TICKET cho đúng PART;
+- STEP 4 rewrite PART đó;
+- PART đã đạt giữ nguyên.
+
+# STEP 6 — SEO / PUBLISH PACK
+Dùng `06_seo_publish_pack_skill.zip`.
+Chỉ chạy khi STEP 5 >=95 và Publish Ready.
+Title = LOCKED_TITLE verbatim.
+
+# STEP 7 — POST-PUBLISH ANALYTICS
+Dùng `07_postpublish_analytics_skill.zip`.
+
+# HARD SCRIPT LENGTH
+PURE_CHARACTER_COUNT chỉ Unicode letters + numbers; bỏ punctuation, symbol, whitespace, line break.
+
+PASS = 40.001–50.000.
+
+# IMMUTABILITY RULE
+- PASS_LOCKED = read-only.
+- STEP 4 chỉ sửa PATCH_REQUIRED.
+- Không rewrite part đã đạt.
+- Không sửa title.
+
+# SIMPLE LOOP
+STEP 3 architecture → STEP 4 BUILD A+B+C → Length PASS → STEP 5 AUDIT → nếu <95 khóa phần tốt + repair tickets → STEP 4 PATCH chỉ part lỗi → STEP 5 AUDIT lại → lặp đến >=95 → STEP 6.
+
+# STEP STATUS
+Sau mỗi STEP chỉ cần:
+- Completed STEP
+- Result
+- PASS / NEEDS REVISION
+- Next STEP
+- Exact command
+
+Nếu user nói `tiếp tục`, `next`, `làm tiếp` thì chạy ngay STEP được đề xuất gần nhất.

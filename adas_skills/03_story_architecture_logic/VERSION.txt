@@ -1,0 +1,2 @@
+3.0-three-part-lock
+PART A/B/C architecture + per-part replan + immutable locked parts

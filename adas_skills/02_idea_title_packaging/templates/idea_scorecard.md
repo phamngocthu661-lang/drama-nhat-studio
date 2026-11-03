@@ -1,0 +1,13 @@
+# Idea Scorecard
+- Premise:
+- Closest reference:
+- Curiosity /20:
+- Emotion /20:
+- Relationship /15:
+- Object /10:
+- Reveal ladder /15:
+- Plausibility /10:
+- Thumbnail /5:
+- Originality /5:
+- TOTAL /100:
+- Verdict:

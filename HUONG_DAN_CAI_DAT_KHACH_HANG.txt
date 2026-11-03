@@ -1,0 +1,42 @@
+================================================================================
+       HƯỚNG DẪN CÀI ĐẶT & SỬ DỤNG DRAMA NHẬT STUDIO (DÀNH CHO KHÁCH HÀNG)
+================================================================================
+
+BƯỚC 1: GIẢI NÉN BỘ CÀI
+--------------------------------------------------------------------------------
+- Giải nén file "Drama_Nhat_Studio_Khach_Hang.zip" ra ổ đĩa còn trống (Khuyên dùng
+  ổ D:\ hoặc E:\, ví dụ: D:\NHAT_DRAMA).
+- Lưu ý: Không đặt trong thư mục có dấu tiếng Việt có khoảng trắng phức tạp.
+
+BƯỚC 2: CHẠY CÀI ĐẶT MÔI TRƯỜNG TỰ ĐỘNG (CHỈ CẦN CHẠY 1 LẦN ĐẦU TIÊN)
+--------------------------------------------------------------------------------
+- Bấm đúp vào file:  Cai_Dat_May_Moi.bat
+- Hệ thống sẽ TỰ ĐỘNG 100%:
+  1. Tự động tải và cài đặt Python 3.11 (nếu máy chưa có Python).
+  2. Tự động cài đặt PyTorch GPU (NVIDIA CUDA) và các thư viện AI.
+  3. Tự động tải bộ não giọng đọc AI Nhật Bản (OmniVoice) về máy.
+- Chờ đến khi hiện thông báo "[HOÀN TẤT 100%] CÀI ĐẶT THÀNH CÔNG".
+
+BƯỚC 3: KÍCH HOẠT KEY BẢN QUYỀN & MỞ ỨNG DỤNG
+--------------------------------------------------------------------------------
+- Từ những lần sau, chỉ cần bấm đúp vào file:  Drama_Nhat_Studio.exe
+  (hoặc Chay_App.bat).
+- Khi mở lần đầu, bảng "🔐 KÍCH HOẠT BẢN QUYỀN" sẽ hiện lên:
+  1. Bấm nút "📋 Copy Mã Máy" (Ví dụ: DNS-8F4A-92C1) và gửi mã này cho Admin.
+  2. Nhận Mã Key Bản Quyền (Theo Tháng / Năm) từ Admin.
+  3. Dán Mã Key vào ô trống và bấm "🔓 KÍCH HOẠT BẢN QUYỀN & MỞ ỨNG DỤNG".
+
+BƯỚC 4: CHỌN GIỌNG ĐỌC AI (ĐÃ TÍCH HỢP SẴN GIỌNG DRAMA 0.97x) & SẢN XUẤT HÀNG LOẠT
+--------------------------------------------------------------------------------
+- Bộ cài đặt đã TÍCH HỢP SẴN 100% bộ máy tạo giọng đọc siêu tốc VOICEVOX DirectML
+  cùng 16 cấu hình giọng (mặc định là giọng "Drama" tốc độ 0.97x trầm ấm chuẩn kênh).
+- Trên giao diện chính (hoặc trong Cài Đặt), bạn có thể chọn giọng đọc tại
+  "🎙️ VÙNG CHỌN VOICE & TINH CHỈNH GIỌNG ĐỌC", kéo chỉnh Tốc độ / Độ trầm và bấm
+  "🔊 Nghe Thử Giọng Đang Chọn" bất kỳ lúc nào.
+- Khi mới cài trên máy mới (kho STOOK chưa có video), bạn chỉ cần bấm nút:
+  "⚡ Tải Sẵn Đủ 10 Tiếng Stock Ngay" (hoặc tích chọn "Tự động tải bù đủ số tiếng
+  trước khi chạy video").
+- Phần mềm sẽ tự động kết nối với File Note Online chung để tìm và tải 10 tiếng
+  video thiên nhiên mới tinh (chống trùng lặp 100% giữa tất cả các máy) và
+  tự động cắt thành các Part 30 phút để sẵn sàng sản xuất!
+================================================================================

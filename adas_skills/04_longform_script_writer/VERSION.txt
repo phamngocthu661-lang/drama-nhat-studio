@@ -1,0 +1,2 @@
+3.0-three-part-build-patch
+Three separate generations: A/B/C; patch only failing part; locked parts immutable
