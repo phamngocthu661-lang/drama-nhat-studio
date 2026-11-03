@@ -1295,6 +1295,35 @@
 ### 4. Quy Tắc Vận Hành Đẩy Bản Cập Nhật Lên GitHub ([`push_update_github.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/push_update_github.py))
 - **Quy tắc bắt buộc**: Khi sửa chữa hoặc nâng cấp code ở máy Admin, hệ thống chỉ sửa cục bộ; **chỉ khi Admin nhắn lệnh yêu cầu *"cập nhật lên github"* thì mới chạy [`push_update_github.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/push_update_github.py)** để tăng số phiên bản (`V1.0.1`, `V1.0.2`...) và đẩy lên GitHub cho các máy khách nhận thông báo cập nhật!
 
+---
+
+## Cập nhật: 03/11/2026 (Lần 56) — Xóa Thanh Menu Phụ Bị Lặp (`CYBER DECK SUB-NAVIGATION BAR`) & Đặt Nút `🔄 CẬP NHẬT (V1.0.0)` Nổi Bật Ngay Trên Thanh Menu Tab Chính (`frontend/index.html`, `frontend/app.js`)
+
+### 1. Xử Lý Lỗi Bị 2 Menu Chồng Lên Nhau ([`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html#L221-L265))
+- **Nguyên nhân**: Ngay bên dưới thanh menu điều hướng 4 tab chính (`#studio-tab-nav`: `TRẠM AI ADAS`, `BÀN DỰNG VIDEO CHÍNH`, `PHÒNG THU VOICE GPU & KHO STOCK`, `CHẨN ĐOÁN GPU & TERMINAL LOGS`) còn tồn tại thêm 1 thanh menu phụ (`CYBER DECK SUB-NAVIGATION BAR`: `[1] ADAS AI`, `[2] DỰNG VIDEO 5 LỚP`, `[3] VOICE & KHO STOCK`, `[4] CHẨN ĐOÁN GPU & LOGS`), khiến giao diện bị lặp 2 thanh menu giống nhau.
+- **Khắc phục**: Đã xóa hoàn toàn thanh menu phụ `.quick-tab-jump` bị lặp trong [`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html#L221-L265) và chuẩn hóa hiệu ứng active trên thanh menu chính duy nhất `#studio-tab-nav`.
+
+### 2. Bổ Sung Nút Cập Nhật Rõ Ràng Ở Cả 2 Vị Trí Trên Đầu Giao Diện ([`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html#L120-L130), [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js#L3865-L4060))
+- **Vị trí 1 — Ngay bên phải Thanh Menu 4 Tab Chính (`#studio-tab-nav`)**:
+  - Nút **`🔄 CẬP NHẬT (V1.0.0)`** (`#btn-check-update-nav`) màu xanh ngọc nổi bật ngay bên phải 4 tab chính (cạnh chỉ số `ENGINE: FFMPEG 6.1 NVENC`).
+  - Khi có bản cập nhật mới trên GitHub, nút **`🚀 CẬP NHẬT V1.0.x`** (`#btn-apply-update-nav`) sẽ tự động bật sáng nhấp nháy ngay tại đây.
+- **Vị trí 2 — Góc trên cùng bên phải Thanh Header (`#btn-check-update-header` & `#btn-apply-update-header`)** + **Thanh Thông Báo Nổi (`#ota-update-banner`)** khi có bản mới.
+- **Cơ chế dự phòng trực tiếp GitHub trong [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js#L3961-L3980)**: Kể cả khi cửa sổ Server cũ chưa khởi động lại, bấm nút **`🔄 CẬP NHẬT (V1.0.0)`** vẫn tự động đối chiếu trực tiếp với `version.json` trên GitHub và thông báo kết quả ngay lập tức.
+- Đồng bộ toàn bộ sang [`app/frontend/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/app/frontend) (chưa đẩy lên GitHub theo đúng quy tắc chỉ đẩy khi Admin nhắn *"cập nhật lên github"*).
+
+---
+
+## Cập nhật: 03/11/2026 (Lần 57) — Phát Hành Chính Thức Phiên Bản `V1.0.1` (Build #101) Lên GitHub (`version.json`, `push_update_github.py`, `frontend/index.html`, `frontend/app.js`)
+
+### 1. Phát Hành Bản Cập Nhật `V1.0.1` Lên GitHub Cho Máy Khách
+- Thực thi [`push_update_github.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/push_update_github.py) theo lệnh **"phát hành"** của Admin:
+  - Nâng cấp phiên bản trong [`version.json`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/version.json) và [`app/version.json`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/app/version.json) từ `V1.0.0` (Build #100) lên **`V1.0.1`** (`build_number: 101`).
+  - Tự động đồng bộ nhãn phiên bản mặc định trong [`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html) (`#app-version-badge`, `#text-check-update-header`, `#text-check-update-nav`) sang `V1.0.1`.
+  - Commit và đẩy (`git push origin main`) lên kho lưu trữ chính thức `https://github.com/phamngocthu661-lang/drama-nhat-studio`.
+- Ngay sau khi phát hành `V1.0.1`, mọi máy khách đang chạy `V1.0.0` khi mở ứng dụng hoặc bấm nút **`🔄 CẬP NHẬT`** sẽ lập tức thấy thông báo **`🎉 Đã có bản cập nhật V1.0.1 trên GitHub`** kèm nút **`🚀 Cập Nhật Ngay`** (hoặc **`Để sau`**).
+
+
+
 
 
 

@@ -459,10 +459,11 @@ def shutdown_all_studio_processes():
 
 def main():
     import atexit
-    atexit.register(shutdown_all_studio_processes)
 
     default_port = 8899
     reuse_existing = is_existing_studio_running(default_port)
+    if not reuse_existing:
+        atexit.register(shutdown_all_studio_processes)
     port = default_port if reuse_existing else find_free_port(default_port)
     url = f"http://127.0.0.1:{port}"
 

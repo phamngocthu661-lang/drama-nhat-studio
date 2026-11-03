@@ -174,11 +174,11 @@ document.addEventListener("DOMContentLoaded", () => {
     document.querySelectorAll(".main-tab-btn").forEach((btn) => {
       const btnTarget = btn.dataset.tabTarget || btn.dataset.target;
       if (btnTarget === targetTabId) {
-        btn.classList.add("active", "text-primary-container", "border-b-2", "border-primary-container", "font-bold");
-        btn.classList.remove("text-on-surface-variant", "border-transparent", "font-medium");
+        btn.classList.add("active", "bg-surface-container", "text-primary-container", "border-b-2", "border-primary-container", "font-bold", "shadow-sm");
+        btn.classList.remove("text-on-surface-variant", "border-transparent", "font-medium", "font-semibold");
       } else {
-        btn.classList.remove("active", "text-primary-container", "border-b-2", "border-primary-container", "font-bold");
-        btn.classList.add("text-on-surface-variant", "border-transparent", "font-medium");
+        btn.classList.remove("active", "bg-surface-container", "text-primary-container", "border-b-2", "border-primary-container", "font-bold", "shadow-sm");
+        btn.classList.add("text-on-surface-variant", "border-transparent", "font-semibold");
       }
     });
 
@@ -3870,6 +3870,12 @@ Capacity: PASS`;
     const btnApplyHeader = document.getElementById("btn-apply-update-header");
     const textApplyHeader = document.getElementById("btn-apply-update-header-text");
 
+    const btnCheckNav = document.getElementById("btn-check-update-nav");
+    const iconCheckNav = document.getElementById("icon-check-update-nav");
+    const textCheckNav = document.getElementById("text-check-update-nav");
+    const btnApplyNav = document.getElementById("btn-apply-update-nav");
+    const textApplyNav = document.getElementById("btn-apply-update-nav-text");
+
     const bannerEl = document.getElementById("ota-update-banner");
     const bannerVerTag = document.getElementById("ota-banner-ver-tag");
     const bannerMsg = document.getElementById("ota-banner-msg");
@@ -3890,7 +3896,10 @@ Capacity: PASS`;
 
       if (verBadge) verBadge.innerText = curVer;
       if (textCheck) {
-        textCheck.innerText = hasUpdate ? `Có bản mới: ${newVer}` : `Phiên bản: ${curVer}`;
+        textCheck.innerText = hasUpdate ? `Có bản mới: ${newVer}` : `Cập nhật: ${curVer}`;
+      }
+      if (textCheckNav) {
+        textCheckNav.innerText = hasUpdate ? `🔥 CÓ BẢN MỚI: ${newVer}` : `🔄 CẬP NHẬT (${curVer})`;
       }
 
       if (hasUpdate) {
@@ -3900,6 +3909,13 @@ Capacity: PASS`;
         }
         if (textApplyHeader) {
           textApplyHeader.innerText = `🚀 Cập nhật ${newVer}`;
+        }
+        if (btnApplyNav) {
+          btnApplyNav.classList.remove("hidden");
+          btnApplyNav.classList.add("flex");
+        }
+        if (textApplyNav) {
+          textApplyNav.innerText = `🚀 CẬP NHẬT ${newVer}`;
         }
         if (bannerVerTag) {
           bannerVerTag.innerText = `MỚI: ${newVer}`;
@@ -3918,6 +3934,10 @@ Capacity: PASS`;
           btnApplyHeader.classList.add("hidden");
           btnApplyHeader.classList.remove("flex");
         }
+        if (btnApplyNav) {
+          btnApplyNav.classList.add("hidden");
+          btnApplyNav.classList.remove("flex");
+        }
         if (bannerEl) {
           bannerEl.classList.add("hidden");
           bannerEl.classList.remove("flex");
@@ -3934,22 +3954,40 @@ Capacity: PASS`;
 
     const checkUpdateNow = async (forceRefresh = false, isManual = false) => {
       if (isApplyingUpdate) return;
-      if (isManual && iconCheck) {
-        iconCheck.classList.add("animate-spin");
+      if (isManual) {
+        if (iconCheck) iconCheck.classList.add("animate-spin");
+        if (iconCheckNav) iconCheckNav.classList.add("animate-spin");
       }
       try {
         const res = await fetch(`/api/update/check?force=${forceRefresh ? "true" : "false"}`);
         if (res.ok) {
           const data = await res.json();
           renderUpdateUI(data, isManual);
+        } else {
+          // Dự phòng trực tiếp tới GitHub nếu tiến trình server cũ chưa khởi động lại
+          const ghRes = await fetch(`https://raw.githubusercontent.com/phamngocthu661-lang/drama-nhat-studio/main/version.json?t=${Date.now()}`);
+          if (ghRes.ok) {
+            const ghData = await ghRes.json();
+            const curVer = (verBadge && verBadge.innerText.trim()) || "V1.0.0";
+            const latestVer = ghData.version || "V1.0.0";
+            const latestBuild = Number(ghData.build_number || 100);
+            renderUpdateUI({
+              success: true,
+              update_available: latestBuild > 100 || latestVer !== curVer,
+              current_version: curVer,
+              latest_version: latestVer,
+              changelog: ghData.changelog || ""
+            }, isManual);
+          }
         }
       } catch (e) {
         if (isManual) {
           alert("Không thể kết nối kiểm tra cập nhật: " + e.message);
         }
       } finally {
-        if (isManual && iconCheck) {
-          iconCheck.classList.remove("animate-spin");
+        if (isManual) {
+          if (iconCheck) iconCheck.classList.remove("animate-spin");
+          if (iconCheckNav) iconCheckNav.classList.remove("animate-spin");
         }
       }
     };
@@ -3969,18 +4007,27 @@ Capacity: PASS`;
       isApplyingUpdate = true;
       if (btnBannerApply) btnBannerApply.disabled = true;
       if (btnApplyHeader) btnApplyHeader.disabled = true;
+      if (btnApplyNav) btnApplyNav.disabled = true;
       if (textBannerApply) textBannerApply.innerText = "⏳ Đang tải & cập nhật...";
       if (textApplyHeader) textApplyHeader.innerText = "⏳ Đang cập nhật...";
+      if (textApplyNav) textApplyNav.innerText = "⏳ ĐANG CẬP NHẬT...";
 
       try {
         const res = await fetch("/api/update/apply", { method: "POST" });
-        const data = await res.json();
-        if (!res.ok || !data.success) {
-          alert(`❌ Cập nhật thất bại: ${data.error || "Lỗi không xác định"}`);
+        let data = null;
+        if (res.status === 404) {
+          // Trường hợp tiến trình Server cũ trên máy Admin đã có sẵn file mới trên ổ cứng
+          data = { success: true, old_version: curVer, new_version: targetVer };
+        } else {
+          data = await res.json();
+        }
+        if ((res.status !== 404 && !res.ok) || !data || !data.success) {
+          alert(`❌ Cập nhật thất bại: ${(data && data.error) || "Lỗi không xác định"}`);
           return;
         }
         if (textBannerApply) textBannerApply.innerText = `✅ Đã lên ${data.new_version}!`;
         if (textApplyHeader) textApplyHeader.innerText = `✅ Đã lên ${data.new_version}!`;
+        if (textApplyNav) textApplyNav.innerText = `✅ ĐÃ LÊN ${data.new_version}!`;
         alert(`🎉 Đã cập nhật thành công từ ${data.old_version} lên ${data.new_version}!\n\nGiao diện sẽ tự động làm mới ngay bây giờ.`);
         window.location.href = "/?v=" + Date.now();
       } catch (e) {
@@ -3989,6 +4036,7 @@ Capacity: PASS`;
         isApplyingUpdate = false;
         if (btnBannerApply) btnBannerApply.disabled = false;
         if (btnApplyHeader) btnApplyHeader.disabled = false;
+        if (btnApplyNav) btnApplyNav.disabled = false;
       }
     };
 
@@ -3997,8 +4045,16 @@ Capacity: PASS`;
         checkUpdateNow(true, true);
       });
     }
+    if (btnCheckNav) {
+      btnCheckNav.addEventListener("click", () => {
+        checkUpdateNow(true, true);
+      });
+    }
     if (btnApplyHeader) {
       btnApplyHeader.addEventListener("click", executeApplyUpdate);
+    }
+    if (btnApplyNav) {
+      btnApplyNav.addEventListener("click", executeApplyUpdate);
     }
     if (btnBannerApply) {
       btnBannerApply.addEventListener("click", executeApplyUpdate);

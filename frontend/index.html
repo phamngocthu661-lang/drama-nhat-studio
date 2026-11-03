@@ -111,7 +111,7 @@
         <div class="flex flex-col">
           <div class="flex items-center gap-2">
             <span class="font-label-lg text-sm tracking-wider font-bold text-primary">ZC TEAM - TOOL NHẬT</span>
-            <span class="px-1.5 py-0.2 rounded bg-primary-container/15 text-primary-container text-[10px] font-mono font-bold tracking-widest border border-primary-container/30" id="app-version-badge">V1.0.0</span>
+            <span class="px-1.5 py-0.2 rounded bg-primary-container/15 text-primary-container text-[10px] font-mono font-bold tracking-widest border border-primary-container/30" id="app-version-badge">V1.0.1</span>
           </div>
           <span class="font-label-sm text-[10px] tracking-widest text-secondary font-medium">AUTOMATION &amp; DRAMA PRODUCTION WORKSTATION</span>
         </div>
@@ -125,7 +125,7 @@
         <!-- Nút kiểm tra cập nhật thủ công -->
         <button class="flex items-center gap-1 px-2 py-1 rounded bg-surface-container border border-surface-container-high hover:border-primary-container/50 text-on-surface-variant hover:text-primary transition-all" id="btn-check-update-header" title="Kiểm tra bản cập nhật mới trên GitHub" type="button">
           <span class="material-symbols-outlined text-[14px] text-secondary" id="icon-check-update-header">sync</span>
-          <span class="font-label-sm text-[10.5px] font-mono" id="text-check-update-header">Cập nhật: V1.0.0</span>
+          <span class="font-label-sm text-[10.5px] font-mono" id="text-check-update-header">Cập nhật: V1.0.1</span>
         </button>
         <div class="flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-low border border-surface-container-high" id="gpu-badge">
           <span class="inline-block w-2 h-2 rounded-full bg-primary-container shadow-[0_0_8px_rgba(0,255,135,0.7)] animate-pulse"></span>
@@ -218,9 +218,9 @@
       </div>
     </div>
 
-    <!-- Row 3: PRIMARY MULTI-TAB NAVIGATION BAR -->
+    <!-- Row 3: PRIMARY MULTI-TAB NAVIGATION BAR (DUY NHẤT 1 THANH MENU CHÍNH + NÚT CẬP NHẬT RÕ RÀNG) -->
     <nav class="h-11 w-full px-4 flex items-center justify-between bg-surface-container-lowest border-b border-surface-container-high" id="studio-tab-nav">
-      <div class="flex items-center gap-1.5" id="studio-tab-buttons-container">
+      <div class="flex items-center gap-1.5 overflow-x-auto" id="studio-tab-buttons-container">
         <button class="main-tab-btn flex items-center gap-2 px-4 py-2 rounded-t font-label-md text-xs font-bold transition-all border-b-2 border-primary-container bg-surface-container text-primary-container shadow-sm" data-tab-target="tab-adas" data-target="tab-adas" type="button">
           <span class="material-symbols-outlined text-[18px]">bolt</span>
           <span>TRẠM AI ADAS (TỰ ĐỘNG STEP 2-6)</span>
@@ -239,10 +239,21 @@
           <span>CHẨN ĐOÁN GPU &amp; TERMINAL LOGS</span>
         </button>
       </div>
-      <div class="hidden lg:flex items-center gap-3 font-mono text-[11px] text-on-surface-variant">
-        <span class="flex items-center gap-1">ENGINE: <strong class="text-primary-container">FFMPEG 6.1 NVENC</strong></span>
-        <span>•</span>
-        <span class="flex items-center gap-1">THREADS: <strong class="text-secondary" id="header-cpu-threads">12 CORES</strong></span>
+      <div class="flex items-center gap-3 shrink-0">
+        <!-- Nút Cập Nhật Nổi Bật Ngay Trên Thanh Menu Tab Chính -->
+        <button class="hidden items-center gap-1.5 px-3 py-1 rounded bg-primary-container text-on-primary-fixed font-label-md text-xs font-bold shadow-[0_0_14px_rgba(0,255,135,0.5)] hover:brightness-110 transition-all animate-pulse" id="btn-apply-update-nav" title="Đã có bản cập nhật mới trên GitHub — Bấm để tải và nâng cấp ngay" type="button">
+          <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
+          <span id="btn-apply-update-nav-text">🚀 CẬP NHẬT BẢN MỚI</span>
+        </button>
+        <button class="flex items-center gap-1.5 px-3 py-1 rounded bg-primary-container/15 hover:bg-primary-container/25 border border-primary-container/50 text-primary-container font-label-md text-xs font-bold transition-all shadow-sm active:scale-95" id="btn-check-update-nav" title="Bấm để kiểm tra và cập nhật phiên bản mới nhất từ GitHub" type="button">
+          <span class="material-symbols-outlined text-[15px]" id="icon-check-update-nav">sync</span>
+          <span class="font-mono" id="text-check-update-nav">🔄 CẬP NHẬT (V1.0.1)</span>
+        </button>
+        <div class="hidden xl:flex items-center gap-2.5 font-mono text-[11px] text-on-surface-variant pl-2 border-l border-surface-container-high">
+          <span class="flex items-center gap-1">ENGINE: <strong class="text-primary-container">FFMPEG 6.1 NVENC</strong></span>
+          <span>•</span>
+          <span class="flex items-center gap-1">THREADS: <strong class="text-secondary" id="header-cpu-threads">12 CORES</strong></span>
+        </div>
       </div>
     </nav>
   </header>
@@ -251,40 +262,6 @@
   <!-- MAIN WORKSPACE CONTENT CONTAINER (TABBED PANELS)         -->
   <!-- ======================================================== -->
   <main class="flex-1 w-full p-4 overflow-y-auto bg-surface-container-lowest flex flex-col gap-4">
-
-    <!-- CYBER DECK SUB-NAVIGATION BAR (Synced Across All 4 Screens) -->
-    <div class="flex items-center justify-between p-2 rounded bg-surface-container shadow-md border border-surface-container-high">
-      <div class="flex flex-wrap items-center gap-1.5" role="tablist">
-        <button class="quick-tab-jump flex items-center gap-2 px-3.5 py-1.5 rounded bg-primary-container text-on-primary-container font-label-md text-label-md font-bold shadow-[0_0_14px_rgba(0,255,135,0.35)] transition-all" data-jump="tab-adas" data-tab-target="tab-adas" data-target="tab-adas" type="button">
-          <span class="material-symbols-outlined text-[16px]">bolt</span>
-          <span>[1] ADAS AI (TỰ ĐỘNG)</span>
-          <span class="sub-dot w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
-        </button>
-        <button class="quick-tab-jump flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all font-label-md text-label-md" data-jump="tab-render" data-tab-target="tab-render" data-target="tab-render" type="button">
-          <span class="material-symbols-outlined text-[16px]">movie_creation</span>
-          <span>[2] DỰNG VIDEO 5 LỚP</span>
-          <span class="sub-dot hidden w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
-        </button>
-        <button class="quick-tab-jump flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all font-label-md text-label-md" data-jump="tab-voice-stock" data-tab-target="tab-voice-stock" data-target="tab-voice-stock" type="button">
-          <span class="material-symbols-outlined text-[16px]">graphic_eq</span>
-          <span>[3] VOICE &amp; KHO STOCK</span>
-          <span class="sub-dot hidden w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
-        </button>
-        <button class="quick-tab-jump flex items-center gap-2 px-3 py-1.5 rounded bg-surface-container-low text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition-all font-label-md text-label-md" data-jump="tab-diagnostics" data-tab-target="tab-diagnostics" data-target="tab-diagnostics" type="button">
-          <span class="material-symbols-outlined text-[16px]">terminal</span>
-          <span>[4] CHẨN ĐOÁN GPU &amp; LOGS</span>
-          <span class="sub-dot hidden w-1.5 h-1.5 rounded-full bg-on-primary-container animate-pulse ml-0.5"></span>
-        </button>
-      </div>
-      <!-- Active Node Telemetry Capsule -->
-      <div class="hidden xl:flex items-center gap-2 px-2.5 py-1 rounded bg-surface-container-lowest font-label-sm text-label-sm text-outline">
-        <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-primary-container"></span> CUDA NODE: 0x86</span>
-        <span class="text-surface-variant">|</span>
-        <span class="text-primary-container font-mono" id="subnav-audio-badge">DIRECTML_ACCEL // 48kHz 24-BIT</span>
-        <span class="text-surface-variant">|</span>
-        <span class="text-secondary-fixed font-mono" id="subnav-vram-badge">NVENC DUAL ENGINE ACTIVE</span>
-      </div>
-    </div>
 
     <!-- ====================================================== -->
     <!-- TAB 1: TRẠM AI TỰ ĐỘNG ADAS STEP 2 - 6 (SCREEN 1)     -->

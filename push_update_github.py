@@ -79,9 +79,31 @@ def main():
         info["changelog"] = args.changelog.strip()
 
     ver_file.write_text(json.dumps(info, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    # Đồng bộ số phiên bản hiển thị mặc định trong frontend/index.html
+    ver_label = info["version"]
+    idx_file = ROOT_DIR / "frontend" / "index.html"
+    if idx_file.exists():
+        html_txt = idx_file.read_text(encoding="utf-8")
+        html_txt = re.sub(
+            r'(<span[^>]*id="app-version-badge"[^>]*>)\s*V[\d\.]+\s*(</span>)',
+            rf"\g<1>{ver_label}\g<2>",
+            html_txt,
+        )
+        html_txt = re.sub(
+            r'(<span[^>]*id="text-check-update-header"[^>]*>)\s*Cập nhật:\s*V[\d\.]+\s*(</span>)',
+            rf"\g<1>Cập nhật: {ver_label}\g<2>",
+            html_txt,
+        )
+        html_txt = re.sub(
+            r'(<span[^>]*id="text-check-update-nav"[^>]*>)\s*🔄\s*CẬP NHẬT\s*\(V[\d\.]+\)\s*(</span>)',
+            rf"\g<1>🔄 CẬP NHẬT ({ver_label})\g<2>",
+            html_txt,
+        )
+        idx_file.write_text(html_txt, encoding="utf-8")
+
     sync_root_to_app()
 
-    ver_label = info["version"]
     print(f"📦 Đang đóng gói và đẩy phiên bản [{ver_label}] (Build #{info['build_number']}) lên GitHub...")
 
     subprocess.run(["git", "add", "-A"], cwd=str(ROOT_DIR), check=True)
