@@ -1373,6 +1373,7 @@ def repair_single_project_script_and_video(proj_dir: Path) -> Dict[str, Any]:
 def check_and_repair_all_projects_sync(
     projects_dir: Path,
     progress_cb: Optional[Callable[[float, str], None]] = None,
+    log_cb: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """
     Quét toàn bộ thư mục `projects/` (Nút "🛡️ Check Toàn Bộ"):
@@ -1381,16 +1382,22 @@ def check_and_repair_all_projects_sync(
        thì tự động cắt bỏ trực tiếp đoạn giây lỗi đó ra khỏi Video `.mp4`, `master_voice.wav` và `subtitles.srt` (Phương án 1).
     3. Xuất file báo cáo chi tiết `BAO_CAO_CHECK_VA_DON_TOAN_BO.txt`.
     """
+    t0 = time.time()
     projects_dir = Path(projects_dir)
     if not projects_dir.exists():
         return {
+            "total_projects": 0,
             "total_scanned": 0,
             "scripts_repaired_count": 0,
+            "srts_repaired_count": 0,
             "videos_repaired_count": 0,
             "voices_repaired_count": 0,
+            "total_leaked_lines_removed": 0,
             "total_lines_removed": 0,
             "repaired_script_ids": [],
+            "repaired_voice_ids": [],
             "repaired_video_ids": [],
+            "elapsed_sec": 0.0,
             "details": [],
             "report_path": "",
         }
@@ -1398,7 +1405,9 @@ def check_and_repair_all_projects_sync(
     proj_folders = sorted([d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith(".")])
     total = len(proj_folders)
     repaired_script_ids: List[str] = []
+    repaired_voice_ids: List[str] = []
     repaired_video_ids: List[str] = []
+    srts_repaired_count = 0
     voices_repaired_count = 0
     total_lines_removed = 0
     details: List[Dict[str, Any]] = []
@@ -1415,15 +1424,28 @@ def check_and_repair_all_projects_sync(
                 pass
 
         res = repair_single_project_script_and_video(p_dir)
-        if res["script_cleaned"] or res["srt_cleaned"] or res["video_repaired"]:
+        if res["script_cleaned"] or res["srt_cleaned"] or res["video_repaired"] or res["voice_repaired"]:
             details.append(res)
             total_lines_removed += res["script_removed_lines_count"] + res["srt_removed_blocks_count"]
             if res["script_cleaned"] or res["srt_cleaned"]:
                 repaired_script_ids.append(res["ma_id"])
+            if res["srt_cleaned"]:
+                srts_repaired_count += 1
             if res["video_repaired"]:
                 repaired_video_ids.append(res["ma_id"])
             if res["voice_repaired"]:
                 voices_repaired_count += 1
+                repaired_voice_ids.append(res["ma_id"])
+            if log_cb:
+                try:
+                    log_cb(
+                        f"🛠️ [{res['ma_id']}] Đã dọn lỗi: KB={res['script_removed_lines_count']} dòng, "
+                        f"SRT={res['srt_removed_blocks_count']} khung, Voice={res['voice_repaired']}, Video={res['video_repaired']}"
+                    )
+                except Exception:
+                    pass
+
+    elapsed_sec = round(time.time() - t0, 2)
 
     # Ghi file báo cáo tổng hợp rõ ràng cho người dùng / khách hàng
     report_path = projects_dir.parent / "BAO_CAO_CHECK_VA_DON_TOAN_BO.txt"
@@ -1432,10 +1454,12 @@ def check_and_repair_all_projects_sync(
             "================================================================================",
             "BÁO CÁO KIỂM TRA & DỌN SẠCH LỖI [LOCKED_TITLE] TRONG KỊCH BẢN & VIDEO MP4",
             "================================================================================",
-            f"- Thời gian thực hiện: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"- Thời gian thực hiện: {time.strftime('%Y-%m-%d %H:%M:%S')} ({elapsed_sec}s)",
             f"- Thư mục gốc kiểm tra: {projects_dir}",
             f"- Tổng số dự án đã quét: {total}",
             f"- Số kịch bản phát hiện lỗi & đã sửa sạch: {len(repaired_script_ids)} dự án",
+            f"- Số phụ đề (.srt) đã dọn & dịch khớp thời gian: {srts_repaired_count} file",
+            f"- Số file Voice (.wav) đã cắt bỏ đoạn đọc nhầm: {voices_repaired_count} file",
             f"- Số Video MP4 đã cắt bỏ đoạn voice/sub lỗi [LOCKED_TITLE]: {len(repaired_video_ids)} video",
             f"- Tổng số dòng/khung [LOCKED_TITLE] & Metadata đã xóa: {total_lines_removed}",
             "================================================================================",
@@ -1476,13 +1500,18 @@ def check_and_repair_all_projects_sync(
             pass
 
     return {
+        "total_projects": total,
         "total_scanned": total,
         "scripts_repaired_count": len(repaired_script_ids),
+        "srts_repaired_count": srts_repaired_count,
         "videos_repaired_count": len(repaired_video_ids),
         "voices_repaired_count": voices_repaired_count,
+        "total_leaked_lines_removed": total_lines_removed,
         "total_lines_removed": total_lines_removed,
         "repaired_script_ids": repaired_script_ids,
+        "repaired_voice_ids": repaired_voice_ids,
         "repaired_video_ids": repaired_video_ids,
+        "elapsed_sec": elapsed_sec,
         "details": details,
         "report_path": str(report_path),
     }
