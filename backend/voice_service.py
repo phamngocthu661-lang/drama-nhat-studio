@@ -174,6 +174,15 @@ def split_long_subtitle_segments(
     return results
 
 
+import re as _re_mod
+
+_FAST_MAYBE_LEAK_RE = _re_mod.compile(
+    r"[A-Za-z]|日本語脚本|日本語ナレーション|```|---|===|"
+    r"LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE",
+    _re_mod.IGNORECASE,
+)
+
+
 def strip_leaked_titles_and_metadata(raw_text: str):
     """
     Quét, ghi nhận và xóa sạch 100% các dòng [LOCKED_TITLE], [SELECTED_TITLE], [WINNING_TITLE],
@@ -184,6 +193,8 @@ def strip_leaked_titles_and_metadata(raw_text: str):
     import re
     if not raw_text:
         return "", []
+    if not _FAST_MAYBE_LEAK_RE.search(raw_text):
+        return raw_text.strip(), []
 
     cleaned_raw = re.sub(
         r"</?(?:CodeBlock|WritingBlock|title|grid|grid-item|caption)[^>]*>",
@@ -1352,7 +1363,7 @@ def clean_single_project_scripts_and_detect_media_cuts(proj_dir: Path) -> Dict[s
             pass
 
     pa, pb, pc = proj_dir / "part_a.txt", proj_dir / "part_b.txt", proj_dir / "part_c.txt"
-    if pa.exists() and pb.exists() and pc.exists():
+    if result["script_cleaned"] and pa.exists() and pb.exists() and pc.exists():
         try:
             ta = pa.read_text(encoding="utf-8", errors="ignore").strip()
             tb = pb.read_text(encoding="utf-8", errors="ignore").strip()
