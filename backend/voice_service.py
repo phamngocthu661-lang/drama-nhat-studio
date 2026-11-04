@@ -5,7 +5,7 @@ import time
 import wave
 import subprocess
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Callable
+from typing import List, Dict, Any, Optional, Callable, Tuple
 
 # Ưu tiên thư mục bin nội bộ (chứa ffmpeg/ffprobe tương thích NVENC 13.0)
 _BIN_DIR = Path(__file__).resolve().parent.parent / "bin"
