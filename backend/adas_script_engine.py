@@ -752,6 +752,17 @@ class ADASScriptEngine:
         extra: Optional[Dict[str, Any]] = None,
     ):
         """Nhận thông báo trực tiếp từ ProductionPipeline khi dự án đang tạo Voice / Render MP4 / Hoàn tất."""
+        now_ts = time.time()
+        if not hasattr(self, "_vp_job_update_tracker") or not isinstance(getattr(self, "_vp_job_update_tracker", None), dict):
+            self._vp_job_update_tracker = {}
+        prev_st, prev_ts = self._vp_job_update_tracker.get(ma_id, ("", 0.0))
+
+        # Tránh bão I/O ổ cứng (ghi đè saved_ideas.json + quét 300 thư mục liên tục mỗi giây) khi đang ở trạng thái trung gian VIDEO_RENDERING
+        is_status_transition = (status != prev_st) or (status in ("COMPLETED_VIDEO", "ERROR_VIDEO", "ERROR", "SCRIPT_DONE"))
+        if not is_status_transition and status == "VIDEO_RENDERING" and (now_ts - prev_ts) < 20.0:
+            return
+
+        self._vp_job_update_tracker[ma_id] = (status, now_ts)
         fields: Dict[str, Any] = {"status": status, "current_step": step_desc}
         if status == "COMPLETED_VIDEO":
             fields["has_video_mp4"] = True
@@ -764,11 +775,12 @@ class ADASScriptEngine:
             if extra.get("error"):
                 fields["last_error"] = str(extra["error"])
         self._update_idea_record(ma_id, **fields)
-        self._emit(
-            current_ma_id=ma_id,
-            current_step=step_desc,
-            message=f"[{ma_id}] {step_desc}",
-        )
+        if is_status_transition:
+            self._emit(
+                current_ma_id=ma_id,
+                current_step=step_desc,
+                message=f"[{ma_id}] {step_desc}",
+            )
 
     def subscribe(self, cb: Callable[[Dict[str, Any]], None]):
         self.listeners.append(cb)
@@ -1561,9 +1573,18 @@ class ADASScriptEngine:
                     dir_sig = (0, 0)
                 if (
                     not force_restore_deleted
+                    and is_vp_busy_for_mid
+                    and it.get("has_script")
+                ):
+                    continue
+                if (
+                    not force_restore_deleted
                     and dir_sig != (0, 0)
                     and self._proj_dir_mtime_cache.get(mid) == dir_sig
-                    and curr_st not in ("RUNNING", "VIDEO_RENDERING", "VIDEO_QUEUED", "COMPLETED_VIDEO")
+                    and (
+                        curr_st not in ("RUNNING", "VIDEO_RENDERING", "VIDEO_QUEUED", "COMPLETED_VIDEO")
+                        or is_vp_busy_for_mid
+                    )
                     and not (it.get("has_video_mp4") and mid not in self._mp4_valid_cache)
                 ):
                     continue

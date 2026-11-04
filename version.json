@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 108,
-  "released_at": "2026-11-04 19:22:00",
+  "build_number": 109,
+  "released_at": "2026-11-04 22:30:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Nâng cấp nút '🛡️ CHECK TOÀN BỘ' lên Kiến trúc 2 Giai đoạn Siêu Tốc & Bất đồng bộ (Async Live Progress): Giai đoạn 1 quét và dọn sạch 100% kịch bản (.txt) toàn bộ kho chỉ trong 1-2 giây; Giai đoạn 2 cắt đoạn đọc nhầm [LOCKED_TITLE] trong Video (.mp4) & Voice (.wav) bằng 1-Pass Input Seeking & Python WAV Slicer (chỉ 3-7 giây/video 2 tiếng), hiển thị trực tiếp tiến độ từng video 1/N trên nút bấm và Nhật ký hệ thống, không bao giờ bị treo HTTP."
+  "changelog": "1. Tăng tốc Render Video FFmpeg 5 Lớp nhanh gấp 5.5 LẦN (từ 1.2x lên 6.0x–6.8x realtime): Tích hợp bộ nhớ đệm Pre-baked Overlay Cache (.nut yuva420p @ 12fps cho Hạt Bụi Sao + Hộp Đen + Watermark), xử lý eq/vignette ở độ phân giải gốc 720p@12fps trước khi scale fast_bilinear, gỡ bỏ cờ -flush_packets 1 và -movflags +faststart.\n2. Tăng tốc VOICEVOX DirectML GPU & Sửa triệt để lỗi máy cùng cấu hình nhưng chạy chậm: Tăng thời gian chờ khởi tạo DirectML GPU lên 27s (tránh tự ngắt về CPU khi Windows Defender quét lần đầu), tính thời lượng WAV trên RAM (0ms), ghép 1.500 câu WAV bằng Python PCM (<0.3s), gỡ bỏ /version ping thừa và chặn bão I/O ghi đè saved_ideas.json mỗi giây khi đang Render."
 }

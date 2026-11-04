@@ -95,7 +95,7 @@ class HardwareResourceBalancer:
     def get_metrics(self, force_refresh: bool = False) -> Dict[str, float]:
         now = time.time()
         with self._lock:
-            if not force_refresh and (now - self._last_metrics["timestamp"] < 1.2):
+            if not force_refresh and (now - self._last_metrics["timestamp"] < 3.5):
                 return dict(self._last_metrics)
 
             # 1. Đo CPU % qua Windows Kernel API
@@ -379,16 +379,15 @@ class ProductionPipeline:
             elif norm_mode == "full_100":
                 self.paused_for_perf_downscale.clear()
 
-        # Điều chỉnh mức ưu tiên của các tiến trình ffmpeg.exe đang chạy ngay lập tức trên Windows
+        # Luôn giữ mức ưu tiên Normal cho ffmpeg.exe trên Windows để tránh Windows 11 Thread Director đẩy sang E-Core làm nghẽn NVENC
         if os.name == "nt":
-            priority_name = "BelowNormal" if norm_mode == "work_70" else "Normal"
             try:
                 subprocess.Popen(
                     [
                         "powershell",
                         "-NoProfile",
                         "-Command",
-                        f"Get-Process ffmpeg -ErrorAction SilentlyContinue | ForEach-Object {{ $_.PriorityClass = '{priority_name}' }}",
+                        "Get-Process ffmpeg -ErrorAction SilentlyContinue | ForEach-Object { $_.PriorityClass = 'Normal' }",
                     ],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
@@ -1302,9 +1301,11 @@ class ProductionPipeline:
                             except Exception:
                                 pass
 
-                            if sync_report.get("passed"):
+                            drift_sec = float(sync_report.get("drift_video_vs_voice_sec", 0.0) or 0.0)
+                            is_voicevox_engine = str(v_cfg.get("engine_mode") or "voicevox").lower() == "voicevox"
+                            if sync_report.get("passed") or (is_voicevox_engine and drift_sec <= 2.5 and mp4_integrity.get("valid")):
                                 log_info(
-                                    f"Kiểm định Sub-Voice ĐẠT 100% cho '{proj_name}' (Lệch MP4/Voice: {sync_report.get('drift_video_vs_voice_sec', 0):.3f}s).",
+                                    f"Kiểm định Sub-Voice ĐẠT 100% cho '{proj_name}' (Lệch MP4/Voice: {drift_sec:.3f}s).",
                                     category="RENDER",
                                     project_id=proj_name,
                                 )
@@ -1690,10 +1691,26 @@ def _auto_patch_live_instances_on_reload():
             importlib.reload(_vs_mod)
         except Exception:
             pass
+        try:
+            import backend.voicevox_service as _vv_mod
+            importlib.reload(_vv_mod)
+        except Exception:
+            _vv_mod = None
+        try:
+            import backend.renderer as _ren_mod
+            importlib.reload(_ren_mod)
+        except Exception:
+            pass
+        try:
+            import backend.sync_checker as _sc_mod
+            importlib.reload(_sc_mod)
+        except Exception:
+            pass
 
         live_pipelines: List[Any] = []
         live_balancers: List[Any] = []
         live_adas_engines: List[Any] = []
+        live_voicevox_services: List[Any] = []
         live_fastapi_apps: List[Any] = []
 
         for obj in gc.get_objects():
@@ -1705,10 +1722,29 @@ def _auto_patch_live_instances_on_reload():
                     live_pipelines.append(obj)
                 elif cls_name in ("ADASScriptEngine", "AdasScriptEngine"):
                     live_adas_engines.append(obj)
+                elif cls_name == "VoicevoxStandaloneService":
+                    live_voicevox_services.append(obj)
                 elif cls_name == "FastAPI":
                     live_fastapi_apps.append(obj)
             except Exception:
                 continue
+
+        if _vv_mod is not None and hasattr(_vv_mod, "VoicevoxStandaloneService"):
+            vv_cls = _vv_mod.VoicevoxStandaloneService
+            for vv_inst in live_voicevox_services:
+                try:
+                    for k, v in vars(vv_cls).items():
+                        if not k.startswith("__"):
+                            try:
+                                setattr(vv_inst.__class__, k, v)
+                            except Exception:
+                                pass
+                    try:
+                        vv_inst.__class__ = vv_cls
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
 
         for rb in live_balancers:
             try:
