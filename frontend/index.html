@@ -471,6 +471,45 @@
                   </button>
                 </div>
               </div>
+              <!-- Thanh Chọn Folder Project & Nơi Chứa Video Cuối (Render SSD -> Tự Chuyển Sang HDD) -->
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-2 p-2 rounded bg-surface-container-lowest border border-surface-container-high">
+                <div class="flex flex-col gap-1">
+                  <div class="flex items-center justify-between">
+                    <label class="font-label-sm text-[10.5px] text-secondary font-bold uppercase flex items-center gap-1" for="adas-projects-dir-input">
+                      <span class="material-symbols-outlined text-[13px]">folder_Managed</span>
+                      1. Folder Project (Chứa Dự Án / Kịch Bản):
+                    </label>
+                    <button class="px-2 py-0.5 rounded bg-secondary/15 hover:bg-secondary/30 text-secondary font-label-sm text-[10.5px] font-bold border border-secondary/40 transition-all active:scale-95" id="btn-adas-pick-projects-dir" title="Chọn Folder Project (không còn cố định mặc định — chọn bất kỳ thư mục dự án nào để nạp ngay)" type="button">
+                      📂 Chọn Folder Project
+                    </button>
+                  </div>
+                  <input class="w-full h-7 px-2 rounded bg-surface-container-low text-primary font-mono text-[11px] border border-surface-container-high focus:outline-none focus:border-secondary" id="adas-projects-dir-input" placeholder="Đường dẫn Folder Project..." title="Nhập hoặc bấm Chọn Folder Project rồi nhấn Enter" type="text" value=""/>
+                </div>
+                <div class="flex flex-col gap-1">
+                  <div class="flex items-center justify-between">
+                    <label class="font-label-sm text-[10.5px] text-primary-container font-bold uppercase flex items-center gap-1" for="adas-final-video-dir-input">
+                      <span class="material-symbols-outlined text-[13px]">video_library</span>
+                      2. Nơi Chứa Video Cuối (Ổ Đích Lưu MP4):
+                    </label>
+                    <div class="flex items-center gap-1">
+                      <button class="px-2 py-0.5 rounded bg-primary-container/15 hover:bg-primary-container/30 text-primary-container font-label-sm text-[10.5px] font-bold border border-primary-container/40 transition-all active:scale-95" id="btn-adas-pick-final-video-dir" title="Chọn Nơi Chứa Video Cuối (VD: Ổ HDD dung lượng lớn — Render trên SSD xong sẽ tự động chuyển MP4 về đây và vẫn load được 100%)" type="button">
+                        🎬 Chọn Nơi Chứa Video
+                      </button>
+                      <button class="px-1.5 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[10px] border border-surface-container-high" id="btn-adas-open-final-video-dir" title="Mở Nơi Chứa Video Cuối trong Windows Explorer" type="button">
+                        Mở
+                      </button>
+                    </div>
+                  </div>
+                  <input class="w-full h-7 px-2 rounded bg-surface-container-low text-primary-container font-mono text-[11px] border border-surface-container-high focus:outline-none focus:border-primary-container" id="adas-final-video-dir-input" placeholder="Đường dẫn Nơi Chứa Video Cuối (HDD/SSD)..." title="Nhập hoặc bấm Chọn Nơi Chứa Video Cuối rồi nhấn Enter" type="text" value=""/>
+                </div>
+                <div class="md:col-span-2 flex flex-wrap items-center justify-between gap-2 pt-0.5 border-t border-surface-container">
+                  <label class="inline-flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-on-surface font-medium">
+                    <input checked class="rounded border-surface-container-high text-primary-container focus:ring-0 w-3.5 h-3.5 accent-[#00ff87]" id="adas-use-ssd-staging" type="checkbox"/>
+                    <span>⚡ <strong class="text-primary-container">Render Siêu Tốc Trên Ổ SSD</strong> rồi tự động chuyển MP4 sang <strong class="text-secondary">Nơi Chứa Video Cuối</strong> (Tự dọn file tạm SSD • Vẫn load 100% trạng thái)</span>
+                  </label>
+                  <span class="font-mono text-[10px] text-on-surface-variant" id="adas-ssd-staging-badge">SSD Cache: %LOCALAPPDATA%\Drama_Nhat_Studio\SSD_Render_Staging</span>
+                </div>
+              </div>
               <!-- 8 Quick Action Buttons -->
               <div class="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
                 <button class="flex items-center justify-center gap-1 h-7 rounded bg-surface-container hover:bg-surface-container-high text-on-surface font-label-sm text-[11px] border border-surface-container-high transition-colors" id="btn-adas-open-projects-dir" type="button">
@@ -603,19 +642,38 @@
               <input class="w-full h-8 px-3 rounded bg-surface-container-lowest text-primary font-label-md focus:outline-none focus:bg-surface-container-low font-mono border border-surface-container-high" id="channel-name" placeholder="VD: ." type="text" value="."/>
             </div>
 
-            <!-- Nơi Lưu Thành Phẩm (Thư Mục Xuất) -->
+            <!-- 1. Folder Project (Nơi chứa Dự án / Kịch bản) -->
+            <div class="flex flex-col gap-1.5">
+              <div class="flex items-center justify-between">
+                <label class="font-label-sm text-on-surface-variant uppercase font-semibold flex items-center gap-1" for="render-projects-dir">
+                  <span class="material-symbols-outlined text-[14px] text-secondary">folder_managed</span>
+                  1. Folder Project (Chứa Dự Án / Kịch Bản):
+                </label>
+                <button class="px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-secondary font-label-sm font-semibold flex items-center gap-1 transition-colors active:scale-95 shadow-sm border border-secondary/30" id="btn-browse-projects-dir" title="Chọn Folder Project chứa các kịch bản/dự án cần load" type="button">
+                  <span class="material-symbols-outlined text-[14px]">folder_open</span>
+                  <span>📂 Chọn Folder Project</span>
+                </button>
+              </div>
+              <input class="w-full h-8 px-3 rounded bg-surface-container-lowest text-secondary font-label-md truncate focus:outline-none font-mono border border-surface-container-high" id="render-projects-dir" placeholder="Chọn Folder Project..." type="text" value=""/>
+            </div>
+
+            <!-- 2. Nơi Chứa Video Cuối (Thư Mục Lưu MP4 Sau Khi Render SSD) -->
             <div class="flex flex-col gap-1.5">
               <div class="flex items-center justify-between">
                 <label class="font-label-sm text-on-surface-variant uppercase font-semibold flex items-center gap-1" for="output-dir">
-                  <span class="material-symbols-outlined text-[14px] text-primary-container">folder_open</span>
-                  Nơi Lưu Thành Phẩm (Thư Mục Xuất):
+                  <span class="material-symbols-outlined text-[14px] text-primary-container">video_library</span>
+                  2. Nơi Chứa Video Cuối (Ổ Đích Lưu MP4):
                 </label>
-                <button class="px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-secondary font-label-sm font-semibold flex items-center gap-1 transition-colors active:scale-95 shadow-sm border border-secondary/30" id="btn-browse-output-dir" title="Chọn thư mục lưu thành phẩm" type="button">
+                <button class="px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-primary-container font-label-sm font-semibold flex items-center gap-1 transition-colors active:scale-95 shadow-sm border border-primary-container/30" id="btn-browse-output-dir" title="Chọn Nơi Chứa Video Cuối (Render trên SSD xong sẽ tự chuyển MP4 sang đây và vẫn load được 100%)" type="button">
                   <span class="material-symbols-outlined text-[14px]">drive_file_move</span>
-                  <span>📂 Chọn Thư Mục Lưu</span>
+                  <span>🎬 Chọn Nơi Chứa Video</span>
                 </button>
               </div>
-              <input class="w-full h-8 px-3 rounded bg-surface-container-lowest text-primary-fixed-dim font-label-md truncate focus:outline-none font-mono border border-surface-container-high" id="output-dir" placeholder="Mặc định: D:\KEY NHẬT DRAMA\TOOL_NHAT_DRAMA\projects" type="text" value=""/>
+              <input class="w-full h-8 px-3 rounded bg-surface-container-lowest text-primary-fixed-dim font-label-md truncate focus:outline-none font-mono border border-surface-container-high" id="output-dir" placeholder="Mặc định: Cùng Folder Project hoặc chọn ổ HDD..." type="text" value=""/>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer select-none text-[11px] text-on-surface-variant mt-0.5">
+                <input checked class="rounded border-surface-container-high text-primary-container focus:ring-0 w-3.5 h-3.5 accent-[#00ff87]" id="render-use-ssd-staging" type="checkbox"/>
+                <span>⚡ Render siêu tốc trên ổ SSD rồi tự động chuyển MP4 sang Nơi Chứa Video Cuối</span>
+              </label>
             </div>
 
             <!-- Hàng đợi Kịch Bản ADAS Sẵn Sàng Xuất Video -->

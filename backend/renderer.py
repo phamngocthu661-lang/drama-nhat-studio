@@ -235,15 +235,61 @@ def _create_shifted_srt(src_srt_path: str, offset_sec: float, dst_srt_path: str)
         return src_srt_path
 
 
+def get_default_ssd_staging_dir() -> Tuple[Path, bool]:
+    """
+    Trả về `(ssd_staging_dir, use_ssd_staging)`.
+    Mặc định bật `use_ssd_staging = True` tại `%LOCALAPPDATA%\\Drama_Nhat_Studio\\SSD_Render_Staging` (trên ổ C: SSD)
+    để toàn bộ quá trình ghi phân đoạn `.ts` (2GB) và đóng gói Remux `.mp4` (2GB) diễn ra trên SSD siêu tốc,
+    sau đó tự động chuyển tuần tự sang ổ HDD đích!
+    """
+    appdata = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")) / "Drama_Nhat_Studio"
+    default_ssd = appdata / "SSD_Render_Staging"
+    use_ssd = True
+    custom_ssd = ""
+
+    for cfg_cand in (
+        appdata / "storage_paths.json",
+        Path(__file__).resolve().parent.parent / "config.json",
+        Path(__file__).resolve().parent.parent.parent / "config.json",
+    ):
+        if cfg_cand.exists():
+            try:
+                d = json.loads(cfg_cand.read_text(encoding="utf-8"))
+                if isinstance(d, dict):
+                    if "use_ssd_staging" in d:
+                        use_ssd = bool(d["use_ssd_staging"])
+                    if d.get("ssd_staging_dir"):
+                        custom_ssd = str(d["ssd_staging_dir"]).strip()
+                    break
+            except Exception:
+                pass
+
+    target_ssd = Path(custom_ssd) if custom_ssd else default_ssd
+    try:
+        target_ssd.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        target_ssd = default_ssd
+        try:
+            target_ssd.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+    return target_ssd, use_ssd
+
+
 def get_saved_render_progress(output_path: str, total_dur: float = 0.0) -> Dict[str, Any]:
     """
-    Kiểm tra xem video này có đoạn Checkpoint Render dở dang nào đã lưu trên ổ cứng hay không.
+    Kiểm tra xem video này có đoạn Checkpoint Render dở dang nào đã lưu trên ổ SSD đệm hoặc ổ cứng đích hay không.
     Trả về số giây đã render xong và phần trăm tương ứng.
     """
     try:
         out_dir = os.path.dirname(os.path.abspath(output_path))
         base_stem = os.path.splitext(os.path.basename(output_path))[0]
-        resume_dir = Path(out_dir) / f"_{base_stem}_resume_cache"
+        ssd_root, _ = get_default_ssd_staging_dir()
+        cand_dirs = [
+            ssd_root / f"_{base_stem}_resume_cache",
+            Path(out_dir) / f"_{base_stem}_resume_cache",
+        ]
+        resume_dir = next((d for d in cand_dirs if d.exists()), cand_dirs[0])
         if not resume_dir.exists():
             return {"has_checkpoint": False, "completed_sec": 0.0, "percent": 0.0}
         meta_file = resume_dir / "resume_meta.json"
@@ -362,9 +408,12 @@ def render_drama_nhat_video(
     bgm_volume: float = 0.08,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     performance_mode: Optional[str] = None,
+    ssd_staging_dir: Optional[str] = None,
+    use_ssd_staging: Optional[bool] = None,
 ) -> Dict[str, Any]:
     """
     Render video Drama Nhật 5 lớp đồ họa với độ phân giải, FPS và chế độ Lật + Zoom 110%.
+    Hỗ trợ Render trên ổ SSD đệm (`SSD Scratch Disk`) rồi tự động di chuyển file MP4 hoàn chỉnh về ổ HDD đích.
     """
     start_time = time.time()
     out_dir = os.path.dirname(os.path.abspath(output_path))
@@ -413,11 +462,32 @@ def render_drama_nhat_video(
         filter_threads = max(2, cpu_threads // 2)
 
     # =========================================================================
-    # CƠ CHẾ LƯU CHECKPOINT & RENDER NỐI TIẾP ĐOẠN CHƯA XONG (MPEG-TS RESUME)
+    # CƠ CHẾ RENDER ĐỆM TRÊN Ổ SSD (SSD SCRATCH DISK) & CHECKPOINT MPEG-TS RESUME
     # =========================================================================
     base_stem = os.path.splitext(os.path.basename(output_path))[0]
-    temp_output_path = os.path.join(out_dir, f"_{base_stem}_rendering_tmp.mp4")
-    resume_dir = Path(out_dir) / f"_{base_stem}_resume_cache"
+    default_ssd_dir, default_use_ssd = get_default_ssd_staging_dir()
+    active_use_ssd = default_use_ssd if use_ssd_staging is None else bool(use_ssd_staging)
+    active_ssd_root = Path(ssd_staging_dir) if (ssd_staging_dir and str(ssd_staging_dir).strip()) else default_ssd_dir
+
+    work_parent_dir = Path(out_dir)
+    if active_use_ssd:
+        try:
+            active_ssd_root.mkdir(parents=True, exist_ok=True)
+            work_parent_dir = active_ssd_root
+        except Exception:
+            work_parent_dir = Path(out_dir)
+
+    temp_output_path = str(work_parent_dir / f"_{base_stem}_rendering_tmp.mp4")
+    resume_dir = work_parent_dir / f"_{base_stem}_resume_cache"
+
+    # Nếu trước đó có Checkpoint dở dang nằm ở out_dir (trên HDD) thì di chuyển sang SSD để nối tiếp
+    legacy_hdd_resume = Path(out_dir) / f"_{base_stem}_resume_cache"
+    if active_use_ssd and legacy_hdd_resume != resume_dir and legacy_hdd_resume.exists() and not resume_dir.exists():
+        try:
+            shutil.move(str(legacy_hdd_resume), str(resume_dir))
+        except Exception:
+            pass
+
     resume_dir.mkdir(parents=True, exist_ok=True)
     meta_file = resume_dir / "resume_meta.json"
 
@@ -894,8 +964,33 @@ def render_drama_nhat_video(
             f"(Đạt {rendered_dur:.1f}s / Yêu cầu {dur:.1f}s) — Tự động hủy file lỗi để Render lại!"
         )
 
-    os.replace(temp_output_path, output_path)
+    # Di chuyển an toàn file MP4 hoàn chỉnh từ ổ SSD đệm sang thư mục đích (hỗ trợ khác ổ đĩa C: -> D:/E: HDD)
+    try:
+        src_drive = os.path.splitdrive(os.path.abspath(temp_output_path))[0].upper()
+        dst_drive = os.path.splitdrive(os.path.abspath(output_path))[0].upper()
+        if src_drive == dst_drive:
+            os.replace(temp_output_path, output_path)
+        else:
+            if progress_callback:
+                progress_callback(99.9, f"⚡ Đang chuyển Video MP4 hoàn chỉnh từ ổ SSD ({src_drive}) sang ổ lưu trữ đích ({dst_drive})...")
+            dst_staging = output_path + ".ssd_move.tmp"
+            if os.path.exists(dst_staging):
+                try:
+                    os.remove(dst_staging)
+                except Exception:
+                    pass
+            shutil.copyfile(temp_output_path, dst_staging)
+            os.replace(dst_staging, output_path)
+            try:
+                os.remove(temp_output_path)
+            except Exception:
+                pass
+    except Exception:
+        shutil.move(temp_output_path, output_path)
+
     shutil.rmtree(resume_dir, ignore_errors=True)
+    if active_use_ssd and legacy_hdd_resume.exists():
+        shutil.rmtree(legacy_hdd_resume, ignore_errors=True)
 
     cost = time.time() - start_time
     if progress_callback:

@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 109,
-  "released_at": "2026-11-04 22:30:00",
+  "build_number": 110,
+  "released_at": "2026-11-04 23:40:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Tăng tốc Render Video FFmpeg 5 Lớp nhanh gấp 5.5 LẦN (từ 1.2x lên 6.0x–6.8x realtime): Tích hợp bộ nhớ đệm Pre-baked Overlay Cache (.nut yuva420p @ 12fps cho Hạt Bụi Sao + Hộp Đen + Watermark), xử lý eq/vignette ở độ phân giải gốc 720p@12fps trước khi scale fast_bilinear, gỡ bỏ cờ -flush_packets 1 và -movflags +faststart.\n2. Tăng tốc VOICEVOX DirectML GPU & Sửa triệt để lỗi máy cùng cấu hình nhưng chạy chậm: Tăng thời gian chờ khởi tạo DirectML GPU lên 27s (tránh tự ngắt về CPU khi Windows Defender quét lần đầu), tính thời lượng WAV trên RAM (0ms), ghép 1.500 câu WAV bằng Python PCM (<0.3s), gỡ bỏ /version ping thừa và chặn bão I/O ghi đè saved_ideas.json mỗi giây khi đang Render."
+  "changelog": "1. Tích hợp Chế độ Render Siêu Tốc Trên Ổ SSD (SSD Staging Render): Tự động tổng hợp 1.500 câu WAV VOICEVOX + ghi phân đoạn .ts + remux _rendering_tmp.mp4 trên ổ SSD tốc độ cao, sau khi xuất xong tự động di chuyển nguyên tử (Atomic Move) sang ổ HDD chứa Video cuối và dọn sạch file tạm trên SSD.\n2. Tích hợp Bộ chọn Đường Dẫn Kép tại Tab 1 & Tab 2: (1) Folder Project (projects_dir — nơi lưu kịch bản, voice, thumbnail, SEO tùy chỉnh không còn cố định mặc định) và (2) Nơi Chứa Video Cuối (final_video_dir — thư mục/ổ đĩa chứa MP4 hoàn chỉnh).\n3. Đồng bộ Load 100% Trạng Thái Dự Án & Video MP4 Đa Thư Mục: Tự động quét và nhận diện 100% mã dự án cùng trạng thái 'Đã có MP4' từ cả Folder Project lẫn Nơi Chứa Video Cuối (kèm con trỏ video_location.json), đảm bảo load đầy đủ danh sách và không bao giờ render trùng lặp."
 }

@@ -1,5 +1,31 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 04/11/2026 (Lần 44 — V1.0.3 Build #110) — Render Siêu Tốc Trên Ổ SSD (`SSD Staging -> Tự Động Chuyển Sang Ổ HDD Video Cuối`), Bộ Chọn Đường Dẫn Kép (`Folder Project` & `Nơi Chứa Video Cuối`) & Đồng Bộ Load 100% Trạng Thái Dự Án
+
+### 1. Yêu cầu của người dùng
+1. **Render siêu tốc trên ổ SSD sau đó tự động chuyển file sang ổ HDD chứa video cuối (`SSD Staging -> Final Video Dir`)**:
+   - Toàn bộ quá trình tạo `1.500` file `.wav` VOICEVOX, ghép `voice_full.wav`, ghi các phân đoạn `.ts` (`resume_dir`) và đóng gói `_rendering_tmp.mp4` phải diễn ra trên ổ **SSD** tốc độ cao (`500–3.500 MB/s`, độ trễ `<0.1ms`) để tránh nghẽn đầu đọc cơ học của ổ HDD khi chạy đa luồng.
+   - Ngay khi render xong, tự động di chuyển nguyên tử (Atomic Move qua ổ đĩa) file MP4 hoàn chỉnh cùng trọn bộ tài nguyên (`_KICH_BAN.txt`, `_SEO.txt`, `_THUMBNAIL_*.png`, `idea_info.json`) sang thư mục **Nơi Chứa Video Cuối (`final_video_dir`)** và xóa sạch file tạm trên ổ SSD.
+2. **Thêm chỗ chọn `Folder Project` (`projects_dir`) và `Nơi Chứa Video Cuối` (`final_video_dir`)**:
+   - Vì thư mục `projects` không còn cố định mặc định nữa, cần có ô chọn **Folder Project** (nơi lưu kịch bản, voice, thumbnail, SEO) và ô chọn **Nơi Chứa Video Cuối** (nơi lưu video MP4 xuất xong) đồng bộ ở cả Tab 1 và Tab 2.
+3. **Đảm bảo vẫn load được 100% dự án và trạng thái Video MP4**:
+   - Dù thư mục `Folder Project` và `Nơi Chứa Video Cuối` nằm ở 2 ổ đĩa khác nhau, ứng dụng vẫn phải tự động quét, nhận diện đầy đủ 100% mã dự án, hiển thị đúng trạng thái **`🎬 Đã có MP4` (`COMPLETED_VIDEO`)**, không bao giờ render trùng lặp lại video đã xong, và khi bấm nút **"Mở Folder"** sẽ mở đúng thư mục đang chứa file MP4.
+
+### 2. Giải pháp kỹ thuật & Các file đã nâng cấp
+- **[`backend/renderer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py)**:
+  - Bổ sung [`get_default_ssd_staging_dir()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L238-L276) tự động tạo thư mục đệm trên ổ SSD (`%LOCALAPPDATA%\Drama_Nhat_Studio\SSD_Render_Staging`).
+  - Nâng cấp [`get_saved_render_progress()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L279-L315) và [`render_drama_nhat_video()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L384-L995): Khi bật `use_ssd_staging=True`, toàn bộ `.ts` segments và `_rendering_tmp.mp4` được ghi trực tiếp trên SSD; khi hoàn tất `100%`, hệ thống copy sang `.ssd_move.tmp` tại đích đến rồi `os.replace()` nguyên tử sang `output_path` và dọn sạch `resume_dir` trên SSD.
+- **[`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py)**:
+  - Bổ sung hệ thống quản lý đường dẫn bền vững (`_load_storage_paths_config()`, [`get_storage_paths()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L462-L485), [`set_storage_paths()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L487-L561)) lưu tại `%LOCALAPPDATA%\Drama_Nhat_Studio\storage_paths.json` và `config.json`, đồng thời lưu thêm bản chỉ mục `_saved_ideas_index.json` ngay bên trong `projects_dir`.
+  - Bổ sung [`resolve_project_mp4_path()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L616-L660) và [`_list_all_existing_project_ids_on_disk()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L662-L686): Tự động dò tìm file MP4 hợp lệ ở cả `projects_dir/{P_ID}/renders`, `final_video_dir/{P_ID}/renders`, `final_video_dir/{P_ID}_VIDEO_HOAN_CHINH.mp4` và file con trỏ `video_location.json`, giúp [`has_valid_video_mp4_on_disk()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L940-L962), [`_sync_projects_disk_state()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L1035-L1200) và [`get_project_outputs()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L1680-L1735) luôn load chính xác 100% dự án.
+- **[`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py) & [`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py)**:
+  - Nâng cấp [`_process_single_job()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L465-L940): Thực thi cả bước tạo Voice VOICEVOX (`work_proj_dir = ssd_staging_dir / proj_name`) và bước Render FFmpeg trên ổ SSD, đồng bộ `voice_full.wav` + `subtitles.srt` về `proj_dir / "assets"`, chuyển gói thành phẩm hoàn chỉnh sang `final_video_dir / proj_name / "renders"`, ghi `video_location.json` tại `proj_dir / "renders"` và dọn sạch thư mục tạm trên SSD.
+  - Bổ sung API `GET /api/storage-paths` và `POST /api/storage-paths` trong [`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py#L430-L470) (kèm hot-patch trong `_auto_patch_live_instances_on_reload`).
+- **[`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html) & [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js)**:
+  - Thiết kế thanh công cụ chọn **1. Folder Project (`#adas-projects-dir-input`, `#render-projects-dir`)**, **2. Nơi Chứa Video Cuối (`#adas-final-video-dir-input`, `#output-dir`)** và công tắc **⚡ Render Siêu Tốc Trên Ổ SSD (`#adas-use-ssd-staging`, `#render-use-ssd-staging`)** đồng bộ tức thì giữa Tab 1 và Tab 2, tự động nạp lại toàn bộ danh sách dự án ngay khi đổi thư mục.
+
+---
+
 ## Cập nhật: 04/11/2026 (Lần 43 — V1.0.3 Build #109) — Đại Phẫu Tăng Tốc VOICEVOX GPU & Render FFmpeg 5 Lớp Nhanh Gấp 5.5 Lần (`1.2x` -> `6.0x–6.8x` Realtime), Xử Lý Triệt Để Hiện Tượng Cùng Cấu Hình Máy Nhưng Có Máy Nhanh Có Máy Rất Chậm
 
 ### 1. Chẩn đoán 5 nguyên nhân gốc rễ khiến Render chậm đi sau các bản nâng cấp & vì sao cùng 1 cấu hình máy có máy bình thường có máy rất chậm

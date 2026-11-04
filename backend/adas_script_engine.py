@@ -719,13 +719,21 @@ class ADASScriptEngine:
         self.ideas_file = self.root_dir / "saved_ideas.json"
         self.step2_template_file = self.root_dir / "step2_prompt_template.txt"
         self.projects_dir = self.root_dir / "projects"
-        self.projects_dir.mkdir(parents=True, exist_ok=True)
+        self.final_video_dir = self.projects_dir
+        self.ssd_staging_dir = (
+            Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+            / "Drama_Nhat_Studio"
+            / "SSD_Render_Staging"
+        )
+        self.use_ssd_staging = True
 
         self.lock = threading.Lock()
         self.ideas_io_lock = threading.RLock()
         self.is_running = False
         self.should_stop = False
         self.listeners: List[Callable[[Dict[str, Any]], None]] = []
+
+        self._load_storage_paths_config()
 
         self.state: Dict[str, Any] = {
             "status": "idle",
@@ -841,6 +849,310 @@ class ADASScriptEngine:
             pass
         return base
 
+    def _normalize_projects_folder_path(self, raw_path: str) -> Path:
+        cand = Path(str(raw_path).strip()).resolve()
+        if cand.exists() and cand.is_dir():
+            sub_projects = cand / "projects"
+            if sub_projects.exists() and sub_projects.is_dir():
+                has_direct_proj = False
+                try:
+                    for d in cand.iterdir():
+                        if d.is_dir() and d.name.lower() != "projects":
+                            if (
+                                (d / "idea_info.json").exists()
+                                or (d / "script_clean.txt").exists()
+                                or (d / "part_a.txt").exists()
+                                or (d / "renders").exists()
+                            ):
+                                has_direct_proj = True
+                                break
+                except Exception:
+                    pass
+                if not has_direct_proj:
+                    return sub_projects.resolve()
+        return cand
+
+    def _sync_storage_paths_to_pipeline(self):
+        if self.video_pipeline is not None:
+            try:
+                self.video_pipeline.projects_dir = self.projects_dir
+                self.video_pipeline.default_projects_dir = self.projects_dir
+                self.video_pipeline.final_video_dir = self.final_video_dir
+                self.video_pipeline.ssd_staging_dir = self.ssd_staging_dir
+                self.video_pipeline.use_ssd_staging = self.use_ssd_staging
+            except Exception:
+                pass
+
+    def _load_storage_paths_config(self):
+        """
+        Khôi phục cấu hình 3 đường dẫn lưu trữ từ `%LOCALAPPDATA%\\Drama_Nhat_Studio\\storage_paths.json` và `config.json`:
+        1. `projects_dir`: Folder Project (Nơi chứa các folder dự án P01, P02..., kịch bản, thumbnail, SEO).
+        2. `final_video_dir`: Nơi Chứa Video Cuối (Ổ lưu MP4 hoàn chỉnh sau khi Render trên SSD xong).
+        3. `ssd_staging_dir`: Ổ SSD Render Tạm (Scratch Disk NVMe tốc độ cao).
+        """
+        appdata_dir = self._get_persistent_appdata_dir()
+        sp_file = appdata_dir / "storage_paths.json"
+        cfg_file = self.root_dir / "config.json"
+
+        raw_cfg: Dict[str, Any] = {}
+        for fp in (cfg_file, sp_file):
+            if fp.exists():
+                try:
+                    data = json.loads(fp.read_text(encoding="utf-8"))
+                    if isinstance(data, dict):
+                        raw_cfg.update(data)
+                except Exception:
+                    pass
+
+        default_proj = (self.root_dir / "projects").resolve()
+        proj_str = str(raw_cfg.get("projects_dir") or "").strip()
+        if proj_str:
+            try:
+                self.projects_dir = self._normalize_projects_folder_path(proj_str)
+            except Exception:
+                self.projects_dir = default_proj
+        else:
+            self.projects_dir = default_proj
+
+        final_str = str(raw_cfg.get("final_video_dir") or "").strip()
+        if final_str:
+            try:
+                self.final_video_dir = Path(final_str).resolve()
+            except Exception:
+                self.final_video_dir = self.projects_dir
+        else:
+            self.final_video_dir = self.projects_dir
+
+        ssd_str = str(raw_cfg.get("ssd_staging_dir") or "").strip()
+        default_ssd = appdata_dir / "SSD_Render_Staging"
+        if ssd_str:
+            try:
+                self.ssd_staging_dir = Path(ssd_str).resolve()
+            except Exception:
+                self.ssd_staging_dir = default_ssd
+        else:
+            self.ssd_staging_dir = default_ssd
+
+        self.use_ssd_staging = bool(raw_cfg.get("use_ssd_staging", True))
+
+        for d_path in (self.projects_dir, self.final_video_dir, self.ssd_staging_dir):
+            try:
+                d_path.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+
+        # Nếu dùng chung thư mục mặc định root_dir/projects thì giữ saved_ideas.json, đồng thời lưu bản index trong projects_dir
+        local_idx = self.projects_dir / "_saved_ideas_index.json"
+        root_idx = self.root_dir / "saved_ideas.json"
+        if self.projects_dir.resolve() == default_proj:
+            self.ideas_file = root_idx
+            if root_idx.exists() and not local_idx.exists():
+                try:
+                    shutil.copy2(root_idx, local_idx)
+                except Exception:
+                    pass
+        else:
+            self.ideas_file = local_idx
+
+        self._sync_storage_paths_to_pipeline()
+
+    def get_storage_paths(self) -> Dict[str, Any]:
+        if not hasattr(self, "final_video_dir") or self.final_video_dir is None:
+            self._load_storage_paths_config()
+        try:
+            is_sep = self.final_video_dir.resolve() != self.projects_dir.resolve()
+        except Exception:
+            is_sep = False
+        return {
+            "projects_dir": str(self.projects_dir),
+            "final_video_dir": str(self.final_video_dir),
+            "ssd_staging_dir": str(self.ssd_staging_dir),
+            "use_ssd_staging": bool(getattr(self, "use_ssd_staging", True)),
+            "is_separate_final_dir": is_sep,
+        }
+
+    def set_storage_paths(
+        self,
+        projects_dir: Optional[str] = None,
+        final_video_dir: Optional[str] = None,
+        ssd_staging_dir: Optional[str] = None,
+        use_ssd_staging: Optional[bool] = None,
+    ) -> Dict[str, Any]:
+        """
+        Cập nhật đường dẫn Folder Project (`projects_dir`), Nơi Chứa Video Cuối (`final_video_dir`) và Ổ SSD Render Tạm (`ssd_staging_dir`).
+        Tự động lưu cấu hình và quét nạp ngay 100% dự án + trạng thái MP4 từ các thư mục vừa chọn!
+        """
+        if not hasattr(self, "final_video_dir") or self.final_video_dir is None:
+            self._load_storage_paths_config()
+
+        old_proj = self.projects_dir.resolve()
+        old_final = self.final_video_dir.resolve()
+        was_same = (old_proj == old_final)
+
+        if projects_dir is not None and str(projects_dir).strip():
+            self.projects_dir = self._normalize_projects_folder_path(str(projects_dir).strip())
+            if was_same and (final_video_dir is None or not str(final_video_dir).strip()):
+                self.final_video_dir = self.projects_dir
+
+        if final_video_dir is not None and str(final_video_dir).strip():
+            self.final_video_dir = Path(str(final_video_dir).strip()).resolve()
+
+        if ssd_staging_dir is not None and str(ssd_staging_dir).strip():
+            self.ssd_staging_dir = Path(str(ssd_staging_dir).strip()).resolve()
+
+        if use_ssd_staging is not None:
+            self.use_ssd_staging = bool(use_ssd_staging)
+
+        for d_path in (self.projects_dir, self.final_video_dir, self.ssd_staging_dir):
+            try:
+                d_path.mkdir(parents=True, exist_ok=True)
+            except Exception:
+                pass
+
+        default_proj = (self.root_dir / "projects").resolve()
+        if self.projects_dir.resolve() == default_proj:
+            self.ideas_file = self.root_dir / "saved_ideas.json"
+        else:
+            self.ideas_file = self.projects_dir / "_saved_ideas_index.json"
+
+        payload = {
+            "projects_dir": str(self.projects_dir),
+            "final_video_dir": str(self.final_video_dir),
+            "ssd_staging_dir": str(self.ssd_staging_dir),
+            "use_ssd_staging": bool(self.use_ssd_staging),
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        sp_file = self._get_persistent_appdata_dir() / "storage_paths.json"
+        try:
+            sp_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+        cfg_file = self.root_dir / "config.json"
+        try:
+            cfg = json.loads(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
+            cfg.update(payload)
+            cfg["output_dir"] = str(self.final_video_dir)
+            cfg_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+        self._sync_storage_paths_to_pipeline()
+        restore_res = self.restore_scripts_from_disk()
+        log_info(
+            "SYSTEM",
+            f"📂 Đã cập nhật đường dẫn lưu trữ: Folder Project=[{self.projects_dir}] | Nơi Chứa Video Cuối=[{self.final_video_dir}] | SSD Render=[{self.ssd_staging_dir} ({'BẬT' if self.use_ssd_staging else 'TẮT'})]",
+        )
+        res = self.get_storage_paths()
+        res["restore_summary"] = restore_res
+        return res
+
+    def _get_effective_project_dir(self, ma_id: str) -> Path:
+        """Trả về thư mục dự án trên `projects_dir` (ưu tiên) hoặc `final_video_dir` nếu dự án nằm ở thư mục video cuối."""
+        p_main = self.projects_dir / ma_id
+        if p_main.exists():
+            return p_main
+        f_dir = getattr(self, "final_video_dir", None)
+        if f_dir:
+            p_final = Path(f_dir) / ma_id
+            if p_final.exists():
+                return p_final
+        return p_main
+
+    def resolve_project_mp4_path(self, ma_id: str) -> Optional[Path]:
+        """
+        Tìm chính xác đường dẫn file `{ma_id}_master.mp4` dù file nằm ở:
+        1. `final_video_dir/{ma_id}/renders/{ma_id}_master.mp4`
+        2. `final_video_dir/{ma_id}/{ma_id}_master.mp4` hoặc `final_video_dir/{ma_id}_master.mp4`
+        3. `projects_dir/{ma_id}/renders/{ma_id}_master.mp4`
+        4. Đường dẫn được ghi trong `projects_dir/{ma_id}/renders/video_location.json`
+        """
+        candidates: List[Path] = []
+        f_dir = getattr(self, "final_video_dir", None)
+        if f_dir:
+            f_path = Path(f_dir)
+            candidates.extend([
+                f_path / ma_id / "renders" / f"{ma_id}_master.mp4",
+                f_path / ma_id / f"{ma_id}_master.mp4",
+                f_path / "renders" / f"{ma_id}_master.mp4",
+                f_path / f"{ma_id}_master.mp4",
+            ])
+        p_dir = self.projects_dir / ma_id
+        candidates.extend([
+            p_dir / "renders" / f"{ma_id}_master.mp4",
+            p_dir / f"{ma_id}_master.mp4",
+        ])
+        loc_file = p_dir / "renders" / "video_location.json"
+        if loc_file.exists():
+            try:
+                loc_data = json.loads(loc_file.read_text(encoding="utf-8"))
+                vp_str = str(loc_data.get("video_mp4_path") or "").strip()
+                if vp_str:
+                    candidates.insert(0, Path(vp_str))
+            except Exception:
+                pass
+
+        seen: set[str] = set()
+        for c in candidates:
+            cs = str(c)
+            if cs in seen:
+                continue
+            seen.add(cs)
+            try:
+                if c.exists() and c.is_file() and c.stat().st_size > 0:
+                    return c
+            except Exception:
+                pass
+        return None
+
+    def _list_all_existing_project_ids_on_disk(self) -> Dict[str, Path]:
+        """
+        Quét đồng thời cả `projects_dir` (Folder Project) và `final_video_dir` (Nơi Chứa Video Cuối)
+        để trả về bảng ánh xạ `{ma_id: project_dir}` giúp ứng dụng luôn load được 100% dự án và MP4!
+        """
+        found: Dict[str, Path] = {}
+        ignore_names = {"renders", "assets", "sentences", "stook", "ssd_render_staging", "__pycache__"}
+
+        f_dir = getattr(self, "final_video_dir", None)
+        if f_dir and Path(f_dir).exists():
+            try:
+                f_path = Path(f_dir)
+                if f_path.resolve() != self.projects_dir.resolve():
+                    for d in sorted(f_path.iterdir()):
+                        if d.is_dir():
+                            nm = d.name.strip()
+                            if (
+                                nm
+                                and not nm.startswith(".")
+                                and not nm.startswith("_")
+                                and nm.lower() not in ignore_names
+                                and not (d / ".deleted_by_user").exists()
+                            ):
+                                found[nm] = d
+                        elif d.is_file() and d.name.endswith("_master.mp4"):
+                            mid_mp4 = d.name[: -len("_master.mp4")].strip()
+                            if mid_mp4 and mid_mp4 not in found:
+                                found[mid_mp4] = f_path
+            except Exception:
+                pass
+
+        if self.projects_dir.exists():
+            try:
+                for d in sorted(self.projects_dir.iterdir()):
+                    if d.is_dir():
+                        nm = d.name.strip()
+                        if (
+                            nm
+                            and not nm.startswith(".")
+                            and not nm.startswith("_")
+                            and nm.lower() not in ignore_names
+                            and not (d / ".deleted_by_user").exists()
+                        ):
+                            found[nm] = d
+            except Exception:
+                pass
+        return found
+
     def _load_deleted_ids(self) -> set[str]:
         """Đọc danh sách các mã dự án/tiêu đề mà người dùng đã chủ động xóa để không bao giờ tự load lại khi bật app."""
         deleted: set[str] = set()
@@ -924,6 +1236,16 @@ class ADASScriptEngine:
                     raw_list = None
 
             if raw_list is None:
+                local_idx = self.projects_dir / "_saved_ideas_index.json"
+                if local_idx.exists():
+                    try:
+                        data = json.loads(local_idx.read_text(encoding="utf-8"))
+                        if isinstance(data, list):
+                            raw_list = data
+                    except Exception:
+                        raw_list = None
+
+            if raw_list is None:
                 bak_file = self._get_persistent_appdata_dir() / "saved_ideas_backup.json"
                 if bak_file.exists():
                     try:
@@ -936,19 +1258,8 @@ class ADASScriptEngine:
             if raw_list is None:
                 raw_list = []
 
-            # Luôn đối chiếu trực tiếp với thư mục `projects/` trên ổ cứng:
-            # Nếu người dùng đã xóa 1 hoặc toàn bộ folder trong `projects/`, lập tức loại bỏ khỏi danh sách hiển thị & lưu lại!
-            if self.projects_dir.exists():
-                try:
-                    existing_dirs = {
-                        d.name.strip()
-                        for d in self.projects_dir.iterdir()
-                        if d.is_dir() and not (d / ".deleted_by_user").exists()
-                    }
-                except Exception:
-                    existing_dirs = set()
-            else:
-                existing_dirs = set()
+            # Luôn đối chiếu trực tiếp với thư mục `projects_dir` & `final_video_dir` trên ổ cứng:
+            existing_dirs = set(self._list_all_existing_project_ids_on_disk().keys())
 
             filtered_list = [
                 it
@@ -962,12 +1273,21 @@ class ADASScriptEngine:
     def save_ideas_list(self, ideas: List[Dict[str, Any]]):
         with self.ideas_io_lock:
             payload = json.dumps(ideas, ensure_ascii=False, indent=2)
-            tmp_file = self.ideas_file.with_suffix(".json.tmp")
-            try:
-                tmp_file.write_text(payload, encoding="utf-8")
-                os.replace(str(tmp_file), str(self.ideas_file))
-            except Exception:
-                self.ideas_file.write_text(payload, encoding="utf-8")
+            for target_idx in {
+                self.ideas_file,
+                self.projects_dir / "_saved_ideas_index.json",
+                self.root_dir / "saved_ideas.json",
+            }:
+                try:
+                    target_idx.parent.mkdir(parents=True, exist_ok=True)
+                    tmp_file = target_idx.with_suffix(".json.tmp")
+                    tmp_file.write_text(payload, encoding="utf-8")
+                    os.replace(str(tmp_file), str(target_idx))
+                except Exception:
+                    try:
+                        target_idx.write_text(payload, encoding="utf-8")
+                    except Exception:
+                        pass
             # Luôn đồng bộ cả khi ideas == [] để khi xóa hết folder trong projects/, bản backup cũng được làm sạch 100%
             try:
                 bak_file = self._get_persistent_appdata_dir() / "saved_ideas_backup.json"
@@ -996,7 +1316,7 @@ class ADASScriptEngine:
                 project_id=ma_id,
             )
             try:
-                p_dir = self.projects_dir / ma_id
+                p_dir = self._get_effective_project_dir(ma_id)
                 assets_d = p_dir / "assets"
                 if assets_d.exists():
                     leaked_log_f = assets_d / "leaked_lines_log.json"
@@ -1032,7 +1352,7 @@ class ADASScriptEngine:
         Giúp phát hiện chính xác các dự án bị thiếu Part (ví dụ mới xong Part A 15.848 chữ hoặc Part A+B 32.684 chữ)
         đồng thời tự động làm sạch [LOCKED_TITLE]/Metadata nếu bị rò rỉ trong các file Part.
         """
-        proj_dir = self.projects_dir / ma_id
+        proj_dir = self._get_effective_project_dir(ma_id)
         done_parts: List[str] = []
         missing_parts: List[str] = []
         part_counts: Dict[str, int] = {"A": 0, "B": 0, "C": 0}
@@ -1071,15 +1391,13 @@ class ADASScriptEngine:
     def has_valid_script_on_disk(self, ma_id: str, min_pure_chars: int = 35000, min_part_chars: int = 9500) -> Tuple[bool, str, int]:
         """
         Kiểm tra nghiêm ngặt xem dự án `ma_id` đã có kịch bản tiếng Nhật ĐỦ 3 PART (A + B + C) và ĐỦ ĐỘ DÀI CHUẨN hay chưa:
-        - Nếu dự án có tạo các file `part_a.txt`, `part_b.txt`, `part_c.txt`: BẮT BUỘC cả 3 Part đều phải đạt `>= min_part_chars` (9.500 chữ/part)
-          và tổng cộng `>= min_pure_chars` (35.000 chữ thuần).
+        - Kiểm tra trên cả `projects_dir` và `final_video_dir`.
         - Tự động quét và xóa sạch mọi dòng `[LOCKED_TITLE]` / Metadata rò rỉ trong cả `script_clean.txt` và `renders/{ma_id}_KICH_BAN.txt`.
-        - Nếu trước đó `script_clean.txt` bị ghi dở dang khi mới xong 1 Part (~15.800 chữ) hoặc 2 Part (~32.600 chữ),
-          hệ thống tự động xóa file `script_clean.txt` bị thiếu đó (giữ nguyên các `part_a.txt` / `part_b.txt` đã viết xong)
-          và trả về `False` để viết tiếp các Part còn thiếu!
         """
-        proj_dir = self.projects_dir / ma_id
-        if not proj_dir.exists():
+        proj_dir = self._get_effective_project_dir(ma_id)
+        f_dir = getattr(self, "final_video_dir", None)
+        final_proj_dir = (Path(f_dir) / ma_id) if f_dir else proj_dir
+        if not proj_dir.exists() and not final_proj_dir.exists():
             return False, "", 0
 
         pa, pb, pc = proj_dir / "part_a.txt", proj_dir / "part_b.txt", proj_dir / "part_c.txt"
@@ -1116,7 +1434,6 @@ class ADASScriptEngine:
                     return True, combined, cnt
 
             # Nếu có file part nhưng chưa đủ cả 3 Part hợp lệ (VD: P16 mới có Part A, P17 mới có Part A+B):
-            # Xóa các file part rỗng/non (< min_part_chars) và xóa script_clean.txt bị ghép thiếu (nếu có) để không bao giờ bị nhận nhầm là đã xong!
             for p_let in prog["missing_parts"]:
                 bad_pf = proj_dir / f"part_{p_let.lower()}.txt"
                 if bad_pf.exists():
@@ -1133,12 +1450,15 @@ class ADASScriptEngine:
                     pass
             return False, "", prog["partial_chars"]
 
-        # Trường hợp kịch bản nạp trực tiếp hoặc copy từ máy khác sang (không chia file part_a/b/c):
+        # Trường hợp kịch bản nạp trực tiếp hoặc nằm ở final_video_dir:
         alt_script_candidates = [
             script_file,
             proj_dir / f"{ma_id}_KICH_BAN.txt",
             render_script_file,
             proj_dir / f"{ma_id}.txt",
+            final_proj_dir / "script_clean.txt",
+            final_proj_dir / "renders" / f"{ma_id}_KICH_BAN.txt",
+            final_proj_dir / f"{ma_id}_KICH_BAN.txt",
         ]
         for cand_f in alt_script_candidates:
             if cand_f.exists():
@@ -1152,7 +1472,7 @@ class ADASScriptEngine:
                                 cand_f.write_text(txt, encoding="utf-8")
                             except Exception:
                                 pass
-                        if cand_f != script_file or rem_cnt > 0:
+                        if proj_dir.exists() and (cand_f != script_file or rem_cnt > 0):
                             try:
                                 script_file.write_text(txt, encoding="utf-8")
                             except Exception:
@@ -1166,9 +1486,9 @@ class ADASScriptEngine:
                 except Exception:
                     pass
 
-        # Quét dự phòng các file .txt lớn trong thư mục dự án (nếu người dùng đặt tên file kịch bản tự do khi copy qua)
+        # Quét dự phòng các file .txt lớn trong thư mục dự án
         ignore_kw = ("SEO", "STEP", "AUDIT", "TIEU_DE", "PROMPT", "IDEA_INFO")
-        for scan_dir in (proj_dir, proj_dir / "renders"):
+        for scan_dir in (proj_dir, proj_dir / "renders", final_proj_dir, final_proj_dir / "renders"):
             if not scan_dir.exists():
                 continue
             for tf in sorted(scan_dir.glob("*.txt")):
@@ -1185,10 +1505,11 @@ class ADASScriptEngine:
                                 tf.write_text(txt, encoding="utf-8")
                             except Exception:
                                 pass
-                        try:
-                            script_file.write_text(txt, encoding="utf-8")
-                        except Exception:
-                            pass
+                        if proj_dir.exists():
+                            try:
+                                script_file.write_text(txt, encoding="utf-8")
+                            except Exception:
+                                pass
                         return True, txt, cnt
                 except Exception:
                     pass
@@ -1197,14 +1518,17 @@ class ADASScriptEngine:
 
     def has_thumbnail_and_seo_on_disk(self, ma_id: str) -> Tuple[bool, bool, str]:
         """
-        Kiểm tra và tự động đồng bộ file Thumbnail + SEO của dự án `ma_id` (hỗ trợ cả khi copy từ máy khác sang).
+        Kiểm tra và tự động đồng bộ file Thumbnail + SEO của dự án `ma_id` (trên cả `projects_dir` và `final_video_dir`).
         Trả về `(has_thumbnail, has_seo, thumb_path_str)`.
         """
-        proj_dir = self.projects_dir / ma_id
-        if not proj_dir.exists():
+        proj_dir = self._get_effective_project_dir(ma_id)
+        f_dir = getattr(self, "final_video_dir", None)
+        final_proj_dir = (Path(f_dir) / ma_id) if f_dir else proj_dir
+        if not proj_dir.exists() and not final_proj_dir.exists():
             return False, False, ""
 
         renders_dir = proj_dir / "renders"
+        final_renders_dir = final_proj_dir / "renders"
         target_thumb = renders_dir / f"{ma_id}_THUMBNAIL_1.png"
         found_thumb: Optional[Path] = None
 
@@ -1215,6 +1539,8 @@ class ADASScriptEngine:
             proj_dir / f"{ma_id}_THUMBNAIL.png",
             renders_dir / f"{ma_id}.png",
             proj_dir / f"{ma_id}.png",
+            final_renders_dir / f"{ma_id}_THUMBNAIL_1.png",
+            final_proj_dir / f"{ma_id}_THUMBNAIL_1.png",
         ]
         for tc in thumb_candidates:
             if tc.exists() and tc.stat().st_size > 10_000:
@@ -1222,7 +1548,7 @@ class ADASScriptEngine:
                 break
 
         if found_thumb is None:
-            for scan_dir in (renders_dir, proj_dir):
+            for scan_dir in (renders_dir, proj_dir, final_renders_dir, final_proj_dir):
                 if not scan_dir.exists():
                     continue
                 for ext in ("*.png", "*.jpg", "*.jpeg", "*.webp"):
@@ -1235,7 +1561,7 @@ class ADASScriptEngine:
                 if found_thumb:
                     break
 
-        if found_thumb is not None and found_thumb != target_thumb:
+        if found_thumb is not None and proj_dir.exists() and found_thumb != target_thumb:
             try:
                 renders_dir.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(found_thumb, target_thumb)
@@ -1250,6 +1576,8 @@ class ADASScriptEngine:
             render_seo,
             proj_dir / f"{ma_id}_SEO.txt",
             proj_dir / "step6_seo_pack.txt",
+            final_renders_dir / f"{ma_id}_SEO.txt",
+            final_proj_dir / "00_TIEU_DE_VA_SEO_YOUTUBE.txt",
         ]
         found_seo: Optional[Path] = None
         for sc in seo_candidates:
@@ -1257,7 +1585,7 @@ class ADASScriptEngine:
                 found_seo = sc
                 break
 
-        if found_seo is not None:
+        if found_seo is not None and proj_dir.exists():
             try:
                 seo_txt = found_seo.read_text(encoding="utf-8", errors="ignore")
                 if not master_seo.exists():
@@ -1277,11 +1605,8 @@ class ADASScriptEngine:
         auto_delete_corrupted: bool = True,
     ) -> Tuple[bool, Optional[Path], str]:
         """
-        Kiểm định nghiêm ngặt xem dự án `ma_id` có file `{ma_id}_master.mp4` HOÀN CHỈNH 100% trên ổ cứng hay không.
-        - Tuyệt đối KHÔNG chỉ kiểm tra `st_size > 1MB`.
-        - Kiểm tra cấu trúc `moov atom`, luồng video/audio, thời lượng thực tế so với `master_voice.wav` và độ dài kịch bản.
-        - Nếu phát hiện file MP4 bị lỗi hoặc bị ngắt giữa chừng (khi không đang trong luồng render active),
-          tự động xóa file MP4 hỏng và trả về `(False, None, reason)` để dự án được phân loại là lỗi/chưa render và chạy lại!
+        Kiểm định nghiêm ngặt xem dự án `ma_id` có file `{ma_id}_master.mp4` HOÀN CHỈNH 100% trên ổ cứng hay không
+        (Hỗ trợ kiểm tra đồng thời trên cả `final_video_dir` — Nơi Chứa Video Cuối và `projects_dir` — Folder Project).
         """
         if not hasattr(self, "_mp4_valid_cache"):
             self._mp4_valid_cache: Dict[str, Tuple[int, int, bool, str]] = {}
@@ -1290,22 +1615,22 @@ class ADASScriptEngine:
         vp_active = set(getattr(self.video_pipeline, "active_projects", set())) if vp_running else set()
         is_actively_rendering = ma_id in vp_active
 
-        p_dir = self.projects_dir / ma_id
-        renders_dir = p_dir / "renders"
-        if not renders_dir.exists():
-            self._mp4_valid_cache.pop(ma_id, None)
-            return False, None, "missing"
+        p_dir = self._get_effective_project_dir(ma_id)
+        f_dir = getattr(self, "final_video_dir", None)
+        final_p_dir = (Path(f_dir) / ma_id) if f_dir else p_dir
 
         # Dọn các file tạm _rendering_tmp.mp4 bị bỏ lại nếu dự án hiện không đang render
         if not is_actively_rendering:
-            for tmp_mp4 in renders_dir.glob("*_rendering_tmp.mp4"):
-                try:
-                    tmp_mp4.unlink()
-                except Exception:
-                    pass
+            for r_clean in (p_dir / "renders", final_p_dir / "renders"):
+                if r_clean.exists():
+                    for tmp_mp4 in r_clean.glob("*_rendering_tmp.mp4"):
+                        try:
+                            tmp_mp4.unlink()
+                        except Exception:
+                            pass
 
-        mp4_file = renders_dir / f"{ma_id}_master.mp4"
-        if not mp4_file.exists():
+        mp4_file = self.resolve_project_mp4_path(ma_id)
+        if mp4_file is None or not mp4_file.exists():
             self._mp4_valid_cache.pop(ma_id, None)
             return False, None, "rendering_in_progress" if is_actively_rendering else "missing"
 
@@ -1327,6 +1652,8 @@ class ADASScriptEngine:
 
         from backend.sync_checker import validate_completed_mp4_file
         master_wav = p_dir / "assets" / "master_voice.wav"
+        if not master_wav.exists():
+            master_wav = final_p_dir / "assets" / "master_voice.wav"
         val = validate_completed_mp4_file(
             mp4_path=mp4_file,
             master_wav_path=master_wav if master_wav.exists() else None,
@@ -1353,20 +1680,23 @@ class ADASScriptEngine:
 
     def _reconstruct_idea_from_project_dir(self, p_dir: Path) -> Optional[Dict[str, Any]]:
         """
-        Khôi phục bản ghi dự án từ thư mục `projects/<ma_id>` khi dự án đó:
+        Khôi phục bản ghi dự án từ thư mục `projects_dir/<ma_id>` hoặc `final_video_dir/<ma_id>` khi dự án đó:
         - ĐÃ TẠO XONG KỊCH BẢN ĐỦ 3 PART (`has_sc = True`), HOẶC
         - ĐANG VIẾT DỞ 1-2 PART (`partial_chars >= 9500`, để người dùng bấm viết tiếp Part thiếu), HOẶC
         - ĐÃ XUẤT VIDEO MP4 HOÀN CHỈNH (`has_mp4 = True`).
         Tuyệt đối KHÔNG tự động khôi phục các tiêu đề nháp chưa viết chữ nào (`partial_chars == 0`) đã bị xóa!
         """
         mid = p_dir.name
+        eff_dir = self._get_effective_project_dir(mid)
         has_sc, sc_txt, sc_chars = self.has_valid_script_on_disk(mid)
         prog = self.get_script_parts_progress(mid)
         partial_chars = prog["partial_chars"]
         has_partial = len(prog["done_parts"]) > 0 and not has_sc
         has_mp4, mp4_f, mp4_reason = self.has_valid_video_mp4_on_disk(mid, sc_chars=sc_chars if has_sc else partial_chars)
 
-        info_file = p_dir / "idea_info.json"
+        info_file = eff_dir / "idea_info.json"
+        if not info_file.exists():
+            info_file = p_dir / "idea_info.json"
         if info_file.exists():
             try:
                 info_data = json.loads(info_file.read_text(encoding="utf-8"))
@@ -1379,10 +1709,13 @@ class ADASScriptEngine:
                         info_data["thumbnail_path"] = th_path
                     info_data["pure_char_count"] = sc_chars if has_sc else partial_chars
                     info_data["has_video_mp4"] = has_mp4
+                    if has_mp4 and mp4_f:
+                        info_data["video_mp4_path"] = str(mp4_f)
                     info_data["completed_parts_count"] = 3 if has_sc else len(prog["done_parts"])
                     info_data["missing_parts"] = [] if has_sc else prog["missing_parts"]
                     if has_mp4:
                         info_data["status"] = "COMPLETED_VIDEO"
+                        info_data["current_step"] = f"✅ Đã xuất Video MP4 ({sc_chars:,} chữ)"
                     elif has_sc:
                         if mp4_reason not in ("missing", "rendering_in_progress", "ok") or info_data.get("status") == "ERROR_VIDEO":
                             info_data["status"] = "ERROR_VIDEO"
@@ -1403,8 +1736,10 @@ class ADASScriptEngine:
         if not (has_sc or has_partial or has_mp4):
             return None
 
-        step2_f = p_dir / "step2_title_thumbnail.txt"
-        seo_f = p_dir / "00_TIEU_DE_VA_SEO_YOUTUBE.txt"
+        step2_f = eff_dir / "step2_title_thumbnail.txt"
+        seo_f = eff_dir / "00_TIEU_DE_VA_SEO_YOUTUBE.txt"
+        if not seo_f.exists():
+            seo_f = p_dir / "renders" / f"{mid}_SEO.txt"
 
         locked_title = ""
         if step2_f.exists():
@@ -1447,17 +1782,17 @@ class ADASScriptEngine:
             reconstructed["current_step"] = f"⚠️ Thiếu Part {miss_str} (Mới có {len(prog['done_parts'])}/3 Part: {partial_chars:,} chữ)"
 
         try:
-            info_file.write_text(json.dumps(reconstructed, ensure_ascii=False, indent=2), encoding="utf-8")
+            if eff_dir.exists() and eff_dir.is_dir():
+                (eff_dir / "idea_info.json").write_text(json.dumps(reconstructed, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             pass
         return reconstructed
 
     def _sync_projects_disk_state(self, force_restore_deleted: bool = False):
         """
-        Đồng bộ trạng thái thực tế từ thư mục `projects/` vào `saved_ideas.json`:
+        Đồng bộ trạng thái thực tế từ `projects_dir` (Folder Project) và `final_video_dir` (Nơi Chứa Video Cuối):
         - Kiểm tra nghiêm ngặt đủ 3 Part (`part_a.txt`, `part_b.txt`, `part_c.txt` >= 9.500 chữ/part, tổng >= 35.000 chữ).
-        - Nếu dự án mới viết được 1 Part (~15.800 chữ như P16) hoặc 2 Part (~32.600 chữ như P17), tự động hạ `has_script = False`
-          và gắn trạng thái `PARTIAL_SCRIPT` (`⚠️ Thiếu Part B, C`) để người dùng bấm chạy viết tiếp ngay phần còn thiếu!
+        - Tự động nhận diện 100% các video MP4 đã được di chuyển sang `final_video_dir`!
         """
         now_sync = time.time()
         if getattr(self, "is_checking_repairing", False):
@@ -1470,8 +1805,11 @@ class ADASScriptEngine:
                 self._save_deleted_ids(set())
                 if hasattr(self, "_proj_dir_mtime_cache"):
                     self._proj_dir_mtime_cache.clear()
+                if hasattr(self, "_mp4_valid_cache"):
+                    self._mp4_valid_cache.clear()
             self._register_and_sync_external_projects()
             deleted_ids = self._load_deleted_ids()
+            disk_proj_map = self._list_all_existing_project_ids_on_disk()
             raw_ideas = self.load_saved_ideas()
             changed = False
 
@@ -1484,8 +1822,7 @@ class ADASScriptEngine:
                 if not force_restore_deleted and mid_chk in deleted_ids:
                     changed = True
                     continue
-                # Bất kỳ mã nào mà thư mục `projects/{ma_id}` đã bị người dùng xóa khỏi ổ cứng -> loại bỏ ngay 100%!
-                if not (self.projects_dir / mid_chk).exists():
+                if mid_chk not in disk_proj_map:
                     deleted_ids.add(mid_chk)
                     changed = True
                     continue
@@ -1495,21 +1832,17 @@ class ADASScriptEngine:
 
             existing_ids = {str(it.get("ma_id", "")).strip() for it in ideas if it.get("ma_id")}
 
-            # Bước 1: Quét thư mục con trong projects/ để tự động khôi phục các kịch bản bị mất hoặc mới copy từ máy khác sang
-            if self.projects_dir.exists():
+            # Bước 1: Quét thư mục con trong projects_dir & final_video_dir để tự động khôi phục các dự án
+            if disk_proj_map:
                 restored_items: List[Dict[str, Any]] = []
                 unblocked_deleted: Set[str] = set()
-                for p_dir in sorted(self.projects_dir.iterdir()):
-                    if not p_dir.is_dir():
-                        continue
-                    mid = p_dir.name.strip()
+                for mid, p_dir in sorted(disk_proj_map.items()):
                     if not mid or mid in existing_ids:
                         continue
                     del_marker = p_dir / ".deleted_by_user"
                     has_sc_probe, _, _ = self.has_valid_script_on_disk(mid)
-                    # Nếu thư mục mới được copy từ máy khác sang (có kịch bản hoàn chỉnh has_sc_probe == True và không có .deleted_by_user),
-                    # tự động gỡ khỏi sổ đen deleted_ids để nhận ngay lập tức!
-                    if has_sc_probe and not del_marker.exists() and mid in deleted_ids:
+                    has_mp4_probe = self.resolve_project_mp4_path(mid) is not None
+                    if (has_sc_probe or has_mp4_probe) and not del_marker.exists() and mid in deleted_ids:
                         unblocked_deleted.add(mid)
                         deleted_ids.discard(mid)
                     elif del_marker.exists() or mid in deleted_ids:
@@ -1522,7 +1855,8 @@ class ADASScriptEngine:
                         else:
                             continue
 
-                    rec = self._reconstruct_idea_from_project_dir(p_dir)
+                    rec_dir = p_dir if p_dir.name == mid else (p_dir / mid)
+                    rec = self._reconstruct_idea_from_project_dir(rec_dir)
                     if rec:
                         restored_items.append(rec)
                         existing_ids.add(mid)
@@ -1541,7 +1875,7 @@ class ADASScriptEngine:
 
             # Bước 2: Đồng bộ trạng thái Kịch bản (Đủ 3 Part vs Thiếu Part), Thumbnail, SEO & Video MP4 cho từng dự án
             if not hasattr(self, "_proj_dir_mtime_cache"):
-                self._proj_dir_mtime_cache: Dict[str, Tuple[int, int]] = {}
+                self._proj_dir_mtime_cache: Dict[str, Tuple[int, int, int]] = {}
             if not hasattr(self, "_mp4_valid_cache"):
                 self._mp4_valid_cache: Dict[str, Tuple[int, int, bool, str]] = {}
 
@@ -1553,24 +1887,27 @@ class ADASScriptEngine:
                 if isinstance(j, dict)
             } if vp_running else set()
 
+            f_dir = getattr(self, "final_video_dir", None)
             for it in ideas:
                 mid = it.get("ma_id")
                 if not mid:
                     continue
-                p_dir = self.projects_dir / mid
-                if not p_dir.exists():
+                p_dir = self._get_effective_project_dir(mid)
+                if not p_dir.exists() and mid not in disk_proj_map:
                     continue
                 curr_st = str(it.get("status") or "")
                 is_vp_busy_for_mid = (mid in vp_active_set) or (mid in vp_pending_set)
 
                 try:
                     r_dir = p_dir / "renders"
+                    f_r_dir = (Path(f_dir) / mid / "renders") if f_dir else r_dir
                     dir_sig = (
-                        p_dir.stat().st_mtime_ns,
+                        p_dir.stat().st_mtime_ns if p_dir.exists() else 0,
                         r_dir.stat().st_mtime_ns if r_dir.exists() else 0,
+                        f_r_dir.stat().st_mtime_ns if f_r_dir.exists() else 0,
                     )
                 except Exception:
-                    dir_sig = (0, 0)
+                    dir_sig = (0, 0, 0)
                 if (
                     not force_restore_deleted
                     and is_vp_busy_for_mid
@@ -1579,7 +1916,7 @@ class ADASScriptEngine:
                     continue
                 if (
                     not force_restore_deleted
-                    and dir_sig != (0, 0)
+                    and dir_sig != (0, 0, 0)
                     and self._proj_dir_mtime_cache.get(mid) == dir_sig
                     and (
                         curr_st not in ("RUNNING", "VIDEO_RENDERING", "VIDEO_QUEUED", "COMPLETED_VIDEO")
@@ -1590,7 +1927,7 @@ class ADASScriptEngine:
                     continue
                 if (
                     not force_restore_deleted
-                    and dir_sig != (0, 0)
+                    and dir_sig != (0, 0, 0)
                     and self._proj_dir_mtime_cache.get(mid) == dir_sig
                     and curr_st == "COMPLETED_VIDEO"
                     and it.get("has_video_mp4")
@@ -1608,7 +1945,7 @@ class ADASScriptEngine:
                 has_mp4, mp4_file, mp4_reason = self.has_valid_video_mp4_on_disk(
                     mid, sc_chars=effective_chars, auto_delete_corrupted=True
                 )
-                if dir_sig != (0, 0):
+                if dir_sig != (0, 0, 0):
                     self._proj_dir_mtime_cache[mid] = dir_sig
 
                 item_changed = False
@@ -4568,18 +4905,21 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         self._emit(status="stopped", message="🛑 Đã gửi tín hiệu dừng dây chuyền viết kịch bản.")
 
     def get_project_outputs(self, ma_id: str) -> Dict[str, Any]:
-        """Đọc toàn bộ kết quả đã lưu của 1 mã dự án (Prompt Step 2, Kết quả Step 2, SEO Pack, Kịch bản, 3 Thumbnail)."""
+        """Đọc toàn bộ kết quả đã lưu của 1 mã dự án (Prompt Step 2, Kết quả Step 2, SEO Pack, Kịch bản, Thumbnail, Video MP4)."""
         ideas = self.load_saved_ideas()
         idea = next((it for it in ideas if it.get("ma_id") == ma_id), {})
-        proj_dir = self.projects_dir / ma_id
+        proj_dir = self._get_effective_project_dir(ma_id)
+        f_dir = getattr(self, "final_video_dir", None)
+        final_proj_dir = (Path(f_dir) / ma_id) if f_dir else proj_dir
 
         def _read_safe(fname: str) -> str:
-            p = proj_dir / fname
-            if p.exists():
-                try:
-                    return p.read_text(encoding="utf-8")
-                except Exception:
-                    pass
+            for base_d in (proj_dir, final_proj_dir, proj_dir / "renders", final_proj_dir / "renders"):
+                p = base_d / fname
+                if p.exists():
+                    try:
+                        return p.read_text(encoding="utf-8")
+                    except Exception:
+                        pass
             return ""
 
         step2_prompt = _read_safe("step2_prompt_sent.txt") or _read_safe("step2_prompt_ready.txt")
@@ -4587,20 +4927,32 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             step2_prompt = build_step2_prompt_from_idea(idea, self.get_step2_template())
 
         renders_dir = proj_dir / "renders"
-        target_open_dir = renders_dir if renders_dir.exists() else proj_dir
+        mp4_path = self.resolve_project_mp4_path(ma_id)
+        if mp4_path and mp4_path.exists():
+            target_open_dir = mp4_path.parent
+        elif (final_proj_dir / "renders").exists():
+            target_open_dir = final_proj_dir / "renders"
+        elif renders_dir.exists():
+            target_open_dir = renders_dir
+        else:
+            target_open_dir = proj_dir
+
         thumb_files = sorted(renders_dir.glob(f"{ma_id}_THUMBNAIL_*.png")) if renders_dir.exists() else []
+        if not thumb_files and (final_proj_dir / "renders").exists():
+            thumb_files = sorted((final_proj_dir / "renders").glob(f"{ma_id}_THUMBNAIL_*.png"))
 
         return {
             "ma_id": ma_id,
             "idea": idea,
             "project_dir": str(target_open_dir),
             "raw_project_dir": str(proj_dir),
+            "video_mp4_path": str(mp4_path) if mp4_path else "",
             "step2_prompt": step2_prompt,
             "step2_output": _read_safe("step2_title_thumbnail.txt"),
             "step3_output": _read_safe("step3_architecture.txt"),
-            "script_clean": _read_safe("script_clean.txt"),
+            "script_clean": _read_safe("script_clean.txt") or _read_safe(f"{ma_id}_KICH_BAN.txt"),
             "step5_output": _read_safe("step5_audit_report.txt"),
-            "seo_pack": _read_safe("00_TIEU_DE_VA_SEO_YOUTUBE.txt") or _read_safe("seo_publish_pack.txt"),
+            "seo_pack": _read_safe("00_TIEU_DE_VA_SEO_YOUTUBE.txt") or _read_safe("seo_publish_pack.txt") or _read_safe(f"{ma_id}_SEO.txt"),
             "thumbnails": [str(p) for p in thumb_files],
         }
 

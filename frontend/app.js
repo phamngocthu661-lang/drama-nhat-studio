@@ -427,30 +427,179 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // 3b. Setup Folder Pickers (Thư mục lưu thành phẩm & Kho Stock)
-  function setupFolderPickers() {
-    // 1. Nút chọn thư mục lưu thành phẩm
-    if (btnBrowseOutputDir) {
-      btnBrowseOutputDir.addEventListener("click", async () => {
-        btnBrowseOutputDir.disabled = true;
-        const originalText = btnBrowseOutputDir.innerText;
-        btnBrowseOutputDir.innerText = "⏳ Đang mở hộp thoại...";
-        try {
-          const res = await fetch("/api/browse-directory", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ title: "Chọn Thư Mục Lưu Video Thành Phẩm" })
-          });
-          const data = await res.json();
-          if (data && data.path) {
-            outputDirInput.value = data.path;
+  function syncStoragePathsToUI(sp) {
+    if (!sp || typeof sp !== "object") return;
+    const pDir = sp.projects_dir || "";
+    const fDir = sp.final_video_dir || pDir || "";
+    const ssdDir = sp.ssd_staging_dir || "";
+    const useSsd = sp.use_ssd_staging !== undefined ? Boolean(sp.use_ssd_staging) : true;
+
+    const adasProjInput = document.getElementById("adas-projects-dir-input");
+    const renderProjInput = document.getElementById("render-projects-dir");
+    const adasFinalInput = document.getElementById("adas-final-video-dir-input");
+    const adasSsdChk = document.getElementById("adas-use-ssd-staging");
+    const renderSsdChk = document.getElementById("render-use-ssd-staging");
+    const ssdBadge = document.getElementById("adas-ssd-staging-badge");
+
+    if (pDir) {
+      if (adasProjInput) adasProjInput.value = pDir;
+      if (renderProjInput) renderProjInput.value = pDir;
+    }
+    if (fDir) {
+      if (adasFinalInput) adasFinalInput.value = fDir;
+      if (outputDirInput) outputDirInput.value = fDir;
+    }
+    if (adasSsdChk) adasSsdChk.checked = useSsd;
+    if (renderSsdChk) renderSsdChk.checked = useSsd;
+    if (ssdBadge && ssdDir) {
+      ssdBadge.innerText = `SSD Cache: ${ssdDir}`;
+    }
+  }
+
+  async function updateStoragePathsBackend(payload, showAlert = false) {
+    try {
+      const res = await fetch("/api/storage-paths", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload || {})
+      });
+      const data = await res.json();
+      if (res.ok && data.success) {
+        syncStoragePathsToUI(data);
+        if (data.restore_summary && Array.isArray(data.restore_summary.ideas)) {
+          if (typeof window.__renderSavedIdeasGlobal === "function") {
+            window.__renderSavedIdeasGlobal(data.restore_summary.ideas);
           }
-        } catch (e) {
-          console.error("Lỗi khi chọn thư mục lưu:", e);
-          alert("Không thể mở hộp thoại chọn thư mục: " + e.message);
-        } finally {
-          btnBrowseOutputDir.disabled = false;
-          btnBrowseOutputDir.innerText = originalText;
         }
+        const rs = data.restore_summary || {};
+        appendInstantLogToUI(
+          `📂 Đã cập nhật đường dẫn: Folder Project=[${data.projects_dir}] | Nơi Chứa Video Cuối=[${data.final_video_dir}] | Đã load ${rs.total_count ?? 0} dự án (${rs.script_done_count ?? 0} KB xong, ${rs.video_done_count ?? 0} MP4).`,
+          "SYSTEM",
+          "INFO"
+        );
+        if (showAlert) {
+          alert(
+            `✅ Đã cập nhật đường dẫn & nạp dự án thành công!\n\n` +
+            `📂 1. Folder Project: ${data.projects_dir}\n` +
+            `🎬 2. Nơi Chứa Video Cuối: ${data.final_video_dir}\n` +
+            `⚡ Render SSD Staging: ${data.use_ssd_staging ? "ĐANG BẬT (Tự chuyển MP4 sang Nơi Chứa Video Cuối)" : "ĐANG TẮT"}\n\n` +
+            `📊 Đã load: ${rs.total_count ?? 0} dự án (${rs.script_done_count ?? 0} kịch bản xong, ${rs.video_done_count ?? 0} video MP4)`
+          );
+        }
+        return data;
+      } else {
+        alert("❌ Không thể cập nhật đường dẫn: " + (data.detail || "Lỗi không xác định"));
+      }
+    } catch (e) {
+      console.error("Lỗi cập nhật đường dẫn:", e);
+      alert("❌ Lỗi kết nối khi cập nhật đường dẫn: " + e.message);
+    }
+    return null;
+  }
+
+  function setupFolderPickers() {
+    async function browseAndPickFolder(btnEl, dialogTitle, onPicked) {
+      if (!btnEl) return;
+      btnEl.disabled = true;
+      const origHtml = btnEl.innerHTML;
+      btnEl.innerText = "⏳ Đang mở...";
+      try {
+        const res = await fetch("/api/browse-directory", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: dialogTitle })
+        });
+        const data = await res.json();
+        if (data && data.path) {
+          await onPicked(data.path);
+        }
+      } catch (e) {
+        console.error("Lỗi khi mở hộp thoại chọn thư mục:", e);
+        alert("Không thể mở hộp thoại chọn thư mục: " + e.message);
+      } finally {
+        btnEl.disabled = false;
+        btnEl.innerHTML = origHtml;
+      }
+    }
+
+    // 1A. Nút Chọn Folder Project (Tab 1 & Tab 2)
+    const btnAdasPickProj = document.getElementById("btn-adas-pick-projects-dir");
+    const btnRenderPickProj = document.getElementById("btn-browse-projects-dir");
+    [btnAdasPickProj, btnRenderPickProj].forEach(btn => {
+      if (btn) {
+        btn.addEventListener("click", () => {
+          browseAndPickFolder(btn, "Chọn Folder Project (Chứa Dự Án / Kịch Bản)", async (pickedPath) => {
+            await updateStoragePathsBackend({ projects_dir: pickedPath }, true);
+          });
+        });
+      }
+    });
+
+    // 1B. Nút Chọn Nơi Chứa Video Cuối (Tab 1 & Tab 2)
+    const btnAdasPickFinal = document.getElementById("btn-adas-pick-final-video-dir");
+    [btnAdasPickFinal, btnBrowseOutputDir].forEach(btn => {
+      if (btn) {
+        btn.addEventListener("click", () => {
+          browseAndPickFolder(btn, "Chọn Nơi Chứa Video Cuối (Ổ Lưu MP4 Sau Khi Render SSD)", async (pickedPath) => {
+            await updateStoragePathsBackend({ final_video_dir: pickedPath }, true);
+          });
+        });
+      }
+    });
+
+    // 1C. Nhấn Enter trên các ô nhập đường dẫn Folder Project / Nơi Chứa Video Cuối
+    const adasProjInput = document.getElementById("adas-projects-dir-input");
+    const renderProjInput = document.getElementById("render-projects-dir");
+    [adasProjInput, renderProjInput].forEach(inp => {
+      if (inp) {
+        inp.addEventListener("keydown", async (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const val = inp.value.trim();
+            if (val) await updateStoragePathsBackend({ projects_dir: val }, true);
+          }
+        });
+        inp.addEventListener("change", async () => {
+          const val = inp.value.trim();
+          if (val) await updateStoragePathsBackend({ projects_dir: val }, false);
+        });
+      }
+    });
+
+    const adasFinalInput = document.getElementById("adas-final-video-dir-input");
+    [adasFinalInput, outputDirInput].forEach(inp => {
+      if (inp) {
+        inp.addEventListener("keydown", async (e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            const val = inp.value.trim();
+            if (val) await updateStoragePathsBackend({ final_video_dir: val }, true);
+          }
+        });
+        inp.addEventListener("change", async () => {
+          const val = inp.value.trim();
+          if (val) await updateStoragePathsBackend({ final_video_dir: val }, false);
+        });
+      }
+    });
+
+    // 1D. Checkbox Bật/Tắt Render SSD Staging
+    const adasSsdChk = document.getElementById("adas-use-ssd-staging");
+    const renderSsdChk = document.getElementById("render-use-ssd-staging");
+    [adasSsdChk, renderSsdChk].forEach(chk => {
+      if (chk) {
+        chk.addEventListener("change", async () => {
+          await updateStoragePathsBackend({ use_ssd_staging: chk.checked }, false);
+        });
+      }
+    });
+
+    // 1E. Nút Mở Nơi Chứa Video Cuối
+    const btnOpenFinalDir = document.getElementById("btn-adas-open-final-video-dir");
+    if (btnOpenFinalDir) {
+      btnOpenFinalDir.addEventListener("click", async () => {
+        const fPath = (adasFinalInput && adasFinalInput.value.trim()) || (outputDirInput && outputDirInput.value.trim()) || "projects";
+        await openSystemFolder(fPath);
       });
     }
 
@@ -545,8 +694,17 @@ document.addEventListener("DOMContentLoaded", () => {
         const gpuEl = document.getElementById("gpu-name");
         if (gpuEl) gpuEl.innerText = data.gpu_name;
       }
-      if (data.default_output_dir && outputDirInput && !outputDirInput.value) {
-        outputDirInput.value = data.default_output_dir;
+      if (data.storage_paths) {
+        syncStoragePathsToUI(data.storage_paths);
+      } else {
+        syncStoragePathsToUI(data);
+        try {
+          const spRes = await fetch("/api/storage-paths");
+          if (spRes.ok) {
+            const spData = await spRes.json();
+            syncStoragePathsToUI(spData);
+          }
+        } catch (_) {}
       }
     } catch (e) {
       console.warn("Không thể tải config:", e);
@@ -2298,10 +2456,21 @@ document.addEventListener("DOMContentLoaded", () => {
         ev.stopPropagation();
         const mid = btn.dataset.id;
         if (!mid) return;
-        const baseOut = (outputDirInput && outputDirInput.value.trim())
-          ? outputDirInput.value.trim().replace(/[\\/]+$/, "")
-          : "projects";
-        const directProjPath = `${baseOut}\\${mid}`;
+        try {
+          const outRes = await fetch(`/api/adas/project/${encodeURIComponent(mid)}/outputs`);
+          if (outRes.ok) {
+            const outData = await outRes.json();
+            if (outData && outData.project_dir) {
+              await openSystemFolder(outData.project_dir);
+              return;
+            }
+          }
+        } catch (_) {}
+        const adasProjInput = document.getElementById("adas-projects-dir-input");
+        const baseProj = (adasProjInput && adasProjInput.value.trim())
+          ? adasProjInput.value.trim().replace(/[\\/]+$/, "")
+          : ((outputDirInput && outputDirInput.value.trim()) ? outputDirInput.value.trim().replace(/[\\/]+$/, "") : "projects");
+        const directProjPath = `${baseProj}\\${mid}`;
         await openSystemFolder(directProjPath);
       });
     });
@@ -2333,6 +2502,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     });
   }
+  window.__renderSavedIdeasGlobal = renderSavedIdeasList;
 
   async function triggerRenderOnly(maIds = null, onlyUnrendered = false) {
     try {
@@ -2807,9 +2977,10 @@ Capacity: PASS`;
     const openProjectsDirBtn = document.getElementById("btn-adas-open-projects-dir");
     if (openProjectsDirBtn) {
       openProjectsDirBtn.addEventListener("click", async () => {
-        const baseOut = (outputDirInput && outputDirInput.value.trim())
-          ? outputDirInput.value.trim().replace(/[\\/]+$/, "")
-          : "projects";
+        const projInputEl = document.getElementById("adas-projects-dir-input") || document.getElementById("render-projects-dir");
+        const baseOut = (projInputEl && projInputEl.value.trim())
+          ? projInputEl.value.trim().replace(/[\\/]+$/, "")
+          : ((outputDirInput && outputDirInput.value.trim()) ? outputDirInput.value.trim().replace(/[\\/]+$/, "") : "projects");
         await openSystemFolder(baseOut);
       });
     }
@@ -2865,7 +3036,10 @@ Capacity: PASS`;
       btnEl.disabled = true;
       btnEl.innerText = "⏳ Đang cập nhật...";
       try {
-        const customOut = (outputDirInput && outputDirInput.value) ? outputDirInput.value.trim() : "";
+        const projInputEl = document.getElementById("adas-projects-dir-input") || document.getElementById("render-projects-dir");
+        const customOut = (projInputEl && projInputEl.value)
+          ? projInputEl.value.trim()
+          : ((outputDirInput && outputDirInput.value) ? outputDirInput.value.trim() : "");
         const res = await fetch("/api/adas/ideas/sync-folder", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2881,7 +3055,7 @@ Capacity: PASS`;
           );
           alert(
             `✅ Đã cập nhật lại thư mục dự án thành công!\n\n` +
-            `• Thư mục: ${data.projects_dir || "projects/"}\n` +
+            `• Folder Project: ${data.projects_dir || "projects/"}\n` +
             `• Tổng số folder hiện có: ${data.total_count} mã\n` +
             `• Kịch bản đã viết xong (Sẵn sàng Render): ${data.script_done_count} kịch bản\n` +
             `• Video MP4 đã xuất: ${data.video_done_count} video\n` +

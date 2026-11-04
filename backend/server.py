@@ -823,6 +823,12 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
     class PerformanceModeRequest(BaseModel):
         mode: str = "full_100"
 
+    class StoragePathsUpdateRequest(BaseModel):
+        projects_dir: Optional[str] = None
+        final_video_dir: Optional[str] = None
+        ssd_staging_dir: Optional[str] = None
+        use_ssd_staging: Optional[bool] = None
+
     @app.get("/api/performance-mode")
     def api_get_performance_mode():
         return {"success": True, **pipeline.get_performance_mode_info()}
@@ -832,13 +838,33 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
         info = pipeline.set_performance_mode(req.mode, persist=True)
         return {"success": True, **info}
 
+    @app.get("/api/storage-paths")
+    def api_get_storage_paths():
+        return {"success": True, **adas_engine.get_storage_paths()}
+
+    @app.post("/api/storage-paths")
+    def api_set_storage_paths(req: StoragePathsUpdateRequest):
+        res = adas_engine.set_storage_paths(
+            projects_dir=req.projects_dir,
+            final_video_dir=req.final_video_dir,
+            ssd_staging_dir=req.ssd_staging_dir,
+            use_ssd_staging=req.use_ssd_staging,
+        )
+        return {"success": True, **res}
+
     @app.get("/api/config")
     def get_config():
         import torch
         gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU Mode"
+        sp = adas_engine.get_storage_paths()
         return {
             "root_dir": str(base_dir),
-            "default_output_dir": str(base_dir / "projects"),
+            "default_output_dir": sp.get("final_video_dir") or str(adas_engine.projects_dir),
+            "projects_dir": sp.get("projects_dir") or str(adas_engine.projects_dir),
+            "final_video_dir": sp.get("final_video_dir") or str(adas_engine.final_video_dir),
+            "ssd_staging_dir": sp.get("ssd_staging_dir"),
+            "use_ssd_staging": sp.get("use_ssd_staging", True),
+            "storage_paths": sp,
             "gpu_name": gpu_name,
             "cuda_available": torch.cuda.is_available(),
             "performance_mode": pipeline.get_performance_mode_info(),

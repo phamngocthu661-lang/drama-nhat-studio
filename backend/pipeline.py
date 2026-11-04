@@ -200,7 +200,18 @@ class ProductionPipeline:
                 self.root_dir = p
         self.default_projects_dir = self.root_dir / "projects"
         self.projects_dir = self.default_projects_dir
+        self.final_video_dir = self.projects_dir
+        self.ssd_staging_dir = (
+            Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+            / "Drama_Nhat_Studio"
+            / "SSD_Render_Staging"
+        )
+        self.use_ssd_staging = True
         self.default_projects_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            self.ssd_staging_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
 
         self.stock_manager = StockManager(self.root_dir)
         self.voice_service = VoiceStudioService(self.root_dir)
@@ -470,10 +481,21 @@ class ProductionPipeline:
         """Đăng ký callback(ma_id, status_code, step_text) để đồng bộ trạng thái sang ADASScriptEngine."""
         self.job_status_callback = cb
 
-    def _update_job_card_status(self, proj_name: str, status_code: str, step_text: str):
+    def _update_job_card_status(
+        self,
+        proj_name: str,
+        status_code: str,
+        step_text: str,
+        extra: Optional[Dict[str, Any]] = None,
+    ):
         if self.job_status_callback:
             try:
-                self.job_status_callback(proj_name, status_code, step_text)
+                self.job_status_callback(proj_name, status_code, step_text, extra)
+            except TypeError:
+                try:
+                    self.job_status_callback(proj_name, status_code, step_text)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
@@ -798,10 +820,31 @@ class ProductionPipeline:
                 self._notify(summary_header, overall, stage_name)
 
             def _process_single_job(job: Dict[str, Any], job_num: int):
+                import shutil
                 proj_name = job.get("name") or f"drama_nhat_{time.strftime('%Y%m%d_%H%M%S')}_{job_num}"
                 proj_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in proj_name).strip("_")
                 script_text = (job.get("script_text") or "").strip()
-                proj_dir = save_base / proj_name
+
+                base_proj_root = Path(getattr(self, "projects_dir", None) or save_base)
+                proj_dir = base_proj_root / proj_name
+                if not proj_dir.exists() and (save_base / proj_name).exists():
+                    proj_dir = save_base / proj_name
+
+                final_base_root = Path(getattr(self, "final_video_dir", None) or base_proj_root)
+                final_proj_dir = final_base_root / proj_name
+                final_renders_dir = final_proj_dir / "renders"
+
+                use_ssd = bool(getattr(self, "use_ssd_staging", True))
+                ssd_root = Path(
+                    getattr(self, "ssd_staging_dir", None)
+                    or (
+                        Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+                        / "Drama_Nhat_Studio"
+                        / "SSD_Render_Staging"
+                    )
+                )
+                ssd_proj_dir = ssd_root / proj_name
+                ssd_assets_dir = ssd_proj_dir / "assets"
 
                 with self.lock:
                     self._ensure_hot_reload_compat()
@@ -825,6 +868,8 @@ class ProductionPipeline:
                             proj_dir / "script_clean.txt",
                             proj_dir / "renders" / f"{proj_name}_KICH_BAN.txt",
                             proj_dir / "script.txt",
+                            final_proj_dir / "script_clean.txt",
+                            final_renders_dir / f"{proj_name}_KICH_BAN.txt",
                         ):
                             if cand_script.exists():
                                 try:
@@ -878,7 +923,8 @@ class ProductionPipeline:
                     speed_val = float(v_cfg.get("speedScale", 0.97))
 
                     log_info(
-                        f"🎬 [LUỒNG #{job_num}] Bắt đầu xử lý '{proj_name}' ({len(script_text):,} chữ) với giọng [{preset_id} • {speed_val}x]...",
+                        f"🎬 [LUỒNG #{job_num}] Bắt đầu xử lý '{proj_name}' ({len(script_text):,} chữ) với giọng [{preset_id} • {speed_val}x] "
+                        f"| SSD Staging={'BẬT' if use_ssd else 'TẮT'} -> Đích MP4: {final_renders_dir}",
                         category="RENDER",
                         project_id=proj_name,
                     )
@@ -893,10 +939,16 @@ class ProductionPipeline:
                     assets_dir.mkdir(parents=True, exist_ok=True)
                     renders_dir = proj_dir / "renders"
                     renders_dir.mkdir(parents=True, exist_ok=True)
+                    final_renders_dir.mkdir(parents=True, exist_ok=True)
+                    if use_ssd:
+                        try:
+                            ssd_assets_dir.mkdir(parents=True, exist_ok=True)
+                        except Exception:
+                            use_ssd = False
                     (proj_dir / "script.txt").write_text(script_text, encoding="utf-8")
 
                     # ==========================================================
-                    # GIAI ĐOẠN 1: TẠO VOICE GPU & SUBTITLES (KIỂM TRA CHÍNH XÁC CHỮ KÝ GIỌNG MỚI)
+                    # GIAI ĐOẠN 1: TẠO VOICE GPU & SUBTITLES (TRÊN Ổ SSD STAGING NẾU BẬT)
                     # ==========================================================
                     existing_master_wav = assets_dir / "master_voice.wav"
                     existing_srt = assets_dir / "subtitles.srt"
@@ -977,10 +1029,24 @@ class ProductionPipeline:
                             category="VOICE",
                             project_id=proj_name,
                         )
+                        active_wav_path = existing_master_wav
+                        active_srt_path = existing_srt
+                        active_ts_path = existing_ts
+                        if use_ssd and ssd_assets_dir.resolve() != assets_dir.resolve():
+                            try:
+                                ssd_wav = ssd_assets_dir / "master_voice.wav"
+                                ssd_srt = ssd_assets_dir / "subtitles.srt"
+                                if not ssd_wav.exists() or ssd_wav.stat().st_size != existing_master_wav.stat().st_size:
+                                    shutil.copy2(existing_master_wav, ssd_wav)
+                                shutil.copy2(existing_srt, ssd_srt)
+                                active_wav_path = ssd_wav
+                                active_srt_path = ssd_srt
+                            except Exception:
+                                pass
                         voice_res = {
-                            "master_voice": str(existing_master_wav),
-                            "subtitles_srt": str(existing_srt),
-                            "timestamps_txt": str(existing_ts),
+                            "master_voice": str(active_wav_path),
+                            "subtitles_srt": str(active_srt_path),
+                            "timestamps_txt": str(active_ts_path),
                             "total_duration": dur_sec,
                         }
                         with self.lock:
@@ -1027,19 +1093,36 @@ class ProductionPipeline:
                         if proj_name in getattr(self, "paused_for_perf_downscale", set()):
                             raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
+                        work_voice_dir = ssd_assets_dir if (use_ssd and ssd_assets_dir.resolve() != assets_dir.resolve()) else assets_dir
+                        if work_voice_dir != assets_dir and (assets_dir / "sentences").exists() and not (work_voice_dir / "sentences").exists():
+                            try:
+                                shutil.copytree(assets_dir / "sentences", work_voice_dir / "sentences", dirs_exist_ok=True)
+                            except Exception:
+                                pass
+
                         with self.lock:
                             self.active_voice_jobs += 1
                         try:
                             voice_res = self._synthesize_project_voice(
                                 proj_name=proj_name,
                                 script_text=script_text,
-                                assets_dir=assets_dir,
+                                assets_dir=work_voice_dir,
                                 v_cfg=v_cfg,
                                 voice_cb=voice_cb,
                             )
                         finally:
                             with self.lock:
                                 self.active_voice_jobs = max(0, self.active_voice_jobs - 1)
+
+                        # Đồng bộ bản master_voice.wav, subtitles.srt, TIMESTAMPS.txt, voice_manifest.json về thư mục dự án gốc
+                        if work_voice_dir != assets_dir:
+                            for sync_fn in ("master_voice.wav", "subtitles.srt", "TIMESTAMPS.txt", "voice_manifest.json", "voice_signature.json"):
+                                src_f = work_voice_dir / sync_fn
+                                if src_f.exists():
+                                    try:
+                                        shutil.copy2(src_f, assets_dir / sync_fn)
+                                    except Exception:
+                                        pass
 
                         log_info(
                             f"✅ Hoàn tất tạo Voice GPU [{preset_id} • {speed_val}x] & Phụ đề cho '{proj_name}' (Thời lượng: {voice_res.get('total_duration', 0)/60:.2f} phút).",
@@ -1187,7 +1270,7 @@ class ProductionPipeline:
                     if proj_name in getattr(self, "paused_for_perf_downscale", set()):
                         raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
-                    final_video = renders_dir / f"{proj_name}_master.mp4"
+                    final_video = final_renders_dir / f"{proj_name}_master.mp4"
                     particles_path = str(self.root_dir / "assets" / "particles" / "star_particles_30s.mov")
                     fonts_dir = str(self.root_dir / "assets" / "fonts")
 
@@ -1230,16 +1313,25 @@ class ProductionPipeline:
                                     category="RENDER",
                                     project_id=proj_name,
                                 )
+                                work_voice_retry = ssd_assets_dir if (use_ssd and ssd_assets_dir.resolve() != assets_dir.resolve()) else assets_dir
                                 voice_res = self._synthesize_project_voice(
                                     proj_name=proj_name,
                                     script_text=script_text,
-                                    assets_dir=assets_dir,
+                                    assets_dir=work_voice_retry,
                                     v_cfg=v_cfg,
                                     voice_cb=voice_cb,
                                 )
+                                if work_voice_retry != assets_dir:
+                                    for sync_fn in ("master_voice.wav", "subtitles.srt", "TIMESTAMPS.txt", "voice_manifest.json", "voice_signature.json"):
+                                        src_f = work_voice_retry / sync_fn
+                                        if src_f.exists():
+                                            try:
+                                                shutil.copy2(src_f, assets_dir / sync_fn)
+                                            except Exception:
+                                                pass
 
                             log_info(
-                                f"🔥 Bắt đầu FFmpeg GPU Render 5 lớp ra file {final_video} (Lần {sync_attempt})...",
+                                f"🔥 Bắt đầu FFmpeg GPU Render 5 lớp ({'SSD Staging -> ' if use_ssd else ''}{final_video}) (Lần {sync_attempt})...",
                                 category="RENDER",
                                 project_id=proj_name,
                             )
@@ -1261,6 +1353,8 @@ class ProductionPipeline:
                                 bgm_volume=bgm_volume,
                                 progress_callback=render_cb,
                                 performance_mode=getattr(self, "performance_mode", "full_100"),
+                                ssd_staging_dir=str(ssd_root),
+                                use_ssd_staging=use_ssd,
                             )
 
                             # Kiểm định nghiêm ngặt tính toàn vẹn & thời lượng của file MP4 vừa xuất
@@ -1286,12 +1380,13 @@ class ProductionPipeline:
                                 continue
 
                             sents_list = split_japanese_script(script_text)
+                            active_sents_dir = (ssd_assets_dir / "sentences") if (use_ssd and (ssd_assets_dir / "sentences").exists()) else (assets_dir / "sentences")
                             sync_report = _sync_mod.verify_rendered_video_sync(
                                 video_path=final_video,
                                 master_wav_path=Path(voice_res["master_voice"]),
                                 srt_path=Path(voice_res["subtitles_srt"]),
                                 sentences=sents_list,
-                                sentences_dir=assets_dir / "sentences",
+                                sentences_dir=active_sents_dir,
                             )
                             try:
                                 (proj_dir / "qa_video_sync_report.json").write_text(
@@ -1316,12 +1411,13 @@ class ProductionPipeline:
                                 if sync_attempt < max_video_sync_attempts:
                                     redo_idxs = sync_report.get("sentence_audit", {}).get("redo_indices", [])
                                     for r_i in redo_idxs:
-                                        bad_w = assets_dir / "sentences" / f"sentence_{r_i+1:04d}.wav"
-                                        if bad_w.exists():
-                                            try:
-                                                bad_w.unlink()
-                                            except Exception:
-                                                pass
+                                        for s_d in (assets_dir / "sentences", ssd_assets_dir / "sentences"):
+                                            bad_w = s_d / f"sentence_{r_i+1:04d}.wav"
+                                            if bad_w.exists():
+                                                try:
+                                                    bad_w.unlink()
+                                                except Exception:
+                                                    pass
                                     if final_video.exists():
                                         try:
                                             final_video.unlink()
@@ -1345,6 +1441,13 @@ class ProductionPipeline:
                                 pass
                         raise RuntimeError(f"Video MP4 chưa hoàn chỉnh ({final_check.get('reason')}) — Không thể công nhận thành công!")
 
+                    # Dọn sạch thư mục SSD Staging của dự án sau khi MP4 đã hoàn tất 100% và chuyển sang ổ đích
+                    if use_ssd and ssd_proj_dir.exists() and ssd_proj_dir.resolve() != proj_dir.resolve():
+                        try:
+                            shutil.rmtree(ssd_proj_dir, ignore_errors=True)
+                        except Exception:
+                            pass
+
                     # 4. ĐÁNH DẤU LƯỢT DÙNG STOCK & TỰ ĐỘNG XÓA NGAY ĐỂ GIẢI PHÓNG BỘ NHỚ
                     with self.stock_alloc_lock:
                         mode_tag = "Lần 1: Bản gốc"
@@ -1362,10 +1465,11 @@ class ProductionPipeline:
                             except Exception as e:
                                 log_warn(f"Không thể xóa file stock sau khi render: {e}", category="STOCK", project_id=proj_name)
 
-                    # 5. Xuất file SEO & Kịch bản vào cùng thư mục renders
+                    # 5. Xuất file SEO & Kịch bản vào cùng thư mục renders (và đồng bộ sang Nơi Chứa Video Cuối nếu tách riêng)
                     timestamps_content = ""
-                    if os.path.exists(voice_res["timestamps_txt"]):
-                        with open(voice_res["timestamps_txt"], "r", encoding="utf-8") as tf:
+                    ts_src_path = voice_res.get("timestamps_txt") or str(assets_dir / "TIMESTAMPS.txt")
+                    if os.path.exists(ts_src_path):
+                        with open(ts_src_path, "r", encoding="utf-8") as tf:
                             timestamps_content = tf.read()
 
                     seo_file = proj_dir / f"{proj_name}_seo.md"
@@ -1379,10 +1483,9 @@ class ProductionPipeline:
                     )
                     seo_file.write_text(seo_tech_block, encoding="utf-8")
 
-                    seo_dest = renders_dir / f"{proj_name}_SEO.txt"
-                    script_dest = renders_dir / f"{proj_name}_KICH_BAN.txt"
+                    seo_dest = final_renders_dir / f"{proj_name}_SEO.txt"
+                    script_dest = final_renders_dir / f"{proj_name}_KICH_BAN.txt"
                     try:
-                        script_dest.write_text(script_text, encoding="utf-8")
                         master_seo_src = proj_dir / "00_TIEU_DE_VA_SEO_YOUTUBE.txt"
                         if master_seo_src.exists():
                             full_seo_txt = master_seo_src.read_text(encoding="utf-8")
@@ -1393,21 +1496,56 @@ class ProductionPipeline:
                                     "================================================================================\n"
                                     f"{timestamps_content}\n"
                                 )
-                            seo_dest.write_text(full_seo_txt, encoding="utf-8")
                         elif job.get("seo_text"):
-                            seo_dest.write_text(str(job["seo_text"]), encoding="utf-8")
+                            full_seo_txt = str(job["seo_text"])
                         else:
-                            seo_dest.write_text(seo_tech_block, encoding="utf-8")
+                            full_seo_txt = seo_tech_block
+
+                        for r_target in {renders_dir, final_renders_dir}:
+                            r_target.mkdir(parents=True, exist_ok=True)
+                            (r_target / f"{proj_name}_KICH_BAN.txt").write_text(script_text, encoding="utf-8")
+                            (r_target / f"{proj_name}_SEO.txt").write_text(full_seo_txt, encoding="utf-8")
+
+                        # Nếu Nơi Chứa Video Cuối tách biệt với Folder Project: sao chép Thumbnail + idea_info.json + video_location.json để load được 100% ở cả 2 nơi
+                        if final_proj_dir.resolve() != proj_dir.resolve():
+                            for th_f in renders_dir.glob(f"{proj_name}_THUMBNAIL_*.png"):
+                                try:
+                                    shutil.copy2(th_f, final_renders_dir / th_f.name)
+                                except Exception:
+                                    pass
+                            for meta_fn in ("idea_info.json", "script_clean.txt", "00_TIEU_DE_VA_SEO_YOUTUBE.txt"):
+                                src_mf = proj_dir / meta_fn
+                                if src_mf.exists():
+                                    try:
+                                        shutil.copy2(src_mf, final_proj_dir / meta_fn)
+                                    except Exception:
+                                        pass
+                            loc_payload = {
+                                "ma_id": proj_name,
+                                "video_mp4_path": str(final_video),
+                                "final_renders_dir": str(final_renders_dir),
+                                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            }
+                            (renders_dir / "video_location.json").write_text(
+                                json.dumps(loc_payload, ensure_ascii=False, indent=2),
+                                encoding="utf-8",
+                            )
+                            old_local_mp4 = renders_dir / f"{proj_name}_master.mp4"
+                            if old_local_mp4.exists() and old_local_mp4.resolve() != final_video.resolve():
+                                try:
+                                    old_local_mp4.unlink()
+                                except Exception:
+                                    pass
                     except Exception as copy_err:
                         log_warn(f"Lưu ý khi sao chép Kịch bản & SEO sang renders: {copy_err}", category="RENDER", project_id=proj_name)
 
                     job_result = {
                         "project_name": proj_name,
-                        "project_dir": str(renders_dir),
+                        "project_dir": str(final_renders_dir),
                         "final_video": str(final_video),
-                        "master_voice": voice_res["master_voice"],
-                        "subtitles_srt": voice_res["subtitles_srt"],
-                        "timestamps_txt": voice_res["timestamps_txt"],
+                        "master_voice": str(assets_dir / "master_voice.wav"),
+                        "subtitles_srt": str(assets_dir / "subtitles.srt"),
+                        "timestamps_txt": str(assets_dir / "TIMESTAMPS.txt"),
                         "seo_pack": str(seo_dest),
                         "script_file": str(script_dest),
                         "duration": voice_res["total_duration"],
@@ -1427,7 +1565,8 @@ class ProductionPipeline:
                     self._update_job_card_status(
                         proj_name,
                         "COMPLETED_VIDEO",
-                        f"✅ Đã xuất xong Video MP4 [{preset_id}] ({job_result['duration_formatted']}) tại renders/{final_video.name}",
+                        f"✅ Đã xuất xong Video MP4 [{preset_id}] ({job_result['duration_formatted']}) tại {final_video}",
+                        extra={"video_path": str(final_video)},
                     )
                     _update_overall_progress(f"🎉 Hoàn tất xuất MP4 cho {proj_name} ({job_result['duration_formatted']})!", "completed_one")
                     log_info(
@@ -1800,12 +1939,14 @@ def _auto_patch_live_instances_on_reload():
                             a_inst.__class__ = adas_cls
                         except Exception:
                             pass
+                        if hasattr(a_inst, "_load_storage_paths_config"):
+                            a_inst._load_storage_paths_config()
                     except Exception:
                         pass
         except Exception:
             pass
 
-        # Tự động tiêm/cập nhật route /api/performance-mode và /api/adas/check-and-repair-all vào FastAPI app
+        # Tự động tiêm/cập nhật route /api/performance-mode, /api/storage-paths và /api/adas/check-and-repair-all vào FastAPI app
         if live_fastapi_apps:
             from starlette.routing import Route
             from starlette.responses import JSONResponse
@@ -1825,6 +1966,30 @@ def _auto_patch_live_instances_on_reload():
                     info = main_pipeline.set_performance_mode(mode_val, persist=True)
                     return JSONResponse({"success": True, **info})
                 return JSONResponse({"success": True, **main_pipeline.get_performance_mode_info()})
+
+            async def _dynamic_storage_paths_handler(request):
+                if main_adas is None:
+                    return JSONResponse({"success": False, "detail": "ADAS Engine not found"}, status_code=500)
+                try:
+                    if request.method == "POST":
+                        try:
+                            body = await request.json()
+                        except Exception:
+                            body = {}
+                        if not isinstance(body, dict):
+                            body = {}
+                        from starlette.concurrency import run_in_threadpool
+                        res = await run_in_threadpool(
+                            main_adas.set_storage_paths,
+                            body.get("projects_dir"),
+                            body.get("final_video_dir"),
+                            body.get("ssd_staging_dir"),
+                            body.get("use_ssd_staging"),
+                        )
+                        return JSONResponse({"success": True, **res})
+                    return JSONResponse({"success": True, **main_adas.get_storage_paths()})
+                except Exception as e:
+                    return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
 
             async def _dynamic_check_and_repair_all_handler(request):
                 try:
@@ -1870,8 +2035,18 @@ def _auto_patch_live_instances_on_reload():
                                     methods=["GET", "POST"],
                                 ),
                             )
-                        # Luôn cập nhật route /api/adas/check-and-repair-all lên bản mới nhất ở đầu danh sách
-                        routes_list[:] = [r for r in routes_list if getattr(r, "path", "") != "/api/adas/check-and-repair-all"]
+                        routes_list[:] = [
+                            r for r in routes_list
+                            if getattr(r, "path", "") not in ("/api/adas/check-and-repair-all", "/api/storage-paths")
+                        ]
+                        routes_list.insert(
+                            0,
+                            Route(
+                                "/api/storage-paths",
+                                endpoint=_dynamic_storage_paths_handler,
+                                methods=["GET", "POST"],
+                            ),
+                        )
                         routes_list.insert(
                             0,
                             Route(
