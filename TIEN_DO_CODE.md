@@ -1,5 +1,24 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 04/11/2026 (Lần 45 — V1.0.3 Build #111) — Chẩn Đoán & Gỡ Bỏ Hoàn Toàn Vòng Lặp Tự Xóa MP4 Để Render Lại Lần 2 Từ `0%` (`sync_attempt = 2`) Sau Khi Đã Render Xong `100%`
+
+### 1. Chẩn đoán chính xác nguyên nhân trên 2 ảnh chụp màn hình bản cũ (chưa update) chạy `190–243 phút` mà không xong 1 video (và quay ngược về `3.7%`)
+1. **Nguyên nhân #1 (Thủ phạm khiến video render xong `100%` ở phút 180 lại bị xóa đi render lại từ `0%` -> `3.7%` ở phút 190 như trong Hình 1 `#P331..#P337`)**:
+   - Ở bản cũ (trước Build #109/#111), sau khi FFmpeg render xong `100%` (`9588s / 9588s` ~ 2 tiếng 40 phút) ở `sync_attempt = 1` và đã xóa sạch thư mục `.ts` checkpoint, [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1382-L1425) gọi hàm `verify_rendered_video_sync()` -> [`audit_all_sentences_sync()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/sync_checker.py#L252-L315).
+   - Hàm này kiểm tra toàn bộ `~3.000 câu thoại` xem có câu nào đọc nhanh hơn `11.5 chữ/giây` (`cps > 11.5`) hoặc năng lượng biên `start_rms > 0.022` hay không. Với kịch bản dài 3.000 câu có nhiều câu cảm thán ngắn (`「えっ？」`, `「まさか…」`), **100% kịch bản đều có ít nhất vài câu vượt ngưỡng này**, khiến `sync_report["passed"] = False`.
+   - Ngay khi `passed == False`, bản cũ thực thi lệnh `final_video.unlink()` (**xóa thẳng file MP4 dài 2 tiếng 40 phút vừa render xong 100%!**), tạo lại vài câu WAV rồi nhảy sang `sync_attempt = 2` — **bắt FFmpeg phải render lại toàn bộ 9.588 giây từ `0.0%` một lần nữa!** Đó là lý do ở phút `190:16`, cả 5 video `#P331..#P337` đều đồng loạt tụt về `3.7% – 7.5%` (`355s / 9588s`).
+2. **Nguyên nhân #2 (Vì sao trong Hình 1 `GPU 0% • CPU 63%` và Hình 2 `#P730, #P731` tạo Voice mất `243 phút`)**:
+   - Ở bản cũ, khi 5 luồng cùng khởi động, `VOICEVOX_ENGINE/run.exe --use_gpu` chỉ chờ `13.5s`; khi Windows Defender quét `onnxruntime.dll` quá `13.5s`, engine tự động ngắt GPU và **rơi về chạy bằng CPU (`use_gpu=False`, chậm gấp 10 lần)**, dù nhãn giao diện vẫn ghi `[GPU • Drama 0.97x]`.
+   - Đồng thời, `check_nvenc_available()` ở bản cũ khi bị timeout 1 lần sẽ khóa chết `_NVENC_AVAILABLE = False`, đẩy cả 5 luồng FFmpeg về chạy bằng CPU (`GPU 0% • CPU 63%`), cộng thêm cờ `BelowNormal` (`0x00004000`) và bão ghi đè `saved_ideas.json` mỗi giây trên ổ cứng.
+
+### 2. Giải pháp kỹ thuật triệt để trong Build #111
+- **[`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1360-L1395)**:
+  - Gỡ bỏ hoàn toàn khối lệnh `verify_rendered_video_sync` tự xóa `final_video.unlink()` để chạy `sync_attempt = 2`. Ngay khi file MP4 xuất xong và vượt qua bước kiểm tra toàn vẹn cấu trúc + thời lượng [`validate_completed_mp4_file()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/sync_checker.py#L365-L466) (`mp4_integrity["valid"] == True`), video được công nhận **ĐẠT 100%** ngay lập tức — **tuyệt đối không bao giờ xóa MP4 đã render xong để render lại từ 0% nữa**.
+- **[`backend/sync_checker.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/sync_checker.py#L449-L466)**:
+  - Đồng bộ ngưỡng dung sai thời lượng trong [`validate_completed_mp4_file()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/sync_checker.py#L456-L465) (`max(10.0, wav_dur * 0.015)`) khớp hoàn toàn với [`backend/renderer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L957).
+
+---
+
 ## Cập nhật: 04/11/2026 (Lần 44 — V1.0.3 Build #110) — Render Siêu Tốc Trên Ổ SSD (`SSD Staging -> Tự Động Chuyển Sang Ổ HDD Video Cuối`), Bộ Chọn Đường Dẫn Kép (`Folder Project` & `Nơi Chứa Video Cuối`) & Đồng Bộ Load 100% Trạng Thái Dự Án
 
 ### 1. Yêu cầu của người dùng

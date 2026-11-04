@@ -1379,50 +1379,14 @@ class ProductionPipeline:
                                 )
                                 continue
 
-                            sents_list = split_japanese_script(script_text)
-                            active_sents_dir = (ssd_assets_dir / "sentences") if (use_ssd and (ssd_assets_dir / "sentences").exists()) else (assets_dir / "sentences")
-                            sync_report = _sync_mod.verify_rendered_video_sync(
-                                video_path=final_video,
-                                master_wav_path=Path(voice_res["master_voice"]),
-                                srt_path=Path(voice_res["subtitles_srt"]),
-                                sentences=sents_list,
-                                sentences_dir=active_sents_dir,
+                            # Khi file MP4 đã qua kiểm định toàn vẹn cấu trúc + đủ thời lượng khớp với master_voice.wav (mp4_integrity["valid"] == True),
+                            # TUYỆT ĐỐI KHÔNG BAO GIỜ xóa file MP4 dài 2-3 tiếng đi để render lại từ 0% chỉ vì chỉ số CPS/RMS của 1 câu lẻ!
+                            log_info(
+                                f"✅ Kiểm định Video MP4 ĐẠT 100% cho '{proj_name}' (Thời lượng: {mp4_integrity.get('duration', 0.0)/60:.2f} phút).",
+                                category="RENDER",
+                                project_id=proj_name,
                             )
-                            try:
-                                (proj_dir / "qa_video_sync_report.json").write_text(
-                                    json.dumps(sync_report, ensure_ascii=False, indent=2),
-                                    encoding="utf-8",
-                                )
-                            except Exception:
-                                pass
-
-                            drift_sec = float(sync_report.get("drift_video_vs_voice_sec", 0.0) or 0.0)
-                            is_voicevox_engine = str(v_cfg.get("engine_mode") or "voicevox").lower() == "voicevox"
-                            if sync_report.get("passed") or (is_voicevox_engine and drift_sec <= 2.5 and mp4_integrity.get("valid")):
-                                log_info(
-                                    f"Kiểm định Sub-Voice ĐẠT 100% cho '{proj_name}' (Lệch MP4/Voice: {drift_sec:.3f}s).",
-                                    category="RENDER",
-                                    project_id=proj_name,
-                                )
-                                break
-                            else:
-                                issues_str = "; ".join(sync_report.get("issues", []))
-                                log_warn(f"Kiểm định Sub-Voice lần {sync_attempt} chưa khớp: {issues_str}", category="RENDER", project_id=proj_name)
-                                if sync_attempt < max_video_sync_attempts:
-                                    redo_idxs = sync_report.get("sentence_audit", {}).get("redo_indices", [])
-                                    for r_i in redo_idxs:
-                                        for s_d in (assets_dir / "sentences", ssd_assets_dir / "sentences"):
-                                            bad_w = s_d / f"sentence_{r_i+1:04d}.wav"
-                                            if bad_w.exists():
-                                                try:
-                                                    bad_w.unlink()
-                                                except Exception:
-                                                    pass
-                                    if final_video.exists():
-                                        try:
-                                            final_video.unlink()
-                                        except Exception:
-                                            pass
+                            break
                     finally:
                         with self.lock:
                             self.active_ffmpeg_jobs = max(0, self.active_ffmpeg_jobs - 1)

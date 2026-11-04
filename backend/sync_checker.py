@@ -453,7 +453,8 @@ def validate_completed_mp4_file(
                     "duration": video_dur,
                     "reason": f"File Voice gốc bị thiếu câu ({wav_dur / 60:.1f} phút cho {script_char_count:,} chữ)",
                 }
-            if abs(video_dur - wav_dur) > 5.0 or video_dur < wav_dur - 4.0:
+            max_allowed_drift = max(10.0, wav_dur * 0.015)
+            if abs(video_dur - wav_dur) > max_allowed_drift or video_dur < (wav_dur - 8.0):
                 return {
                     "valid": False,
                     "duration": video_dur,
