@@ -211,7 +211,14 @@ def is_existing_studio_running(port=8899) -> bool:
         with opener.open(f"http://127.0.0.1:{port}/api/status", timeout=1.5) as resp:
             if resp.status != 200:
                 return False
-        # Đảm bảo Server đang chạy trên cổng 8899 là bản mới có đầy đủ API Cập nhật OTA (/api/update/status)
+    except Exception:
+        return False
+
+    # Server đang chạy trên cổng 8899 -> kiểm tra xem đã có API Cập nhật OTA (/api/update/status) chưa
+    try:
+        import urllib.request
+        proxy_handler = urllib.request.ProxyHandler({})
+        opener = urllib.request.build_opener(proxy_handler)
         with opener.open(f"http://127.0.0.1:{port}/api/update/status", timeout=1.5) as resp_upd:
             return resp_upd.status == 200
     except Exception:
