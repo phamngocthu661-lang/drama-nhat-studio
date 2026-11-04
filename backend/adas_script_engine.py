@@ -9,6 +9,12 @@ import unicodedata
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable, Tuple
 
+import importlib
+from . import voice_service as _voice_service_mod
+try:
+    importlib.reload(_voice_service_mod)
+except Exception:
+    pass
 from .chatgpt_web_client import ChatGPTWebSession
 from .gemini_web_client import GeminiWebSession, check_all_gemini_accounts_status
 from .voice_service import split_japanese_script, strip_leaked_titles_and_metadata

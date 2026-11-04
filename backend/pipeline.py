@@ -9,6 +9,12 @@ import threading
 from pathlib import Path
 from typing import Dict, Any, Optional, Callable, List
 
+import importlib
+from . import voice_service as _voice_service_mod
+try:
+    importlib.reload(_voice_service_mod)
+except Exception:
+    pass
 from .stock_manager import StockManager
 from .voice_service import VoiceStudioService, split_japanese_script, strip_leaked_titles_and_metadata
 from .voicevox_service import (

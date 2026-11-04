@@ -212,6 +212,7 @@ def _hot_reload_backend_modules(adas_engine: Any = None, pipeline: Any = None):
     để máy khách áp dụng code mới ngay lập tức mà không làm gián đoạn cửa sổ đang mở.
     """
     module_names = [
+        "backend.voice_service",
         "backend.sync_checker",
         "backend.renderer",
         "backend.stock_manager",
