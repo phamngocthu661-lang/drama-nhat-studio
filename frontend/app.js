@@ -1827,6 +1827,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const presetObj = (voicePresetsCache || []).find((p) => p.id === selectedId) || null;
     const isOmni = activeGpuServerMode === "omnivoice_gpu" || (presetObj && presetObj.engine === "omnivoice");
 
+    const activePerfMode = localStorage.getItem("studio_perf_mode") || "full_100";
     return {
       active_gpu_server: isOmni ? "omnivoice_gpu" : "voicevox_gpu",
       engine_mode: isOmni ? "omnivoice" : "voicevox",
@@ -1837,13 +1838,15 @@ document.addEventListener("DOMContentLoaded", () => {
       intonationScale: intoRange ? parseFloat(intoRange.value) : 0.95,
       pauseLengthScale: pauseRange ? parseFloat(pauseRange.value) : 1.12,
       volumeScale: presetObj ? (presetObj.volumeScale || 1.05) : 1.05,
-      ref_wav: presetObj ? (presetObj.ref_wav || "Drama.wav") : "Drama.wav"
+      ref_wav: presetObj ? (presetObj.ref_wav || "Drama.wav") : "Drama.wav",
+      performance_mode: activePerfMode
     };
   }
 
   function getCurrentVideoSettings() {
     const rawBgm = bgmVolSlider ? parseFloat(bgmVolSlider.value) : 8;
     const bgmVol = isNaN(rawBgm) ? 0.08 : (rawBgm <= 1.0 ? rawBgm : rawBgm / 100.0);
+    const activePerfMode = localStorage.getItem("studio_perf_mode") || "full_100";
     return {
       output_dir: outputDirInput ? outputDirInput.value.trim() : "",
       channel_name: (channelNameInput ? channelNameInput.value.trim() : "") || ".",
@@ -1854,6 +1857,7 @@ document.addEventListener("DOMContentLoaded", () => {
       delete_used_stocks: autoDeleteStock ? autoDeleteStock.checked : true,
       auto_ensure_stock_hours: autoEnsureStock ? autoEnsureStock.checked : true,
       target_stock_hours: targetStockHoursInput ? parseFloat(targetStockHoursInput.value) || 30.0 : 30.0,
+      performance_mode: activePerfMode,
       voice_config: getCurrentVoiceConfigFromUI()
     };
   }
@@ -4166,16 +4170,21 @@ Capacity: PASS`;
       });
     });
 
-    // Đồng bộ trạng thái ban đầu từ Server
+    // Đồng bộ trạng thái ban đầu giữa Giao diện và Server
+    const explicitLocalMode = localStorage.getItem("studio_perf_mode");
     applyPerfModeUI(currentPerfMode);
-    fetch("/api/performance-mode")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d && d.mode) {
-          applyPerfModeUI(d.mode);
-        }
-      })
-      .catch(() => {});
+    if (explicitLocalMode === "work_70" || explicitLocalMode === "full_100") {
+      setPerfMode(explicitLocalMode, false);
+    } else {
+      fetch("/api/performance-mode")
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (d && d.mode) {
+            applyPerfModeUI(d.mode);
+          }
+        })
+        .catch(() => {});
+    }
   }
 
   setupSystemLogsAndDiagnostics();

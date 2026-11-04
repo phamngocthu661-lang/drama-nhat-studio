@@ -3808,6 +3808,12 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         vcfg = video_settings or {}
         started = False
         if self.video_pipeline is not None:
+            pm_val = vcfg.get("performance_mode") or (vcfg.get("voice_config") or {}).get("performance_mode")
+            if pm_val in ("full_100", "work_70") and hasattr(self.video_pipeline, "set_performance_mode"):
+                try:
+                    self.video_pipeline.set_performance_mode(pm_val, persist=True)
+                except Exception:
+                    pass
             started = self.video_pipeline.start_batch_production_async(
                 jobs=jobs_to_push,
                 output_dir=vcfg.get("output_dir") or str(self.projects_dir),
@@ -3859,6 +3865,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         - LUỒNG 2 (VOICE GPU & RENDER VIDEO MP4 — CONSUMER):
           + Hoạt động độc lập song song ở hậu trường: cứ có kịch bản viết xong là tự động tạo Voice GPU & ghép MP4 cuốn chiếu liên tục.
         """
+        if isinstance(video_settings, dict) and self.video_pipeline is not None:
+            pm_val = video_settings.get("performance_mode") or (video_settings.get("voice_config") or {}).get("performance_mode")
+            if pm_val in ("full_100", "work_70") and hasattr(self.video_pipeline, "set_performance_mode"):
+                try:
+                    self.video_pipeline.set_performance_mode(pm_val, persist=True)
+                except Exception:
+                    pass
         with self.lock:
             if self.is_running:
                 return False

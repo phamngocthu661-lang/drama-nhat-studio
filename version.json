@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 104,
-  "released_at": "2026-11-04 09:40:00",
+  "build_number": 105,
+  "released_at": "2026-11-04 09:57:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Sửa triệt để lỗi HardwareResourceBalancer.max_concurrent_videos khi Hot-Reload Render. 2. Render nối tiếp từ đoạn dở (MPEG-TS Smart Resume). 3. Chế độ 70% tối đa 3 luồng."
+  "changelog": "1. Khóa cứng Chế độ 70% chạy đúng tối đa 3 video song song (kể cả khi đang chạy 5 video bấm sang 70% sẽ tự động hạ ngay về 3 video). 2. Render nối tiếp từ đoạn dở. 3. Vá lỗi Hot-Reload V1.0.3."
 }

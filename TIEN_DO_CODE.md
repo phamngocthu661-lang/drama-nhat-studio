@@ -1409,5 +1409,27 @@
 - **Trong [`version.json`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/version.json)**:
   - Giữ nguyên tên phiên bản **`V1.0.3`** theo yêu cầu và nâng `build_number` lên `104` để mọi máy khách (kể cả máy vừa lên `V1.0.3` Build #103) đều nhận diện được bản vá và bấm **`🔄 CẬP NHẬT`** là chạy Render mượt mà ngay lập tức.
 
+---
+
+## Cập nhật: 04/11/2026 (Lần 63) — Khóa Cứng Chế Độ 70% Tối Đa 3 Video Song Song (Tự Động Hạ Ngay Từ 5 Về 3 Luồng Kể Cả Khi Đang Render) & Phát Hành `V1.0.3` Build `#105` (`backend/pipeline.py`, `backend/adas_script_engine.py`, `backend/voicevox_service.py`, `frontend/app.js`, `version.json`)
+
+### 1. Nguyên Nhân Khiến Chọn 70% Nhưng Vẫn Chạy 5 Video Song Song
+1. **Thứ tự vá nóng trong `_ensure_hot_reload_compat()` & `_auto_patch_live_instances_on_reload()`**:
+   - Ở Build `#104`, khi vá nóng đối tượng `HardwareResourceBalancer`, thuộc tính `max_concurrent_videos = 5` được gán mặc định vào `rb.__dict__` trước khi `ProductionPipeline` đọc `performance_mode = "work_70"` từ `config.json`. Do lệnh kiểm tra dùng `if "max_concurrent_videos" not in rb.__dict__:`, giá trị `5` không được cập nhật lại thành `3`.
+2. **Máy khách khởi chạy từ bản `V1.0.0` (chưa tắt mở lại app)**:
+   - Route `/api/performance-mode` chưa có trong `app.router.routes` của tiến trình `V1.0.0` cũ và gói tin `POST /api/adas/render-only` chưa đính kèm `performance_mode` từ giao diện.
+3. **Chuyển sang 70% khi 5 luồng video đã khởi chạy từ trước**:
+   - Trước đây, nếu 5 luồng worker đã được mở ở chế độ `100%` rồi người dùng mới bấm sang `70%`, 5 luồng đang chạy vẫn tiếp tục chạy nốt hết video hiện tại.
+
+### 2. Giải Pháp Khắc Phục Triệt Để 4 Lớp Trong Bản `V1.0.3` (Build `#105`)
+- **Lớp 1 — Khóa cứng `max_concurrent_videos = 3 if is_70_mode else 5` trong [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L285-L295)**:
+  - Trong `_ensure_hot_reload_compat()` và vòng lặp `_run_batch()`, luôn gán trực tiếp `max_concurrent_videos = 3` mỗi khi `performance_mode == "work_70"`.
+- **Lớp 2 — Tự động hạ luồng tức thì từ 5 ➔ 3 video ngay cả khi đang Render (`paused_for_perf_downscale`)**:
+  - Nếu đang chạy 5 video mà người dùng chọn **`💼 2. Chạy 70% (Tối Đa 3 Luồng)`**, hệ thống lập tức ra lệnh cho 2 video mới nhất lưu Checkpoint MPEG-TS (`.ts` / `.wav`), tạm dừng tiến trình FFmpeg/Voice trong `0.5 giây` và đưa về đầu hàng đợi `pending_jobs` (`⏳ Đã lưu Checkpoint & tạm nhường luồng`), giữ đúng **tối đa 3 video** chạy song song!
+- **Lớp 3 — Gửi trực tiếp `performance_mode` trong mọi lệnh Render / ADAS & Tiêm nóng Route `/api/performance-mode`**:
+  - [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js#L1830-L1860) gửi kèm `performance_mode` trong cả `getCurrentVideoSettings()` và `getCurrentVoiceConfigFromUI()`.
+  - [`_auto_patch_live_instances_on_reload()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1605-L1650) tự động tiêm route `GET/POST /api/performance-mode` vào đầu `app.router.routes` của tiến trình FastAPI đang chạy.
+
+
 
 

@@ -887,8 +887,12 @@ class VoicevoxStandaloneService:
                     f"♻️ Khôi phục {done_count}/{total_sentences} câu Voice đã tạo — Đang tạo tiếp {len(todo_items)} câu còn lại...",
                 )
 
+            abort_synth = threading.Event()
+
             def _synth_worker(item: tuple[int, str, Path]) -> tuple[int, float]:
                 nonlocal done_count
+                if abort_synth.is_set():
+                    raise InterruptedError("ABORT_VOICE_SYNTH")
                 s_idx, s_text, s_path = item
                 assigned_port = active_ports[s_idx % len(active_ports)]
                 wav_bytes = self.synthesize_single_sentence_bytes(
@@ -905,19 +909,30 @@ class VoicevoxStandaloneService:
                 dur_val = get_audio_duration(str(s_path))
                 with prog_lock:
                     done_count += 1
-                    if progress_callback and (done_count % 3 == 0 or done_count == total_sentences):
+                    if progress_callback and (done_count % 2 == 0 or done_count == total_sentences):
                         pct = round((done_count / max(1, total_sentences)) * 92.0, 1)
-                        progress_callback(
-                            pct,
-                            f"⚡ [GPU • {preset_id} {speed_scale}x] Đã tạo ({done_count}/{total_sentences} câu): {s_text[:18]}...",
-                        )
+                        try:
+                            progress_callback(
+                                pct,
+                                f"⚡ [GPU • {preset_id} {speed_scale}x] Đã tạo ({done_count}/{total_sentences} câu): {s_text[:18]}...",
+                            )
+                        except InterruptedError:
+                            abort_synth.set()
+                            raise
                 return s_idx, dur_val
 
-            with ThreadPoolExecutor(max_workers=worker_threads) as executor:
+            executor = ThreadPoolExecutor(max_workers=worker_threads)
+            try:
                 futures = [executor.submit(_synth_worker, it) for it in todo_items]
                 for fut in as_completed(futures):
                     s_idx, dur_val = fut.result()
                     cached_durations[s_idx] = dur_val
+            except InterruptedError:
+                abort_synth.set()
+                executor.shutdown(wait=False, cancel_futures=True)
+                raise
+            finally:
+                executor.shutdown(wait=False)
 
             synth_elapsed = time.time() - t_start_synth
             log_info(

@@ -210,6 +210,8 @@ class ProductionPipeline:
         self.pending_jobs: List[Dict[str, Any]] = []
         self.active_projects: set[str] = set()
         self.active_jobs_detail: Dict[str, Dict[str, Any]] = {}
+        self.active_job_map: Dict[str, Dict[str, Any]] = {}
+        self.paused_for_perf_downscale: set[str] = set()
         self.active_voice_jobs: int = 0
         self.active_ffmpeg_jobs: int = 0
         self.adas_engine: Any = None
@@ -248,7 +250,15 @@ class ProductionPipeline:
         mà không cần tắt mở lại ứng dụng: Tự động nâng cấp class và thuộc tính của `resource_balancer` và `pipeline`.
         """
         try:
-            if "performance_mode" not in self.__dict__ or not self.performance_mode:
+            if "active_job_map" not in self.__dict__:
+                self.active_job_map = {}
+            if "paused_for_perf_downscale" not in self.__dict__:
+                self.paused_for_perf_downscale = set()
+
+            env_mode = os.environ.get("STUDIO_PERF_MODE", "").strip().lower()
+            if env_mode in ("full_100", "work_70"):
+                self.performance_mode = env_mode
+            elif "performance_mode" not in self.__dict__ or not self.performance_mode:
                 saved_mode = "full_100"
                 cfg_file = getattr(self, "root_dir", Path(".")) / "config.json"
                 if cfg_file.exists():
@@ -260,10 +270,11 @@ class ProductionPipeline:
                         pass
                 self.performance_mode = saved_mode
 
+            is_70 = self.performance_mode == "work_70"
             rb = getattr(self, "resource_balancer", None)
             if rb is None:
                 self.resource_balancer = HardwareResourceBalancer(
-                    target_max_percent=70.0 if self.performance_mode == "work_70" else 90.0
+                    target_max_percent=70.0 if is_70 else 90.0
                 )
                 rb = self.resource_balancer
             else:
@@ -278,12 +289,10 @@ class ProductionPipeline:
                         rb.__class__ = HardwareResourceBalancer
                     except Exception:
                         pass
-                if "performance_mode" not in rb.__dict__:
-                    rb.performance_mode = self.performance_mode
-                if "max_concurrent_videos" not in rb.__dict__ or not rb.max_concurrent_videos:
-                    rb.max_concurrent_videos = 3 if self.performance_mode == "work_70" else 5
-                if "target_max_percent" not in rb.__dict__ or not rb.target_max_percent:
-                    rb.target_max_percent = 70.0 if self.performance_mode == "work_70" else 90.0
+            # LUÔN KHÓA CỨNG số luồng tối đa theo chế độ hiện tại (3 luồng cho 70% | 5 luồng cho 100%)
+            rb.performance_mode = "work_70" if is_70 else "full_100"
+            rb.max_concurrent_videos = 3 if is_70 else 5
+            rb.target_max_percent = 70.0 if is_70 else 90.0
         except Exception:
             pass
 
@@ -305,10 +314,10 @@ class ProductionPipeline:
         default_max_vids = 3 if is_70 else 5
         default_target_pct = 70.0 if is_70 else 90.0
         return {
-            "mode": getattr(self, "performance_mode", "full_100"),
+            "mode": "work_70" if is_70 else "full_100",
             "label": "💼 Chạy 70% (Tối Đa 3 Luồng — Vừa Chạy Vừa Làm Việc Khác)" if is_70 else "🔥 Chạy Full 100% (Tối Đa Tốc Độ)",
             "target_max_percent": float(getattr(self.resource_balancer, "target_max_percent", default_target_pct) or default_target_pct),
-            "max_concurrent_videos": int(getattr(self.resource_balancer, "max_concurrent_videos", default_max_vids) or default_max_vids),
+            "max_concurrent_videos": 3 if is_70 else 5,
             "max_total_threads": 3 if is_70 else 9,
             "threads_per_account": 1 if is_70 else 3,
         }
@@ -320,10 +329,10 @@ class ProductionPipeline:
         2. `work_70`: Chạy 70% công suất (Khóa cứng TỐI ĐA 3 LUỒNG trên toàn hệ thống: tối đa 3 luồng viết kịch bản AI / 1 tab mỗi Acc,
            tối đa 3 luồng render video, <70% CPU/GPU, ưu tiên tiến trình BelowNormal) để người dùng vừa chạy vừa làm việc khác mượt mà.
         """
-        self._ensure_hot_reload_compat()
         norm_mode = "work_70" if str(mode or "").strip().lower() in ("work_70", "70", "70%", "balanced") else "full_100"
         self.performance_mode = norm_mode
         os.environ["STUDIO_PERF_MODE"] = norm_mode
+        self._ensure_hot_reload_compat()
 
         if norm_mode == "work_70":
             self.resource_balancer.performance_mode = "work_70"
@@ -349,6 +358,20 @@ class ProductionPipeline:
 
         with self.lock:
             self.state["performance_mode"] = norm_mode
+            if norm_mode == "work_70" and len(self.active_projects) > 3:
+                active_unpaused = [
+                    p for p in self.active_projects
+                    if p not in self.paused_for_perf_downscale
+                ]
+                if len(active_unpaused) > 3:
+                    active_unpaused.sort(
+                        key=lambda p: int((self.active_job_map.get(p) or {}).get("job_num", 999999)),
+                        reverse=True,
+                    )
+                    for p_yield in active_unpaused[: len(active_unpaused) - 3]:
+                        self.paused_for_perf_downscale.add(p_yield)
+            elif norm_mode == "full_100":
+                self.paused_for_perf_downscale.clear()
 
         # Điều chỉnh mức ưu tiên của các tiến trình ffmpeg.exe đang chạy ngay lập tức trên Windows
         if os.name == "nt":
@@ -378,7 +401,7 @@ class ProductionPipeline:
                 pass
             log_info(
                 "SYSTEM",
-                f"⚡ Đã chuyển sang chế độ [{'💼 CHẠY 70% — Vừa chạy vừa làm việc khác (Giới hạn 70% CPU/GPU • Tối đa 3 video • 2 tab AI/Acc)' if norm_mode == 'work_70' else '🔥 CHẠY FULL 100% — Tối đa công suất (Ngưỡng 90% CPU/GPU • Tối đa 5 video • 3 tab AI/Acc)'}]!",
+                f"⚡ Đã chuyển sang chế độ [{'💼 CHẠY 70% — Vừa chạy vừa làm việc khác (Giới hạn 70% CPU/GPU • Tối đa 3 video • 1 tab AI/Acc)' if norm_mode == 'work_70' else '🔥 CHẠY FULL 100% — Tối đa công suất (Ngưỡng 90% CPU/GPU • Tối đa 5 video • 3 tab AI/Acc)'}]!",
             )
 
         self._notify()
@@ -556,9 +579,14 @@ class ProductionPipeline:
         if not jobs:
             return False
 
+        # Đồng bộ chế độ hiệu suất (70% 3 luồng hoặc 100% 5 luồng) trực tiếp từ giao diện nếu có gửi kèm
+        if isinstance(voice_config, dict) and voice_config.get("performance_mode") in ("full_100", "work_70"):
+            self.set_performance_mode(voice_config["performance_mode"], persist=True)
+
         # Lưu cấu hình Voice mới nhất từ giao diện ngay khi bấm Render
         if isinstance(voice_config, dict) and voice_config:
-            saved_vcfg = save_voice_config(voice_config)
+            clean_vcfg = {k: v for k, v in voice_config.items() if k != "performance_mode"}
+            saved_vcfg = save_voice_config(clean_vcfg)
             log_info(
                 "VOICE",
                 f"🎙️ [RENDER SYNC] Áp dụng cấu hình Voice trực tiếp từ giao diện: "
@@ -771,7 +799,9 @@ class ProductionPipeline:
                 proj_dir = save_base / proj_name
 
                 with self.lock:
+                    self._ensure_hot_reload_compat()
                     self.active_projects.add(proj_name)
+                    self.active_job_map[proj_name] = {"job": job, "job_num": job_num}
                     self.state["current_project"] = ", ".join(sorted(self.active_projects))
                     progress_map[proj_name] = 1.0
                 self._set_project_live_detail(
@@ -872,6 +902,8 @@ class ProductionPipeline:
                     def voice_cb(pct, msg):
                         if self.should_stop:
                             raise InterruptedError("Đã dừng tạo Voice theo yêu cầu")
+                        if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                            raise InterruptedError("PERF_DOWNSCALE_YIELD")
                         job_pct = round(2.0 + (pct * 0.45), 1)
                         with self.lock:
                             progress_map[proj_name] = job_pct
@@ -934,6 +966,8 @@ class ProductionPipeline:
                                 pass
 
                         while not self.should_stop:
+                            if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                                raise InterruptedError("PERF_DOWNSCALE_YIELD")
                             with self.lock:
                                 curr_v = self.active_voice_jobs
                             if self.resource_balancer.has_headroom_for_parallel_task(curr_v):
@@ -942,6 +976,8 @@ class ProductionPipeline:
 
                         if self.should_stop:
                             raise InterruptedError("Đã dừng tiến trình Render theo yêu cầu")
+                        if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                            raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
                         with self.lock:
                             self.active_voice_jobs += 1
@@ -965,6 +1001,8 @@ class ProductionPipeline:
 
                     if self.should_stop:
                         raise InterruptedError("Đã dừng tiến trình Render theo yêu cầu")
+                    if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                        raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
                     # ==========================================================
                     # GIAI ĐOẠN 2: CẤP PHÁT VIDEO STOCK (KHÔI PHỤC STOCK CŨ NẾU ĐANG RENDER DỞ)
@@ -1074,6 +1112,8 @@ class ProductionPipeline:
                     _update_overall_progress("", "stock")
 
                     while not self.should_stop:
+                        if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                            raise InterruptedError("PERF_DOWNSCALE_YIELD")
                         with self.lock:
                             curr_ff = self.active_ffmpeg_jobs
                         if self.resource_balancer.has_headroom_for_parallel_task(curr_ff):
@@ -1096,6 +1136,8 @@ class ProductionPipeline:
 
                     if self.should_stop:
                         raise InterruptedError("Đã dừng tiến trình Render theo yêu cầu")
+                    if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                        raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
                     final_video = renders_dir / f"{proj_name}_master.mp4"
                     particles_path = str(self.root_dir / "assets" / "particles" / "star_particles_30s.mov")
@@ -1104,6 +1146,8 @@ class ProductionPipeline:
                     def render_cb(pct, msg):
                         if self.should_stop:
                             raise InterruptedError("Đã dừng Render Video theo yêu cầu")
+                        if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                            raise InterruptedError("PERF_DOWNSCALE_YIELD")
                         job_pct = round(52.0 + (pct * 0.44), 1)
                         with self.lock:
                             progress_map[proj_name] = job_pct
@@ -1342,6 +1386,51 @@ class ProductionPipeline:
                         project_id=proj_name,
                     )
 
+                except InterruptedError as yield_err:
+                    try:
+                        r_dir = proj_dir / "renders"
+                        if r_dir.exists():
+                            for tmp_f in r_dir.glob("*_rendering_tmp.mp4"):
+                                try:
+                                    tmp_f.unlink()
+                                except Exception:
+                                    pass
+                    except Exception:
+                        pass
+
+                    if "PERF_DOWNSCALE_YIELD" in str(yield_err):
+                        with self.lock:
+                            self.paused_for_perf_downscale.discard(proj_name)
+                            existing_q = {j.get("name") for j in self.pending_jobs if j.get("name")}
+                            if proj_name not in existing_q:
+                                self.pending_jobs.insert(0, job)
+                            progress_map.pop(proj_name, None)
+                        self._update_job_card_status(
+                            proj_name,
+                            "VIDEO_QUEUED",
+                            "⏳ Đã lưu Checkpoint & tạm nhường luồng (Chế độ 70% chạy tối đa 3 video song song)",
+                        )
+                        log_info(
+                            f"💼 [{proj_name}] Đã lưu Checkpoint & tạm xếp hàng chờ để đảm bảo Chế độ 70% chạy tối đa 3 video song song!",
+                            category="RENDER",
+                            project_id=proj_name,
+                        )
+                    else:
+                        ckpt_msg = "⏸️ Đã dừng theo yêu cầu (Đã lưu Checkpoint để chạy tiếp)"
+                        try:
+                            import backend.renderer as _r_ckpt
+                            ckpt_info = _r_ckpt.get_saved_render_progress(str(proj_dir / "renders" / f"{proj_name}_master.mp4"))
+                            if ckpt_info.get("has_checkpoint"):
+                                ckpt_pct = ckpt_info.get("percent", 0.0)
+                                ckpt_sec = ckpt_info.get("completed_sec", 0.0)
+                                ckpt_msg = f"⏸️ Đã lưu Checkpoint Render {ckpt_pct}% ({ckpt_sec:.0f}s) — Bấm Render để chạy tiếp đoạn còn lại!"
+                        except Exception:
+                            pass
+                        self._update_job_card_status(proj_name, "ERROR_VIDEO", ckpt_msg)
+                        with self.lock:
+                            failed_projects.append(f"{proj_name}: {yield_err}")
+                            progress_map[proj_name] = 100.0
+
                 except Exception as job_err:
                     # Dọn sạch mọi file MP4 dở dang / lỗi trong thư mục renders để tuyệt đối không bao giờ bị nhận nhầm là thành công
                     try:
@@ -1395,6 +1484,10 @@ class ProductionPipeline:
                     with self.lock:
                         self.active_projects.discard(proj_name)
                         self.active_jobs_detail.pop(proj_name, None)
+                        if hasattr(self, "active_job_map"):
+                            self.active_job_map.pop(proj_name, None)
+                        if hasattr(self, "paused_for_perf_downscale"):
+                            self.paused_for_perf_downscale.discard(proj_name)
                         self.state["current_project"] = ", ".join(sorted(self.active_projects))
                     if self.is_running and not self.should_stop:
                         _update_overall_progress("", "running")
@@ -1402,8 +1495,8 @@ class ProductionPipeline:
             # ==================================================================
             # VÒNG LẶP ĐIỀU PHỐI ĐA LUỒNG ĐỘNG (DYNAMIC MULTI-VIDEO DISPATCHER)
             # Cân đối thông minh:
-            # - Khi AI đang viết kịch bản song song: Chạy 1 FFmpeg + 1 Voice gối đầu (max 2 worker)
-            # - Khi AI đã nghỉ: Bung tối đa 3 worker song song (~90% GPU/CPU)
+            # - Chế độ Full 100%: Tối đa 5 video song song (~90% GPU/CPU)
+            # - Chế độ 70%: Khóa cứng TỐI ĐA 3 video song song (~70% GPU/CPU)
             # ==================================================================
             active_threads: List[threading.Thread] = []
 
@@ -1445,14 +1538,34 @@ class ProductionPipeline:
                             # Có kịch bản mới vừa được AI viết xong và đẩy vào đúng lúc video trước hoàn tất -> chạy tiếp ngay!
                             continue
 
-                # ĐIỀU PHỐI THEO CHẾ ĐỘ HIỆU SUẤT ĐỘNG (Full 100%: tối đa 5 video <90% CPU/GPU | Chế độ 70%: tối đa 3 video <70% CPU/GPU):
+                # ĐIỀU PHỐI THEO CHẾ ĐỘ HIỆU SUẤT ĐỘNG (Full 100%: tối đa 5 video <90% CPU/GPU | Chế độ 70%: KHÓA CỨNG TỐI ĐA 3 VIDEO <70% CPU/GPU):
                 self._ensure_hot_reload_compat()
-                is_70_mode = getattr(self, "performance_mode", "full_100") == "work_70"
-                default_max_vids = 3 if is_70_mode else 5
-                max_concurrent_videos = int(
-                    getattr(self.resource_balancer, "max_concurrent_videos", default_max_vids) or default_max_vids
+                is_70_mode = (
+                    getattr(self, "performance_mode", "full_100") == "work_70"
+                    or os.environ.get("STUDIO_PERF_MODE") == "work_70"
                 )
-                if has_pending and len(active_threads) < max_concurrent_videos:
+                max_concurrent_videos = 3 if is_70_mode else 5
+                self.resource_balancer.max_concurrent_videos = max_concurrent_videos
+                self.resource_balancer.target_max_percent = 70.0 if is_70_mode else 90.0
+                self.resource_balancer.performance_mode = "work_70" if is_70_mode else "full_100"
+
+                # Nếu đang chạy 5 video mà chuyển sang chế độ 70%, lập tức tạm dừng 2 video thừa (đã lưu Checkpoint) để chỉ giữ đúng 3 video chạy!
+                if is_70_mode:
+                    with self.lock:
+                        if len(self.active_projects) > 3:
+                            active_unpaused = [
+                                p for p in self.active_projects
+                                if p not in self.paused_for_perf_downscale
+                            ]
+                            if len(active_unpaused) > 3:
+                                active_unpaused.sort(
+                                    key=lambda p: int((self.active_job_map.get(p) or {}).get("job_num", 999999)),
+                                    reverse=True,
+                                )
+                                for p_yield in active_unpaused[: len(active_unpaused) - 3]:
+                                    self.paused_for_perf_downscale.add(p_yield)
+
+                if has_pending and len(active_threads) < max_concurrent_videos and len(self.active_projects) < max_concurrent_videos:
                     if len(active_threads) == 0:
                         can_dispatch = True
                     else:
@@ -1471,9 +1584,12 @@ class ProductionPipeline:
                             if self.pending_jobs and not self.should_stop and len(self.active_projects) < max_concurrent_videos:
                                 next_job = self.pending_jobs.pop(0)
                                 job_counter += 1
-                                total_jobs = max(job_counter + len(self.pending_jobs), self.state.get("batch_total", 1))
+                                total_jobs = max(
+                                    len(completed_results) + len(self.active_projects) + 1 + len(self.pending_jobs),
+                                    self.state.get("batch_total", 1),
+                                )
                                 self.state["batch_total"] = total_jobs
-                                self.state["batch_current"] = job_counter
+                                self.state["batch_current"] = len(completed_results) + len(self.active_projects) + 1
                             else:
                                 next_job = None
 
@@ -1485,7 +1601,7 @@ class ProductionPipeline:
                             )
                             t_worker.start()
                             active_threads.append(t_worker)
-                            # Chờ 2.5s để luồng mới kịp ăn tải CPU/GPU thực tế trước khi xét mở luồng tiếp theo (tối đa 5 video)
+                            # Chờ 2.5s để luồng mới kịp ăn tải CPU/GPU thực tế trước khi xét mở luồng tiếp theo
                             time.sleep(2.5)
                             continue
 
@@ -1512,46 +1628,96 @@ class ProductionPipeline:
 def _auto_patch_live_instances_on_reload():
     """
     Tự động chạy ngay khi `importlib.reload(backend.pipeline)` được gọi trong quá trình Update OTA:
-    Nâng cấp trực tiếp các instance `ProductionPipeline`, `HardwareResourceBalancer`, `VoicevoxStandaloneService`
-    đang sống trong RAM của máy khách mà không cần tắt mở lại ứng dụng!
+    1. Nâng cấp trực tiếp các instance `ProductionPipeline`, `HardwareResourceBalancer`, `VoicevoxStandaloneService`
+       đang sống trong RAM của máy khách.
+    2. Tự động gắn route `/api/performance-mode` vào FastAPI `app` đang chạy (nếu máy khách bật app từ bản V1.0.0 cũ)
+       mà không cần tắt mở lại ứng dụng!
     """
     try:
         import gc
+        live_pipelines: List[Any] = []
+        live_balancers: List[Any] = []
+        live_fastapi_apps: List[Any] = []
+
         for obj in gc.get_objects():
             try:
                 cls_name = type(obj).__name__
                 if cls_name == "HardwareResourceBalancer":
-                    for k, v in vars(HardwareResourceBalancer).items():
-                        if not k.startswith("__"):
-                            try:
-                                setattr(obj.__class__, k, v)
-                            except Exception:
-                                pass
-                    try:
-                        obj.__class__ = HardwareResourceBalancer
-                    except Exception:
-                        pass
-                    if "performance_mode" not in getattr(obj, "__dict__", {}):
-                        obj.performance_mode = "full_100"
-                    if "max_concurrent_videos" not in getattr(obj, "__dict__", {}):
-                        obj.max_concurrent_videos = 3 if getattr(obj, "performance_mode", "full_100") == "work_70" else 5
-                    if "target_max_percent" not in getattr(obj, "__dict__", {}):
-                        obj.target_max_percent = 70.0 if getattr(obj, "performance_mode", "full_100") == "work_70" else 90.0
+                    live_balancers.append(obj)
                 elif cls_name == "ProductionPipeline":
-                    for k, v in vars(ProductionPipeline).items():
-                        if not k.startswith("__"):
-                            try:
-                                setattr(obj.__class__, k, v)
-                            except Exception:
-                                pass
-                    try:
-                        obj.__class__ = ProductionPipeline
-                    except Exception:
-                        pass
-                    if hasattr(obj, "_ensure_hot_reload_compat"):
-                        obj._ensure_hot_reload_compat()
+                    live_pipelines.append(obj)
+                elif cls_name == "FastAPI":
+                    live_fastapi_apps.append(obj)
             except Exception:
                 continue
+
+        for rb in live_balancers:
+            try:
+                for k, v in vars(HardwareResourceBalancer).items():
+                    if not k.startswith("__"):
+                        try:
+                            setattr(rb.__class__, k, v)
+                        except Exception:
+                            pass
+                try:
+                    rb.__class__ = HardwareResourceBalancer
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
+        for p_inst in live_pipelines:
+            try:
+                for k, v in vars(ProductionPipeline).items():
+                    if not k.startswith("__"):
+                        try:
+                            setattr(p_inst.__class__, k, v)
+                        except Exception:
+                            pass
+                try:
+                    p_inst.__class__ = ProductionPipeline
+                except Exception:
+                    pass
+                if hasattr(p_inst, "_ensure_hot_reload_compat"):
+                    p_inst._ensure_hot_reload_compat()
+                if getattr(p_inst, "performance_mode", "full_100") == "work_70":
+                    p_inst.set_performance_mode("work_70", persist=False)
+            except Exception:
+                pass
+
+        # Tự động tiêm route /api/performance-mode vào FastAPI app nếu server cũ (V1.0.0) chưa có route này
+        if live_pipelines and live_fastapi_apps:
+            main_pipeline = live_pipelines[0]
+            from starlette.routing import Route
+            from starlette.responses import JSONResponse
+
+            async def _dynamic_perf_mode_handler(request):
+                if request.method == "POST":
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        body = {}
+                    mode_val = body.get("mode", "full_100") if isinstance(body, dict) else "full_100"
+                    info = main_pipeline.set_performance_mode(mode_val, persist=True)
+                    return JSONResponse({"success": True, **info})
+                return JSONResponse({"success": True, **main_pipeline.get_performance_mode_info()})
+
+            for f_app in live_fastapi_apps:
+                try:
+                    routes_list = getattr(getattr(f_app, "router", None), "routes", None)
+                    if isinstance(routes_list, list):
+                        existing_paths = {getattr(r, "path", "") for r in routes_list}
+                        if "/api/performance-mode" not in existing_paths:
+                            routes_list.insert(
+                                0,
+                                Route(
+                                    "/api/performance-mode",
+                                    endpoint=_dynamic_perf_mode_handler,
+                                    methods=["GET", "POST"],
+                                ),
+                            )
+                except Exception:
+                    pass
     except Exception:
         pass
 
