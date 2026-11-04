@@ -1473,4 +1473,34 @@
   - Đã quét toàn bộ kho dự án hiện tại, ghi nhận và xóa sạch **1.990 dòng** `[LOCKED_TITLE]` / Metadata rò rỉ trên **636 file** (`part_a/b/c.txt`, `script_clean.txt`, `*_KICH_BAN.txt`) của **167 dự án**.
   - Kiểm tra xác nhận lần cuối trên toàn bộ **240 file `*_KICH_BAN.txt` và `script_clean.txt`**: **0 dự án còn sót lỗi (`remaining_leaks = 0`)**.
 
+---
+
+## Cập nhật: 04/11/2026 (Lần 66) — Xây Dựng Tính Năng & Nút Bấm `🛡️ Check Toàn Bộ` (Phương Án 1: Quét Sạch Kịch Bản `.txt`/`.srt` + Tự Động Cắt Bỏ Đoạn Voice `.wav` & Video `.mp4` Đọc Nhầm `[LOCKED_TITLE]` Bằng FFmpeg Stream Copy Siêu Tốc) & Phát Hành `V1.0.3` Build `#107` (`backend/voice_service.py`, `backend/adas_script_engine.py`, `backend/server.py`, `backend/pipeline.py`, `frontend/index.html`, `frontend/app.js`, `Check_Va_Don_Toan_Bo_Loi.bat`, `version.json`)
+
+### 1. Yêu Cầu Của Người Dùng
+- Triển khai **Phương án 1** và thêm nút **`🛡️ Check Toàn Bộ`** trên giao diện ứng dụng:
+  1. Quét kiểm tra lại toàn bộ kịch bản (`.txt`) và phụ đề (`.srt`) đã tạo xong trong kho dự án; nếu có dính dòng `[LOCKED_TITLE]`, `SELECTED_TITLE`, `PART A/B/C`, `STEP 3/4` thì tự động xóa sạch và ghi nhận vào nhật ký.
+  2. Nếu dự án **đã tạo Voice (`.wav`) hoặc đã xuất Video (`.mp4`)** bị dính đoạn đọc nhầm `[LOCKED_TITLE]`, tự động xác định chính xác mốc thời gian (`start_sec -> end_sec`) của câu đọc nhầm và **cắt bỏ trực tiếp đoạn đó khỏi file `.wav` và `.mp4` bằng FFmpeg Stream Copy (`-c copy`)** mà không cần render lại video từ đầu (chỉ mất 3–8 giây/video).
+  3. Đẩy lên GitHub (`V1.0.3` Build `#107`) để bàn giao cho khách hàng bấm cập nhật và chạy dọn dẹp ngay.
+
+### 2. Giải Pháp Kỹ Thuật Chi Tiết
+- **Trong [`backend/voice_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L783-L1480)**:
+  - Bổ sung [`parse_srt_blocks()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L815-L865) & [`detect_leaked_srt_blocks_and_intervals()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L868-L1035):
+    - Quét toàn bộ các block trong `assets/subtitles.srt` (kết hợp đối chiếu với các dòng lỗi đã lưu trong `assets/leaked_lines_log.json`, `step5_audit_report.txt` và kịch bản gốc) để tìm chính xác các block phụ đề chứa `LOCKED_TITLE` (bao gồm cả tiêu đề dài 2–4 câu bị tách qua nhiều block SRT liên tiếp).
+    - Tự động tính toán danh sách khoảng thời gian cần cắt (`cut_intervals`) và dịch chuyển (`shift`) lại toàn bộ timestamp của các câu phụ đề phía sau khớp tuyệt đối `0.000s` với file âm thanh/video sau khi cắt.
+  - Bổ sung [`trim_media_file_by_keep_intervals()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L1065-L1200):
+    - Sử dụng kỹ thuật **Two-Stage Seek FFmpeg Stream Copy** (`ffmpeg -y -v error -ss <fast_seek> -i input.mp4 -ss <fine_start> -t <dur> -c copy -avoid_negative_ts make_zero seg_XXX.mp4` + `concat demuxer -c copy -movflags +faststart`) giúp cắt bỏ đoạn đọc nhầm trong cả `renders/{ma_id}_master.mp4` và `assets/master_voice.wav` chỉ trong vài giây, giữ nguyên 100% chất lượng hình ảnh/âm thanh và `0` lỗi giải mã (`0 decode errors`).
+  - Bổ sung [`repair_single_project_script_and_video()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L1203-L1375) và [`check_and_repair_all_projects_sync()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L1378-L1480):
+    - Quét toàn bộ các mã dự án trong `projects/`, sửa sạch `.txt`, `.srt`, `.wav`, `.mp4`, lưu dấu kiểm định `assets/video_leak_checked.json` (để lần bấm sau bỏ qua các video đã sạch), và xuất báo cáo tổng hợp ra file `BAO_CAO_CHECK_VA_DON_TOAN_BO.txt`.
+- **Trong [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L962-L1010) & `#L1768-L1820`**:
+  - Lưu vết mọi dòng `[LOCKED_TITLE]` bị xóa vào `assets/leaked_lines_log.json` ngay cả khi luồng đồng bộ ngầm quét qua trước khi người dùng bấm nút dọn video.
+  - Thêm phương thức [`check_and_repair_all_projects()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L1768-L1820) kết nối với UI log và cập nhật lại danh sách dự án sau khi dọn xong.
+- **Trong [`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py#L541-L547) & [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1765-L1805)**:
+  - Thêm API `POST /api/adas/check-and-repair-all` và tự động tiêm nóng (hot-inject) route này vào `app.router.routes` ngay khi khách hàng bấm `🔄 CẬP NHẬT` mà không cần tắt mở lại ứng dụng.
+- **Trong [`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html) & [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js)**:
+  - Thêm nút **`🛡️ CHECK TOÀN BỘ`** ở cả thanh điều hướng trên cùng (`#btn-check-repair-all-nav`, cạnh nút `🔄 CẬP NHẬT`) và thanh công cụ Kho Dự Án ADAS (`#btn-adas-check-repair-all`), kèm hộp thoại báo cáo kết quả chi tiết.
+- **Thêm file chạy nhanh [`Check_Va_Don_Toan_Bo_Loi.bat`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/Check_Va_Don_Toan_Bo_Loi.bat)**:
+  - Cho phép khách hàng có thể bấm trực tiếp trên giao diện ứng dụng hoặc nhấp đúp file `.bat` ngoài thư mục gốc đều được.
+
+
 

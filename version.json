@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 106,
-  "released_at": "2026-11-04 17:58:00",
+  "build_number": 107,
+  "released_at": "2026-11-04 18:28:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Nâng cấp Agent Kiểm Tra Kịch Bản (CLEAN_TTS_SCRIPT_GATE): Tự động phát hiện, ghi nhận (note) và xóa sạch 100% các dòng [LOCKED_TITLE], SELECTED_TITLE, PART A/B/C header, CONTINUITY, ENDING (kể cả tiêu đề bị ngắt thành 2-4 dòng) trong kịch bản trước khi tạo Voice & Render Video. 2. Sửa lỗi ChatGPT từ chối vẽ Thumbnail ở STEP 7. 3. Khóa cứng Chế độ 70% tối đa 3 video song song."
+  "changelog": "1. Thêm nút '🛡️ CHECK TOÀN BỘ' (Phương án 1): Quét toàn bộ kịch bản (.txt/.srt) để xóa sạch [LOCKED_TITLE]/Metadata rò rỉ VÀ tự động cắt bỏ chính xác các đoạn Voice (.wav) & Video (.mp4) đã đọc nhầm câu tiêu đề bằng FFmpeg Stream Copy siêu tốc (chỉ vài giây/video, không cần render lại từ đầu). 2. Nâng cấp Agent Kiểm Tra Kịch Bản (CLEAN_TTS_SCRIPT_GATE) chặn rò rỉ ngay từ gốc."
 }

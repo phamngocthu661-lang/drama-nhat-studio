@@ -842,7 +842,7 @@ class ProductionPipeline:
                     cleaned_script_text, leaked_lines = strip_leaked_titles_and_metadata(script_text)
                     if leaked_lines:
                         script_text = cleaned_script_text
-                        sample_leak = " | ".join([ln[:55] for ln in leaked_lines[:2]])
+                        sample_leak = " | ".join([str(ln[1] if isinstance(ln, (tuple, list)) and len(ln) > 1 else ln)[:55] for ln in leaked_lines[:2]])
                         log_warn(
                             f"🛡️ [Agent Kiểm Tra Kịch Bản] Đã phát hiện & xóa tự động {len(leaked_lines)} dòng [LOCKED_TITLE]/Metadata bị rò rỉ trong '{proj_name}' trước khi tạo Voice/Video: {sample_leak}",
                             category="RENDER",
@@ -1671,15 +1671,23 @@ class ProductionPipeline:
 def _auto_patch_live_instances_on_reload():
     """
     Tự động chạy ngay khi `importlib.reload(backend.pipeline)` được gọi trong quá trình Update OTA:
-    1. Nâng cấp trực tiếp các instance `ProductionPipeline`, `HardwareResourceBalancer`, `VoicevoxStandaloneService`
+    1. Nâng cấp trực tiếp các instance `ProductionPipeline`, `HardwareResourceBalancer`, `AdasScriptEngine`
        đang sống trong RAM của máy khách.
-    2. Tự động gắn route `/api/performance-mode` vào FastAPI `app` đang chạy (nếu máy khách bật app từ bản V1.0.0 cũ)
+    2. Tự động gắn route `/api/performance-mode` và `/api/adas/check-and-repair-all` vào FastAPI `app` đang chạy
        mà không cần tắt mở lại ứng dụng!
     """
     try:
         import gc
+        import importlib
+        try:
+            import backend.voice_service as _vs_mod
+            importlib.reload(_vs_mod)
+        except Exception:
+            pass
+
         live_pipelines: List[Any] = []
         live_balancers: List[Any] = []
+        live_adas_engines: List[Any] = []
         live_fastapi_apps: List[Any] = []
 
         for obj in gc.get_objects():
@@ -1689,6 +1697,8 @@ def _auto_patch_live_instances_on_reload():
                     live_balancers.append(obj)
                 elif cls_name == "ProductionPipeline":
                     live_pipelines.append(obj)
+                elif cls_name == "AdasScriptEngine":
+                    live_adas_engines.append(obj)
                 elif cls_name == "FastAPI":
                     live_fastapi_apps.append(obj)
             except Exception:
@@ -1728,13 +1738,36 @@ def _auto_patch_live_instances_on_reload():
             except Exception:
                 pass
 
-        # Tự động tiêm route /api/performance-mode vào FastAPI app nếu server cũ (V1.0.0) chưa có route này
-        if live_pipelines and live_fastapi_apps:
-            main_pipeline = live_pipelines[0]
+        try:
+            import backend.adas_script_engine as _adas_mod
+            for a_inst in live_adas_engines:
+                try:
+                    for k, v in vars(_adas_mod.AdasScriptEngine).items():
+                        if not k.startswith("__"):
+                            try:
+                                setattr(a_inst.__class__, k, v)
+                            except Exception:
+                                pass
+                    try:
+                        a_inst.__class__ = _adas_mod.AdasScriptEngine
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # Tự động tiêm route /api/performance-mode và /api/adas/check-and-repair-all vào FastAPI app nếu server cũ chưa có
+        if live_fastapi_apps:
             from starlette.routing import Route
             from starlette.responses import JSONResponse
 
+            main_pipeline = live_pipelines[0] if live_pipelines else None
+            main_adas = live_adas_engines[0] if live_adas_engines else None
+
             async def _dynamic_perf_mode_handler(request):
+                if main_pipeline is None:
+                    return JSONResponse({"success": False, "detail": "Pipeline not found"}, status_code=500)
                 if request.method == "POST":
                     try:
                         body = await request.json()
@@ -1745,18 +1778,39 @@ def _auto_patch_live_instances_on_reload():
                     return JSONResponse({"success": True, **info})
                 return JSONResponse({"success": True, **main_pipeline.get_performance_mode_info()})
 
+            def _dynamic_check_and_repair_all_handler(request):
+                try:
+                    if main_adas is not None and hasattr(main_adas, "check_and_repair_all_projects"):
+                        res = main_adas.check_and_repair_all_projects()
+                        return JSONResponse({"success": True, **res})
+                    from backend.voice_service import check_and_repair_all_projects_sync
+                    p_dir = getattr(main_adas, "projects_dir", None) or (Path(__file__).resolve().parent.parent / "projects")
+                    res = check_and_repair_all_projects_sync(p_dir)
+                    return JSONResponse({"success": True, **res})
+                except Exception as e:
+                    return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
             for f_app in live_fastapi_apps:
                 try:
                     routes_list = getattr(getattr(f_app, "router", None), "routes", None)
                     if isinstance(routes_list, list):
                         existing_paths = {getattr(r, "path", "") for r in routes_list}
-                        if "/api/performance-mode" not in existing_paths:
+                        if "/api/performance-mode" not in existing_paths and main_pipeline is not None:
                             routes_list.insert(
                                 0,
                                 Route(
                                     "/api/performance-mode",
                                     endpoint=_dynamic_perf_mode_handler,
                                     methods=["GET", "POST"],
+                                ),
+                            )
+                        if "/api/adas/check-and-repair-all" not in existing_paths:
+                            routes_list.insert(
+                                0,
+                                Route(
+                                    "/api/adas/check-and-repair-all",
+                                    endpoint=_dynamic_check_and_repair_all_handler,
+                                    methods=["POST"],
                                 ),
                             )
                 except Exception:

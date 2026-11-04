@@ -970,23 +970,39 @@ class ADASScriptEngine:
         cleaned, removed_lines = strip_leaked_titles_and_metadata(raw_text)
         if removed_lines:
             lbl = f" ({source_label})" if source_label else ""
-            sample_preview = " | ".join([ln[:55] for ln in removed_lines[:2]])
+            removed_strs = [str(ln[1] if isinstance(ln, (tuple, list)) and len(ln) > 1 else ln) for ln in removed_lines]
+            sample_preview = " | ".join([s[:55] for s in removed_strs[:2]])
             log_info(
                 "SCRIPT",
-                f"🛡️ [Agent Kiểm Tra Kịch Bản] Đã ghi nhận & tự động xóa {len(removed_lines)} dòng [LOCKED_TITLE]/Metadata rò rỉ trong [{ma_id}]{lbl}: {sample_preview}",
+                f"🛡️ [Agent Kiểm Tra Kịch Bản] Đã ghi nhận & tự động xóa {len(removed_strs)} dòng [LOCKED_TITLE]/Metadata rò rỉ trong [{ma_id}]{lbl}: {sample_preview}",
                 project_id=ma_id,
             )
             try:
-                audit_note_file = self.projects_dir / ma_id / "step5_audit_report.txt"
+                p_dir = self.projects_dir / ma_id
+                assets_d = p_dir / "assets"
+                if assets_d.exists():
+                    leaked_log_f = assets_d / "leaked_lines_log.json"
+                    existing_pool: List[str] = []
+                    if leaked_log_f.exists():
+                        try:
+                            existing_pool = json.loads(leaked_log_f.read_text(encoding="utf-8", errors="ignore"))
+                        except Exception:
+                            existing_pool = []
+                    for rs in removed_strs:
+                        if rs not in existing_pool:
+                            existing_pool.append(rs)
+                    leaked_log_f.write_text(json.dumps(existing_pool, ensure_ascii=False, indent=2), encoding="utf-8")
+
+                audit_note_file = p_dir / "step5_audit_report.txt"
                 note_block = (
                     f"\n[AUTO-CLEAN NOTE — {time.strftime('%Y-%m-%d %H:%M:%S')}]{lbl}: "
-                    f"Đã phát hiện và xóa {len(removed_lines)} dòng [LOCKED_TITLE]/Metadata rò rỉ:\n"
-                    + "\n".join([f"  - Removed: {ln}" for ln in removed_lines])
+                    f"Đã phát hiện và xóa {len(removed_strs)} dòng [LOCKED_TITLE]/Metadata rò rỉ:\n"
+                    + "\n".join([f"  - Removed: {s}" for s in removed_strs])
                     + "\n"
                 )
                 if audit_note_file.exists():
                     existing_audit = audit_note_file.read_text(encoding="utf-8", errors="ignore")
-                    if removed_lines[0] not in existing_audit:
+                    if removed_strs[0] not in existing_audit:
                         audit_note_file.write_text(existing_audit + note_block, encoding="utf-8")
             except Exception:
                 pass
@@ -1747,6 +1763,59 @@ class ADASScriptEngine:
             "video_done_count": mp4_cnt,
             "projects_dir": str(self.projects_dir),
             "ideas": after_list,
+        }
+
+    def check_and_repair_all_projects(self) -> Dict[str, Any]:
+        """
+        Nút "🛡️ Check Toàn Bộ":
+        1. Quét toàn bộ thư mục `projects/` để kiểm tra lại hết tất cả các kịch bản đã tạo -> nếu dính `[LOCKED_TITLE]` / Metadata thì xóa & sửa lại ngay.
+        2. Nếu dự án đã tạo Video MP4 / Voice -> tự động cắt bỏ trực tiếp các đoạn giây đọc `[LOCKED_TITLE]` khỏi file `.mp4`, `master_voice.wav` và `subtitles.srt` (Phương án 1).
+        3. Đồng bộ lại danh sách Kho Dự Án và trả về kết quả chi tiết.
+        """
+        from .voice_service import check_and_repair_all_projects_sync
+
+        self._emit(
+            status="running",
+            current_step="🛡️ Đang Check Toàn Bộ Kịch Bản & Video MP4...",
+            progress=2.0,
+            message=f"🛡️ Đang quét toàn bộ thư mục [{self.projects_dir}] để dọn sạch [LOCKED_TITLE] trong Kịch bản & Video MP4...",
+        )
+        log_info("SCRIPT", f"🛡️ Bắt đầu chạy Check Toàn Bộ Kịch Bản & Video tại [{self.projects_dir}]...")
+
+        def _prog_cb(pct: float, msg: str):
+            self._emit(
+                status="running",
+                current_step="🛡️ Check Toàn Bộ (Dọn Kịch Bản & Video Lỗi)",
+                progress=pct,
+                message=msg,
+            )
+
+        summary = check_and_repair_all_projects_sync(self.projects_dir, progress_cb=_prog_cb)
+        if hasattr(self, "_proj_dir_mtime_cache"):
+            self._proj_dir_mtime_cache.clear()
+        if hasattr(self, "_mp4_valid_cache"):
+            self._mp4_valid_cache.clear()
+        self._last_disk_sync_ts = 0.0
+        self._sync_projects_disk_state(force_restore_deleted=False)
+        ideas_after = self.load_saved_ideas()
+
+        done_msg = (
+            f"✅ Check Toàn Bộ hoàn tất ({summary['total_scanned']} dự án): "
+            f"Đã sửa sạch {summary['scripts_repaired_count']} Kịch bản, "
+            f"cắt bỏ đoạn lỗi trong {summary['videos_repaired_count']} Video MP4 "
+            f"(Tổng {summary['total_lines_removed']} dòng/khung [LOCKED_TITLE] đã xóa)!"
+        )
+        self._emit(
+            status="idle" if not self.is_running else "running",
+            current_step="✅ Đã hoàn tất Check Toàn Bộ!",
+            progress=100.0,
+            message=done_msg,
+        )
+        log_info("SCRIPT", done_msg)
+        return {
+            **summary,
+            "ideas": ideas_after,
+            "message": done_msg,
         }
 
     def import_external_projects_folder(self, source_dir: str) -> Dict[str, Any]:

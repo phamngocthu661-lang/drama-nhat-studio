@@ -538,6 +538,14 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
         res = adas_engine.restore_scripts_from_disk(custom_folder=folder_path)
         return {"success": True, **res}
 
+    @app.post("/api/adas/check-and-repair-all")
+    def api_adas_check_and_repair_all():
+        try:
+            res = adas_engine.check_and_repair_all_projects()
+            return {"success": True, **res}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
     @app.post("/api/adas/ideas/import-external")
     def api_adas_import_external_projects(payload: dict = None):
         payload = payload or {}

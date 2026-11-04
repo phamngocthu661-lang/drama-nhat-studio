@@ -778,3 +778,712 @@ class VoiceStudioService:
             "sentence_count": total_sentences,
             "timeline": timeline
         }
+
+
+# ==============================================================================
+# HỆ THỐNG QUÉT, SỬA KỊCH BẢN & CẮT ĐOẠN LỖI [LOCKED_TITLE] TRONG VIDEO MP4 (PHƯƠNG ÁN 1)
+# ==============================================================================
+
+def _parse_srt_time_sec(ts_str: str) -> float:
+    s = (ts_str or "").strip().replace(",", ".")
+    parts = s.split(":")
+    if len(parts) != 3:
+        return 0.0
+    try:
+        return int(parts[0]) * 3600.0 + int(parts[1]) * 60.0 + float(parts[2])
+    except Exception:
+        return 0.0
+
+
+def parse_srt_blocks(srt_text: str) -> List[Dict[str, Any]]:
+    import re
+    raw = (srt_text or "").strip()
+    if not raw:
+        return []
+    chunks = [c.strip() for c in re.split(r"\n\s*\n", raw) if c.strip()]
+    blocks: List[Dict[str, Any]] = []
+    for ch in chunks:
+        lines = [ln.strip() for ln in ch.splitlines() if ln.strip()]
+        if len(lines) < 2:
+            continue
+        ts_line_idx = 1 if "-->" in lines[1] else (0 if "-->" in lines[0] else -1)
+        if ts_line_idx < 0:
+            continue
+        ts_parts = lines[ts_line_idx].split("-->")
+        st = _parse_srt_time_sec(ts_parts[0])
+        ed = _parse_srt_time_sec(ts_parts[1])
+        txt_lines = lines[ts_line_idx + 1 :]
+        body_text = "\n".join(txt_lines).strip()
+        flat_text = "".join(txt_lines).replace(" ", "").strip()
+        blocks.append(
+            {
+                "idx": len(blocks) + 1,
+                "start": st,
+                "end": ed,
+                "text": body_text,
+                "flat_text": flat_text,
+            }
+        )
+    return blocks
+
+
+def detect_leaked_srt_blocks_and_intervals(
+    srt_blocks: List[Dict[str, Any]],
+    removed_script_lines: Optional[List[str]] = None,
+    locked_title_hint: str = "",
+) -> Tuple[List[int], List[Tuple[float, float]], str, List[str]]:
+    """
+    Phát hiện chính xác các khung phụ đề SRT bị dính [LOCKED_TITLE], SELECTED_TITLE,
+    PART A/B/C, CONTINUITY, ENDING (kể cả khi câu tiêu đề bị tách thành nhiều khung SRT liên tiếp).
+    Trả về:
+      - `leaked_indices`: Danh sách chỉ số block (0-based) bị dính lỗi
+      - `cut_intervals`: Danh sách khoảng thời gian `[(start_sec, end_sec), ...]` cần cắt khỏi Video/Voice
+      - `cleaned_srt_text`: Nội dung file `.srt` mới đã xóa các block lỗi và dịch chuyển (shift) lại thời gian chuẩn xác
+      - `leaked_previews`: Danh sách nội dung các block đã bị xóa để ghi báo cáo
+    """
+    import re
+    if not srt_blocks:
+        return [], [], "", []
+
+    title_key_re = re.compile(
+        r"(?:LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE|TITLE_LOCKED|LOCKED_TITLE_PROMISE|TITLE_FACTS)\s*[:：\-—]?",
+        re.IGNORECASE,
+    )
+    step_part_re = re.compile(
+        r"^(?:[A-Z]{1,6}\d{1,5}\s*[—–\-·:：]+\s*)?(?:STEP\s*[1-7]\b|BUILD\s+PART\s*[ABC]\b|PART\s*[:：\-—–·]?\s*[ABC]\b|SCENE\s+[ABC]?\d+\b|CHAPTER\s+\d+\b)",
+        re.IGNORECASE,
+    )
+    stop_block_re = re.compile(
+        r"^(?:PART_PURE_CHARACTER_COUNT|PART_LENGTH_GATE|CONTINUITY_LEDGER|CONTINUITY\s+LEDGER|PART_HANDOFF_LEDGER|HANDOFF_LEDGER|HANDOFF\s+LEDGER|PART_[ABC]_HANDOFF|NEXT_ACTION|READY_FOR_AUDIT|PATCH_CHANGELOG)\b",
+        re.IGNORECASE,
+    )
+    meta_kv_re = re.compile(r"^[A-Z][A-Z0-9_/\-\s]{1,35}[:：]")
+    ellipsis_endings = ("…", "…」", "…」」", "…』", "…。", "…。」", "…！」", "…？」")
+    sent_end_chars = ("。", "！", "？", "…", "」", "』", "）", ")")
+
+    norm_removed_pool: List[str] = []
+    for rl in (removed_script_lines or []):
+        nr = re.sub(r"[\s#*`>]+", "", str(rl or "")).strip()
+        if len(nr) >= 4:
+            norm_removed_pool.append(nr)
+    norm_title_hint = re.sub(r"[\s#*`>]+", "", str(locked_title_hint or "")).strip()
+
+    n = len(srt_blocks)
+    leaked_set = set()
+    i = 0
+
+    while i < n:
+        ft = srt_blocks[i]["flat_text"]
+        ft_clean = re.sub(r"^[#*>\-\s`•]+", "", ft).replace("**", "").replace("`", "").strip()
+
+        # 1. Nếu bắt đầu bằng LOCKED_TITLE / SELECTED_TITLE
+        if title_key_re.search(ft_clean):
+            body0 = re.sub(
+                r"^.*?(?:LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE|TITLE_LOCKED|LOCKED_TITLE_PROMISE|TITLE_FACTS)\s*[:：\-—]*\s*",
+                "",
+                ft_clean,
+                flags=re.IGNORECASE,
+            ).strip()
+            end_i = i + 1
+            acc = body0
+            # Nếu block hiện tại bị ngắt giữa câu bởi split_long_subtitle_segments (chưa có dấu kết câu), gom tiếp
+            while end_i < n and not acc.endswith(sent_end_chars) and len(acc) <= 210:
+                acc += srt_blocks[end_i]["flat_text"]
+                end_i += 1
+
+            open_q = acc.count("「")
+            close_q = acc.count("」")
+            if not (acc.endswith(ellipsis_endings) and open_q <= close_q + 1):
+                # Chỉ kiểm tra câu kế tiếp ngay sau câu đầu của LOCKED_TITLE (có thể gồm 1-2 khung SRT nếu câu dài > 48 chữ)
+                next_sent_acc = ""
+                next_sent_end_idx = end_i
+                for k in range(end_i, min(n, end_i + 3)):
+                    cand = srt_blocks[k]["flat_text"]
+                    if not cand or title_key_re.search(cand) or step_part_re.match(cand):
+                        break
+                    next_sent_acc += cand
+                    next_sent_end_idx = k + 1
+                    if cand.endswith(sent_end_chars):
+                        break
+                if next_sent_acc and len(acc + next_sent_acc) <= 210:
+                    if (
+                        next_sent_acc.endswith(ellipsis_endings)
+                        or (norm_title_hint and len(next_sent_acc) >= 6 and next_sent_acc in norm_title_hint)
+                        or any(len(next_sent_acc) >= 6 and next_sent_acc in nr for nr in norm_removed_pool)
+                    ):
+                        end_i = next_sent_end_idx
+
+            for k in range(i, end_i):
+                leaked_set.add(k)
+            i = end_i
+            continue
+
+        # 2. Nếu là dòng STEP / PART / 日本語脚本 / Metadata tiếng Anh
+        if (
+            (step_part_re.match(ft_clean) and len(ft_clean) < 95)
+            or (re.search(r"(?:日本語脚本|日本語ナレーション本文|HANDOFF_LEDGER|PURE_CHARACTER_COUNT)", ft_clean, re.IGNORECASE) and len(ft_clean) < 95)
+            or stop_block_re.match(ft_clean)
+            or meta_kv_re.match(ft_clean)
+        ):
+            leaked_set.add(i)
+            i += 1
+            continue
+
+        # 3. Đối chiếu trực tiếp với các dòng đã bị xóa khỏi file kịch bản .txt (nếu có)
+        if norm_removed_pool and len(ft_clean) >= 6:
+            matched_pool = False
+            for nr in norm_removed_pool:
+                if ft_clean == nr or (len(ft_clean) >= 10 and ft_clean in nr and ("LOCKED_TITLE" in nr or "SELECTED_TITLE" in nr or nr.endswith(ellipsis_endings))):
+                    matched_pool = True
+                    break
+            if matched_pool:
+                leaked_set.add(i)
+                i += 1
+                continue
+
+        i += 1
+
+    if not leaked_set:
+        return [], [], "", []
+
+    leaked_indices = sorted(leaked_set)
+    leaked_previews = [srt_blocks[idx]["flat_text"] for idx in leaked_indices]
+
+    # Gom các khoảng thời gian cần cắt bỏ (gộp các block lỗi liền kề cách nhau <= 0.45s)
+    raw_intervals = [(srt_blocks[idx]["start"], srt_blocks[idx]["end"]) for idx in leaked_indices]
+    cut_intervals: List[Tuple[float, float]] = []
+    for st, ed in raw_intervals:
+        if ed <= st:
+            continue
+        if not cut_intervals:
+            cut_intervals.append((st, ed))
+        else:
+            prev_st, prev_ed = cut_intervals[-1]
+            if st <= prev_ed + 0.45:
+                cut_intervals[-1] = (prev_st, max(prev_ed, ed))
+            else:
+                cut_intervals.append((st, ed))
+
+    # Xây dựng lại nội dung subtitles.srt mới với thời gian đã trừ đi các đoạn bị cắt
+    def _calc_shifted_time(t_val: float) -> float:
+        removed_before = 0.0
+        for cst, ced in cut_intervals:
+            if ced <= t_val:
+                removed_before += (ced - cst)
+            elif cst < t_val < ced:
+                removed_before += (t_val - cst)
+        return max(0.0, t_val - removed_before)
+
+    new_srt_lines: List[str] = []
+    new_idx = 1
+    for idx, blk in enumerate(srt_blocks):
+        if idx in leaked_set:
+            continue
+        new_st = _calc_shifted_time(blk["start"])
+        new_ed = _calc_shifted_time(blk["end"])
+        if new_ed <= new_st + 0.02:
+            new_ed = new_st + max(0.2, blk["end"] - blk["start"])
+        new_srt_lines.append(f"{new_idx}")
+        new_srt_lines.append(f"{format_timestamp(new_st)} --> {format_timestamp(new_ed)}")
+        new_srt_lines.append(f"{blk['text']}\n")
+        new_idx += 1
+
+    cleaned_srt_text = "\n".join(new_srt_lines).strip() + "\n"
+    return leaked_indices, cut_intervals, cleaned_srt_text, leaked_previews
+
+
+def compute_keep_intervals(total_duration: float, cut_intervals: List[Tuple[float, float]]) -> List[Tuple[float, float]]:
+    """Tính danh sách các khoảng thời gian giữ lại `[keep_start, keep_end]` từ `total_duration` và `cut_intervals`."""
+    if total_duration <= 0.0:
+        return []
+    if not cut_intervals:
+        return [(0.0, total_duration)]
+
+    sorted_cuts = sorted(cut_intervals, key=lambda x: x[0])
+    merged: List[Tuple[float, float]] = []
+    for st, ed in sorted_cuts:
+        st_c = max(0.0, min(total_duration, st))
+        ed_c = max(0.0, min(total_duration, ed))
+        if ed_c <= st_c:
+            continue
+        if not merged:
+            merged.append((st_c, ed_c))
+        else:
+            pst, ped = merged[-1]
+            if st_c <= ped + 0.15:
+                merged[-1] = (pst, max(ped, ed_c))
+            else:
+                merged.append((st_c, ed_c))
+
+    keep: List[Tuple[float, float]] = []
+    cursor = 0.0
+    for st, ed in merged:
+        if st - cursor > 0.15:
+            keep.append((cursor, st))
+        cursor = max(cursor, ed)
+    if total_duration - cursor > 0.15:
+        keep.append((cursor, total_duration))
+    return keep
+
+
+def _probe_duration_sec(media_path: Path) -> float:
+    import subprocess
+    if not media_path.exists():
+        return 0.0
+    win_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    try:
+        r = subprocess.run(
+            [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(media_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            creationflags=win_flags,
+        )
+        return float(r.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def trim_media_file_by_keep_intervals(
+    media_path: Path,
+    cut_intervals: List[Tuple[float, float]],
+    is_video: bool = True,
+) -> Tuple[bool, float, float, str]:
+    """
+    Cắt bỏ trực tiếp các đoạn `cut_intervals` khỏi file Video `.mp4` hoặc Audio `.wav`
+    bằng FFmpeg Stream Copy (`-c copy`) siêu tốc (~3–8 giây / video 2 tiếng, không cần Render lại GPU).
+    Trả về `(success, old_duration, new_duration, message)`.
+    """
+    import shutil
+    import subprocess
+    if not media_path.exists():
+        return False, 0.0, 0.0, "File không tồn tại"
+    if not cut_intervals:
+        dur = _probe_duration_sec(media_path)
+        return True, dur, dur, "Không có đoạn lỗi cần cắt"
+
+    old_dur = _probe_duration_sec(media_path)
+    if old_dur <= 1.0:
+        return False, old_dur, old_dur, "Không đọc được thời lượng file gốc"
+
+    keep_intervals = compute_keep_intervals(old_dur, cut_intervals)
+    if not keep_intervals:
+        return False, old_dur, old_dur, "Danh sách đoạn giữ lại rỗng"
+
+    win_flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    tmp_dir = media_path.parent / f"_clean_trim_tmp_{media_path.stem}"
+    shutil.rmtree(tmp_dir, ignore_errors=True)
+    tmp_dir.mkdir(parents=True, exist_ok=True)
+
+    ext = ".mp4" if is_video else ".wav"
+    tmp_out = tmp_dir / f"cleaned_output{ext}"
+    seg_files: List[Path] = []
+
+    try:
+        for idx, (ks, ke) in enumerate(keep_intervals):
+            dur_seg = ke - ks
+            if dur_seg <= 0.10:
+                continue
+            seg_f = tmp_dir / f"seg_{idx:03d}{ext}"
+            if is_video:
+                # Two-stage seek: seek nhanh tới max(0, ks - 2.5s) trước -i, rồi cắt chính xác từ fine_start sau -i
+                fast_seek = max(0.0, ks - 2.5)
+                fine_start = max(0.0, ks - fast_seek)
+                cmd_seg = [
+                    "ffmpeg", "-y", "-v", "error",
+                    "-ss", f"{fast_seek:.3f}",
+                    "-i", str(media_path),
+                    "-ss", f"{fine_start:.3f}",
+                    "-t", f"{dur_seg:.3f}",
+                    "-c", "copy",
+                    "-avoid_negative_ts", "make_zero",
+                    str(seg_f),
+                ]
+            else:
+                cmd_seg = [
+                    "ffmpeg", "-y", "-v", "error",
+                    "-ss", f"{ks:.3f}",
+                    "-i", str(media_path),
+                    "-t", f"{dur_seg:.3f}",
+                    "-c:a", "pcm_s16le",
+                    str(seg_f),
+                ]
+            res = subprocess.run(cmd_seg, capture_output=True, text=True, creationflags=win_flags)
+            if res.returncode != 0 or not seg_f.exists() or seg_f.stat().st_size < 1000:
+                raise RuntimeError(f"Lỗi cắt phân đoạn {idx}: {res.stderr[-200:]}")
+            seg_files.append(seg_f)
+
+        if not seg_files:
+            raise RuntimeError("Không tạo được phân đoạn sạch nào")
+
+        if len(seg_files) == 1:
+            shutil.copy2(seg_files[0], tmp_out)
+        else:
+            concat_txt = tmp_dir / "concat_list.txt"
+            with open(concat_txt, "w", encoding="utf-8") as f:
+                for sf in seg_files:
+                    p_clean = str(sf.resolve()).replace("\\", "/").replace("'", "'\\''")
+                    f.write(f"file '{p_clean}'\n")
+            if is_video:
+                cmd_cat = [
+                    "ffmpeg", "-y", "-v", "error",
+                    "-f", "concat", "-safe", "0",
+                    "-i", str(concat_txt),
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    str(tmp_out),
+                ]
+            else:
+                cmd_cat = [
+                    "ffmpeg", "-y", "-v", "error",
+                    "-f", "concat", "-safe", "0",
+                    "-i", str(concat_txt),
+                    "-c:a", "pcm_s16le",
+                    str(tmp_out),
+                ]
+            res_cat = subprocess.run(cmd_cat, capture_output=True, text=True, creationflags=win_flags)
+            if res_cat.returncode != 0 or not tmp_out.exists() or tmp_out.stat().st_size < 5000:
+                raise RuntimeError(f"Lỗi ghép phân đoạn sạch: {res_cat.stderr[-200:]}")
+
+        new_dur = _probe_duration_sec(tmp_out)
+        expected_dur = sum(ke - ks for ks, ke in keep_intervals)
+        if new_dur <= 1.0 or abs(new_dur - expected_dur) > 8.0:
+            raise RuntimeError(f"Thời lượng sau khi cắt bất thường ({new_dur:.1f}s vs kỳ vọng {expected_dur:.1f}s)")
+
+        os.replace(str(tmp_out), str(media_path))
+        return True, round(old_dur, 2), round(new_dur, 2), "Đã cắt sạch đoạn lỗi thành công"
+    except Exception as e:
+        return False, round(old_dur, 2), round(old_dur, 2), str(e)
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def repair_single_project_script_and_video(proj_dir: Path) -> Dict[str, Any]:
+    """
+    Kiểm tra và sửa chữa toàn diện 1 dự án `proj_dir` (Phương án 1):
+    1. Quét và xóa sạch các dòng `[LOCKED_TITLE]` / Metadata rò rỉ trong tất cả các file kịch bản `.txt`
+       (`part_a.txt`, `part_b.txt`, `part_c.txt`, `script_clean.txt`, `script.txt`, `renders/{ma_id}_KICH_BAN.txt`).
+    2. Quét `assets/subtitles.srt` (hoặc `assets/sentences/`) để tìm chính xác các khoảng giây `[start, end]`
+       chứa giọng đọc & phụ đề `[LOCKED_TITLE]` bị lọt vào Video MP4 / Master Voice WAV.
+    3. Nếu dự án đã xuất Video `renders/{ma_id}_master.mp4` (hoặc `assets/master_voice.wav`),
+       dùng FFmpeg Stream Copy cắt bỏ trực tiếp các đoạn giây lỗi đó khỏi `.mp4` và `.wav`,
+       đồng thời cập nhật lại `subtitles.srt` khớp 100%!
+    """
+    import re
+    proj_dir = Path(proj_dir)
+    ma_id = proj_dir.name
+    renders_dir = proj_dir / "renders"
+    assets_dir = proj_dir / "assets"
+
+    result: Dict[str, Any] = {
+        "ma_id": ma_id,
+        "script_cleaned": False,
+        "script_removed_lines_count": 0,
+        "script_removed_samples": [],
+        "srt_cleaned": False,
+        "srt_removed_blocks_count": 0,
+        "video_repaired": False,
+        "voice_repaired": False,
+        "cut_intervals": [],
+        "old_video_duration": 0.0,
+        "new_video_duration": 0.0,
+        "video_message": "",
+    }
+
+    if not proj_dir.exists() or not proj_dir.is_dir():
+        return result
+
+    # Lấy gợi ý locked_title nếu có
+    locked_title_hint = ""
+    info_f = proj_dir / "idea_info.json"
+    if info_f.exists():
+        try:
+            d_info = json.loads(info_f.read_text(encoding="utf-8", errors="ignore"))
+            locked_title_hint = str(d_info.get("locked_title") or d_info.get("draft_title_ja") or "")
+        except Exception:
+            pass
+
+    # Bước 1: Quét và dọn sạch các file kịch bản .txt
+    script_targets = [
+        proj_dir / "part_a.txt",
+        proj_dir / "part_b.txt",
+        proj_dir / "part_c.txt",
+        proj_dir / "script_clean.txt",
+        proj_dir / "script.txt",
+        renders_dir / f"{ma_id}_KICH_BAN.txt",
+    ]
+    removed_texts_pool: List[str] = []
+    leaked_log_f = assets_dir / "leaked_lines_log.json"
+    if leaked_log_f.exists():
+        try:
+            prev_logged = json.loads(leaked_log_f.read_text(encoding="utf-8", errors="ignore"))
+            if isinstance(prev_logged, list):
+                removed_texts_pool.extend([str(x) for x in prev_logged if x])
+        except Exception:
+            pass
+
+    for tf in script_targets:
+        if not tf.exists():
+            continue
+        try:
+            raw_txt = tf.read_text(encoding="utf-8", errors="ignore")
+            cleaned_txt, removed_tuples = strip_leaked_titles_and_metadata(raw_txt)
+            if removed_tuples and cleaned_txt:
+                tf.write_text(cleaned_txt, encoding="utf-8")
+                result["script_cleaned"] = True
+                result["script_removed_lines_count"] += len(removed_tuples)
+                for _, r_str in removed_tuples:
+                    if r_str not in removed_texts_pool:
+                        removed_texts_pool.append(r_str)
+                    if len(result["script_removed_samples"]) < 6 and r_str not in result["script_removed_samples"]:
+                        result["script_removed_samples"].append(r_str)
+        except Exception:
+            pass
+
+    # Đồng bộ lại script_clean.txt và renders/{ma_id}_KICH_BAN.txt nếu có đủ part_a/b/c
+    pa, pb, pc = proj_dir / "part_a.txt", proj_dir / "part_b.txt", proj_dir / "part_c.txt"
+    if pa.exists() and pb.exists() and pc.exists():
+        try:
+            ta = pa.read_text(encoding="utf-8", errors="ignore").strip()
+            tb = pb.read_text(encoding="utf-8", errors="ignore").strip()
+            tc = pc.read_text(encoding="utf-8", errors="ignore").strip()
+            if len(ta) >= 8000 and len(tb) >= 8000 and len(tc) >= 8000:
+                comb, _ = strip_leaked_titles_and_metadata("\n\n".join([ta, tb, tc]).strip())
+                for sync_f in (proj_dir / "script_clean.txt", renders_dir / f"{ma_id}_KICH_BAN.txt"):
+                    if sync_f.exists():
+                        cur_s = sync_f.read_text(encoding="utf-8", errors="ignore").strip()
+                        if cur_s != comb:
+                            sync_f.write_text(comb, encoding="utf-8")
+        except Exception:
+            pass
+
+    if removed_texts_pool and assets_dir.exists():
+        try:
+            leaked_log_f.write_text(json.dumps(removed_texts_pool, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    # Ghi chú vào step5_audit_report.txt nếu có dọn kịch bản
+    if result["script_cleaned"]:
+        try:
+            audit_f = proj_dir / "step5_audit_report.txt"
+            note_txt = (
+                f"\n[AUTO-CLEAN NOTE — {time.strftime('%Y-%m-%d %H:%M:%S')}]: "
+                f"Đã quét và xóa {result['script_removed_lines_count']} dòng [LOCKED_TITLE]/Metadata rò rỉ:\n"
+                + "\n".join([f"  - {s}" for s in result["script_removed_samples"]])
+                + "\n"
+            )
+            if audit_f.exists():
+                cur_a = audit_f.read_text(encoding="utf-8", errors="ignore")
+                if "[AUTO-CLEAN NOTE" not in cur_a:
+                    audit_f.write_text(cur_a + note_txt, encoding="utf-8")
+        except Exception:
+            pass
+
+    # Bước 2: Kiểm tra subtitles.srt để tìm chính xác các đoạn giây cần cắt trong Video MP4 & Master Voice WAV
+    srt_file = assets_dir / "subtitles.srt"
+    master_wav = assets_dir / "master_voice.wav"
+    master_mp4 = renders_dir / f"{ma_id}_master.mp4"
+    video_clean_marker = renders_dir / ".cleaned_locked_title_v106.json"
+
+    cut_intervals: List[Tuple[float, float]] = []
+    cleaned_srt_text = ""
+
+    if srt_file.exists() and srt_file.stat().st_size > 50:
+        try:
+            raw_srt = srt_file.read_text(encoding="utf-8", errors="ignore")
+            srt_blocks = parse_srt_blocks(raw_srt)
+            leaked_idxs, cut_intervals, cleaned_srt_text, leaked_srt_previews = detect_leaked_srt_blocks_and_intervals(
+                srt_blocks,
+                removed_script_lines=removed_texts_pool,
+                locked_title_hint=locked_title_hint,
+            )
+            if leaked_idxs:
+                result["srt_cleaned"] = True
+                result["srt_removed_blocks_count"] = len(leaked_idxs)
+                result["cut_intervals"] = [(round(s, 3), round(e, 3)) for s, e in cut_intervals]
+                for lp in leaked_srt_previews:
+                    if len(result["script_removed_samples"]) < 6 and lp not in result["script_removed_samples"]:
+                        result["script_removed_samples"].append(lp)
+        except Exception as e_srt:
+            result["video_message"] = f"Lỗi đọc SRT: {e_srt}"
+
+    # Nếu trước đó SRT đã được sửa nhưng MP4 chưa được cắt (có lưu trong video_clean_marker hoặc chưa có marker)
+    if not cut_intervals and video_clean_marker.exists():
+        # Đã cắt xong từ lần trước -> không cắt trùng lặp
+        return result
+
+    if cut_intervals:
+        # 3.1: Nếu có Video MP4 -> Cắt trực tiếp các đoạn lỗi khỏi MP4 bằng FFmpeg Stream Copy
+        if master_mp4.exists() and master_mp4.stat().st_size > 100_000:
+            ok_v, old_vd, new_vd, msg_v = trim_media_file_by_keep_intervals(
+                master_mp4, cut_intervals, is_video=True
+            )
+            result["video_repaired"] = ok_v
+            result["old_video_duration"] = old_vd
+            result["new_video_duration"] = new_vd
+            result["video_message"] = msg_v
+            if not ok_v:
+                # Nếu cắt MP4 gặp lỗi thì giữ nguyên SRT cũ để lần sau thử lại
+                return result
+
+        # 3.2: Nếu có Master Voice WAV -> Cắt đồng bộ cùng khoảng thời gian để khớp 100% với MP4
+        if master_wav.exists() and master_wav.stat().st_size > 100_000:
+            ok_w, _, _, _ = trim_media_file_by_keep_intervals(
+                master_wav, cut_intervals, is_video=False
+            )
+            result["voice_repaired"] = ok_w
+
+        # 3.3: Lưu file subtitles.srt mới đã xóa block lỗi & dịch chuyển thời gian
+        if cleaned_srt_text:
+            try:
+                srt_file.write_text(cleaned_srt_text, encoding="utf-8")
+            except Exception:
+                pass
+
+        # 3.4: Lưu dấu nhận diện đã dọn sạch Video MP4 để không bao giờ cắt 2 lần
+        try:
+            renders_dir.mkdir(parents=True, exist_ok=True)
+            video_clean_marker.write_text(
+                json.dumps(
+                    {
+                        "ma_id": ma_id,
+                        "cleaned_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                        "cut_intervals": result["cut_intervals"],
+                        "old_video_duration": result["old_video_duration"],
+                        "new_video_duration": result["new_video_duration"],
+                        "removed_samples": result["script_removed_samples"],
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+        except Exception:
+            pass
+
+    return result
+
+
+def check_and_repair_all_projects_sync(
+    projects_dir: Path,
+    progress_cb: Optional[Callable[[float, str], None]] = None,
+) -> Dict[str, Any]:
+    """
+    Quét toàn bộ thư mục `projects/` (Nút "🛡️ Check Toàn Bộ"):
+    1. Kiểm tra lại hết tất cả kịch bản đã tạo -> nếu có lỗi `[LOCKED_TITLE]` / Metadata tương tự thì xóa & sửa lại ngay.
+    2. Kiểm tra tất cả các dự án đã tạo Voice / Render Video MP4 -> nếu bị dính đoạn đọc `[LOCKED_TITLE]`
+       thì tự động cắt bỏ trực tiếp đoạn giây lỗi đó ra khỏi Video `.mp4`, `master_voice.wav` và `subtitles.srt` (Phương án 1).
+    3. Xuất file báo cáo chi tiết `BAO_CAO_CHECK_VA_DON_TOAN_BO.txt`.
+    """
+    projects_dir = Path(projects_dir)
+    if not projects_dir.exists():
+        return {
+            "total_scanned": 0,
+            "scripts_repaired_count": 0,
+            "videos_repaired_count": 0,
+            "voices_repaired_count": 0,
+            "total_lines_removed": 0,
+            "repaired_script_ids": [],
+            "repaired_video_ids": [],
+            "details": [],
+            "report_path": "",
+        }
+
+    proj_folders = sorted([d for d in projects_dir.iterdir() if d.is_dir() and not d.name.startswith(".")])
+    total = len(proj_folders)
+    repaired_script_ids: List[str] = []
+    repaired_video_ids: List[str] = []
+    voices_repaired_count = 0
+    total_lines_removed = 0
+    details: List[Dict[str, Any]] = []
+
+    for idx, p_dir in enumerate(proj_folders):
+        pct = round(((idx + 1) / max(1, total)) * 98.0, 1)
+        if progress_cb:
+            try:
+                progress_cb(
+                    pct,
+                    f"🛡️ Đang kiểm tra & dọn dẹp [{p_dir.name}] ({idx + 1}/{total} dự án — Đã sửa {len(repaired_script_ids)} KB, {len(repaired_video_ids)} Video)...",
+                )
+            except Exception:
+                pass
+
+        res = repair_single_project_script_and_video(p_dir)
+        if res["script_cleaned"] or res["srt_cleaned"] or res["video_repaired"]:
+            details.append(res)
+            total_lines_removed += res["script_removed_lines_count"] + res["srt_removed_blocks_count"]
+            if res["script_cleaned"] or res["srt_cleaned"]:
+                repaired_script_ids.append(res["ma_id"])
+            if res["video_repaired"]:
+                repaired_video_ids.append(res["ma_id"])
+            if res["voice_repaired"]:
+                voices_repaired_count += 1
+
+    # Ghi file báo cáo tổng hợp rõ ràng cho người dùng / khách hàng
+    report_path = projects_dir.parent / "BAO_CAO_CHECK_VA_DON_TOAN_BO.txt"
+    try:
+        lines_rep = [
+            "================================================================================",
+            "BÁO CÁO KIỂM TRA & DỌN SẠCH LỖI [LOCKED_TITLE] TRONG KỊCH BẢN & VIDEO MP4",
+            "================================================================================",
+            f"- Thời gian thực hiện: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"- Thư mục gốc kiểm tra: {projects_dir}",
+            f"- Tổng số dự án đã quét: {total}",
+            f"- Số kịch bản phát hiện lỗi & đã sửa sạch: {len(repaired_script_ids)} dự án",
+            f"- Số Video MP4 đã cắt bỏ đoạn voice/sub lỗi [LOCKED_TITLE]: {len(repaired_video_ids)} video",
+            f"- Tổng số dòng/khung [LOCKED_TITLE] & Metadata đã xóa: {total_lines_removed}",
+            "================================================================================",
+            "",
+            f"1. DANH SÁCH MÃ KỊCH BẢN ĐÃ ĐƯỢC LÀM SẠCH ({len(repaired_script_ids)} dự án):",
+            "--------------------------------------------------------------------------------",
+            (", ".join(repaired_script_ids) if repaired_script_ids else "Không có kịch bản nào còn lỗi (100% đã sạch)."),
+            "",
+            f"2. DANH SÁCH VIDEO MP4 ĐÃ ĐƯỢC CẮT SẠCH ĐOẠN VOICE LỖI ({len(repaired_video_ids)} video):",
+            "--------------------------------------------------------------------------------",
+            (", ".join(repaired_video_ids) if repaired_video_ids else "Không có video MP4 nào bị dính lỗi (hoặc đã được dọn sạch)."),
+            "",
+            "3. CHI TIẾT TỪNG DỰ ÁN ĐÃ XỬ LÝ:",
+            "================================================================================",
+        ]
+        for i_d, d in enumerate(details, 1):
+            lines_rep.append(f"[{i_d}] Dự án: {d['ma_id']}")
+            lines_rep.append(f"    - Đã xóa dòng lỗi trong Kịch bản (.txt): {d['script_removed_lines_count']} dòng")
+            lines_rep.append(f"    - Đã xóa khung lỗi trong Phụ đề (.srt): {d['srt_removed_blocks_count']} khung")
+            if d["video_repaired"]:
+                lines_rep.append(
+                    f"    - Đã cắt sạch Video MP4: {d['old_video_duration']}s -> {d['new_video_duration']}s (Các đoạn đã cắt: {d['cut_intervals']})"
+                )
+            for smp in d.get("script_removed_samples", []):
+                lines_rep.append(f"      + Đã xóa: {smp}")
+            lines_rep.append("--------------------------------------------------------------------------------")
+        report_path.write_text("\n".join(lines_rep), encoding="utf-8")
+    except Exception:
+        pass
+
+    if progress_cb:
+        try:
+            progress_cb(
+                100.0,
+                f"✅ Hoàn tất Check Toàn Bộ {total} dự án: Đã làm sạch {len(repaired_script_ids)} Kịch bản & cắt sạch lỗi {len(repaired_video_ids)} Video MP4!",
+            )
+        except Exception:
+            pass
+
+    return {
+        "total_scanned": total,
+        "scripts_repaired_count": len(repaired_script_ids),
+        "videos_repaired_count": len(repaired_video_ids),
+        "voices_repaired_count": voices_repaired_count,
+        "total_lines_removed": total_lines_removed,
+        "repaired_script_ids": repaired_script_ids,
+        "repaired_video_ids": repaired_video_ids,
+        "details": details,
+        "report_path": str(report_path),
+    }
+

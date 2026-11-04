@@ -249,6 +249,11 @@
             <span>💼 2. Chạy 70% (Tối Đa 3 Luồng)</span>
           </button>
         </div>
+        <!-- Nút Check Toàn Bộ (Quét & Dọn sạch lỗi [LOCKED_TITLE] trong Kịch Bản + Cắt đoạn lỗi trong Video MP4) -->
+        <button class="whitespace-nowrap flex items-center gap-1 px-2.5 py-1 rounded bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/60 text-amber-300 font-label-md text-xs font-bold transition-all shadow-sm active:scale-95" id="btn-check-repair-all-nav" title="Quét toàn bộ Kịch bản &amp; Video MP4 đã tạo: Tự động xóa dòng [LOCKED_TITLE] lỗi trong Kịch bản và cắt bỏ đoạn voice lỗi trong Video MP4" type="button">
+          <span class="material-symbols-outlined text-[15px]" id="icon-check-repair-all-nav">fact_check</span>
+          <span class="font-mono" id="text-check-repair-all-nav">🛡️ CHECK TOÀN BỘ</span>
+        </button>
         <!-- Nút Cập Nhật Nổi Bật Ngay Trên Thanh Menu Tab Chính -->
         <button class="hidden whitespace-nowrap items-center gap-1.5 px-2.5 py-1 rounded bg-primary-container text-on-primary-fixed font-label-md text-xs font-bold shadow-[0_0_14px_rgba(0,255,135,0.5)] hover:brightness-110 transition-all animate-pulse" id="btn-apply-update-nav" title="Đã có bản cập nhật mới trên GitHub — Bấm để tải và nâng cấp ngay" type="button">
           <span class="material-symbols-outlined text-[15px]">system_update_alt</span>
@@ -442,6 +447,9 @@
                   <span class="px-1.5 py-0.5 rounded bg-surface-container text-primary-container font-label-sm text-[10px] font-bold border border-primary-container/20" id="adas-ideas-count">0</span>
                   <button class="flex items-center gap-1 px-2 py-0.5 rounded bg-primary-container/20 hover:bg-primary-container/35 text-primary-container font-label-sm text-[10.5px] font-bold border border-primary-container/40 transition-all active:scale-95" id="btn-adas-refresh-folder" title="Quét & tải lại thư mục projects/ ngay lập tức (nhận folder mới hoặc làm sạch các folder đã xóa)" type="button">
                     <span class="material-symbols-outlined text-[13px]">refresh</span> Cập Nhật Folder
+                  </button>
+                  <button class="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 font-label-sm text-[10.5px] font-bold border border-amber-400/50 transition-all active:scale-95" id="btn-adas-check-repair-all" title="Quét toàn bộ Kịch bản &amp; Video MP4 đã tạo: Tự động xóa dòng [LOCKED_TITLE] lỗi trong Kịch bản và cắt bỏ đoạn voice lỗi trong Video MP4" type="button">
+                    <span class="material-symbols-outlined text-[13px]">fact_check</span> 🛡️ Check Toàn Bộ
                   </button>
                 </div>
                 <!-- Bộ lọc tiêu đề: Tất cả / Chưa xong / Đã xong KB / Chưa Render / Đã Render -->
