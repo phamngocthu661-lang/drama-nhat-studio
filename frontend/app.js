@@ -3925,9 +3925,12 @@ Capacity: PASS`;
           bannerMsg.innerText = `🎉 Đã có bản cập nhật ${newVer} trên GitHub (Bản hiện tại: ${curVer})${note}`;
           bannerMsg.title = info.changelog || "";
         }
-        if (bannerEl && (isManualCheck || dismissedVersion !== newVer)) {
+        if (bannerEl && (isManualCheck || dismissedVersion !== `${newVer}_${info.latest_build || ""}`)) {
           bannerEl.classList.remove("hidden");
           bannerEl.classList.add("flex");
+        }
+        if (isManualCheck) {
+          executeApplyUpdate();
         }
       } else {
         if (btnApplyHeader) {
@@ -3945,8 +3948,8 @@ Capacity: PASS`;
         if (isManualCheck) {
           if (info.success === false && info.error) {
             alert(`⚠️ Không thể kiểm tra cập nhật lúc này:\n${info.error}`);
-          } else {
-            alert(`✅ Máy của bạn đang chạy phiên bản mới nhất (${curVer}) trên GitHub!`);
+          } else if (confirm(`✅ Máy của bạn đang ở phiên bản ${curVer} (Build #${info.current_build || 104}).\n\nBạn có muốn tải và đồng bộ lại mã nguồn mới nhất của bản ${newVer} từ GitHub ngay bây giờ không?`)) {
+            executeApplyUpdate();
           }
         }
       }

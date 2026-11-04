@@ -52,6 +52,10 @@ class HardwareResourceBalancer:
     - Tự động mở thêm luồng xử lý song song (Voice GPU + FFmpeg NVENC) ngay khi thấy máy còn khoảng trống (< 88%–90%).
     """
 
+    target_max_percent: float = 90.0
+    max_concurrent_videos: int = 5
+    performance_mode: str = "full_100"
+
     def __init__(self, target_max_percent: float = 90.0):
         self.target_max_percent = float(target_max_percent)
         self.max_concurrent_videos = 5
@@ -159,20 +163,24 @@ class HardwareResourceBalancer:
         - Chế độ Full 100% (`full_100`): Tối đa 5 video cùng lúc, ngưỡng CPU/GPU < 90%, RAM < 92%.
         - Chế độ 70% (`work_70` - Vừa chạy vừa làm việc khác): Tối đa 3 video cùng lúc, ngưỡng CPU/GPU < 70%, RAM < 84%.
         """
-        eff_max = max_concurrent if max_concurrent is not None else self.max_concurrent_videos
+        perf_mode = getattr(self, "performance_mode", "full_100")
+        default_max = 3 if perf_mode == "work_70" else 5
+        eff_max = max_concurrent if max_concurrent is not None else int(getattr(self, "max_concurrent_videos", default_max) or default_max)
         if current_active_tasks >= eff_max:
             return False
         if current_active_tasks <= 0:
             return True
         m = self.get_metrics(force_refresh=True)
-        limit = self.target_max_percent
-        ram_limit = 84.0 if self.performance_mode == "work_70" else 92.0
+        limit = float(getattr(self, "target_max_percent", 70.0 if perf_mode == "work_70" else 90.0))
+        ram_limit = 84.0 if perf_mode == "work_70" else 92.0
         if m["cpu_percent"] < limit and m["gpu_percent"] < limit and m["ram_percent"] < ram_limit:
             return True
         return False
 
 
 class ProductionPipeline:
+    performance_mode: str = "full_100"
+
     def __init__(self, root_dir: Optional[Path] = None):
         if root_dir:
             self.root_dir = Path(root_dir)
@@ -234,6 +242,51 @@ class ProductionPipeline:
         # BẬT NGAY SERVER VOICE GPU KHI ỨNG DỤNG KHỞI ĐỘNG!
         threading.Thread(target=self._auto_start_gpu_server_on_boot, daemon=True).start()
 
+    def _ensure_hot_reload_compat(self):
+        """
+        Đảm bảo tương thích ngược 100% khi Hot-Reload từ các phiên bản cũ (V1.0.0..V1.0.2)
+        mà không cần tắt mở lại ứng dụng: Tự động nâng cấp class và thuộc tính của `resource_balancer` và `pipeline`.
+        """
+        try:
+            if "performance_mode" not in self.__dict__ or not self.performance_mode:
+                saved_mode = "full_100"
+                cfg_file = getattr(self, "root_dir", Path(".")) / "config.json"
+                if cfg_file.exists():
+                    try:
+                        cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+                        if cfg.get("performance_mode") in ("full_100", "work_70"):
+                            saved_mode = cfg["performance_mode"]
+                    except Exception:
+                        pass
+                self.performance_mode = saved_mode
+
+            rb = getattr(self, "resource_balancer", None)
+            if rb is None:
+                self.resource_balancer = HardwareResourceBalancer(
+                    target_max_percent=70.0 if self.performance_mode == "work_70" else 90.0
+                )
+                rb = self.resource_balancer
+            else:
+                if rb.__class__ is not HardwareResourceBalancer:
+                    for attr_name, attr_val in vars(HardwareResourceBalancer).items():
+                        if not attr_name.startswith("__"):
+                            try:
+                                setattr(rb.__class__, attr_name, attr_val)
+                            except Exception:
+                                pass
+                    try:
+                        rb.__class__ = HardwareResourceBalancer
+                    except Exception:
+                        pass
+                if "performance_mode" not in rb.__dict__:
+                    rb.performance_mode = self.performance_mode
+                if "max_concurrent_videos" not in rb.__dict__ or not rb.max_concurrent_videos:
+                    rb.max_concurrent_videos = 3 if self.performance_mode == "work_70" else 5
+                if "target_max_percent" not in rb.__dict__ or not rb.target_max_percent:
+                    rb.target_max_percent = 70.0 if self.performance_mode == "work_70" else 90.0
+        except Exception:
+            pass
+
     def _init_performance_mode_from_config(self):
         cfg_file = self.root_dir / "config.json"
         saved_mode = "full_100"
@@ -247,12 +300,15 @@ class ProductionPipeline:
         self.set_performance_mode(saved_mode, persist=False)
 
     def get_performance_mode_info(self) -> Dict[str, Any]:
-        is_70 = self.performance_mode == "work_70"
+        self._ensure_hot_reload_compat()
+        is_70 = getattr(self, "performance_mode", "full_100") == "work_70"
+        default_max_vids = 3 if is_70 else 5
+        default_target_pct = 70.0 if is_70 else 90.0
         return {
-            "mode": self.performance_mode,
+            "mode": getattr(self, "performance_mode", "full_100"),
             "label": "💼 Chạy 70% (Tối Đa 3 Luồng — Vừa Chạy Vừa Làm Việc Khác)" if is_70 else "🔥 Chạy Full 100% (Tối Đa Tốc Độ)",
-            "target_max_percent": self.resource_balancer.target_max_percent,
-            "max_concurrent_videos": self.resource_balancer.max_concurrent_videos,
+            "target_max_percent": float(getattr(self.resource_balancer, "target_max_percent", default_target_pct) or default_target_pct),
+            "max_concurrent_videos": int(getattr(self.resource_balancer, "max_concurrent_videos", default_max_vids) or default_max_vids),
             "max_total_threads": 3 if is_70 else 9,
             "threads_per_account": 1 if is_70 else 3,
         }
@@ -264,6 +320,7 @@ class ProductionPipeline:
         2. `work_70`: Chạy 70% công suất (Khóa cứng TỐI ĐA 3 LUỒNG trên toàn hệ thống: tối đa 3 luồng viết kịch bản AI / 1 tab mỗi Acc,
            tối đa 3 luồng render video, <70% CPU/GPU, ưu tiên tiến trình BelowNormal) để người dùng vừa chạy vừa làm việc khác mượt mà.
         """
+        self._ensure_hot_reload_compat()
         norm_mode = "work_70" if str(mode or "").strip().lower() in ("work_70", "70", "70%", "balanced") else "full_100"
         self.performance_mode = norm_mode
         os.environ["STUDIO_PERF_MODE"] = norm_mode
@@ -431,6 +488,7 @@ class ProductionPipeline:
         return items
 
     def _notify(self, message: str = "", progress: Optional[float] = None, stage: Optional[str] = None):
+        self._ensure_hot_reload_compat()
         hw = self.resource_balancer.get_metrics(force_refresh=False)
         with self.lock:
             if message:
@@ -455,6 +513,7 @@ class ProductionPipeline:
                 pass
 
     def get_state(self) -> Dict[str, Any]:
+        self._ensure_hot_reload_compat()
         hw = self.resource_balancer.get_metrics(force_refresh=False)
         with self.lock:
             if self.is_running:
@@ -493,6 +552,7 @@ class ProductionPipeline:
         Bắt đầu chạy danh sách kịch bản hoặc tự động bơm thẳng vào Pool Đa Luồng nếu dây chuyền đang chạy!
         Nếu có `voice_config` truyền từ giao diện xuống, lưu và áp dụng ngay lập tức 100%.
         """
+        self._ensure_hot_reload_compat()
         if not jobs:
             return False
 
@@ -1108,7 +1168,7 @@ class ProductionPipeline:
                                 bgm_path=bgm_path,
                                 bgm_volume=bgm_volume,
                                 progress_callback=render_cb,
-                                performance_mode=self.performance_mode,
+                                performance_mode=getattr(self, "performance_mode", "full_100"),
                             )
 
                             # Kiểm định nghiêm ngặt tính toàn vẹn & thời lượng của file MP4 vừa xuất
@@ -1386,15 +1446,26 @@ class ProductionPipeline:
                             continue
 
                 # ĐIỀU PHỐI THEO CHẾ ĐỘ HIỆU SUẤT ĐỘNG (Full 100%: tối đa 5 video <90% CPU/GPU | Chế độ 70%: tối đa 3 video <70% CPU/GPU):
-                max_concurrent_videos = int(self.resource_balancer.max_concurrent_videos or 5)
+                self._ensure_hot_reload_compat()
+                is_70_mode = getattr(self, "performance_mode", "full_100") == "work_70"
+                default_max_vids = 3 if is_70_mode else 5
+                max_concurrent_videos = int(
+                    getattr(self.resource_balancer, "max_concurrent_videos", default_max_vids) or default_max_vids
+                )
                 if has_pending and len(active_threads) < max_concurrent_videos:
-                    can_dispatch = (
-                        len(active_threads) == 0
-                        or self.resource_balancer.has_headroom_for_parallel_task(
-                            len(active_threads),
-                            max_concurrent=max_concurrent_videos,
-                        )
-                    )
+                    if len(active_threads) == 0:
+                        can_dispatch = True
+                    else:
+                        try:
+                            can_dispatch = self.resource_balancer.has_headroom_for_parallel_task(
+                                len(active_threads),
+                                max_concurrent=max_concurrent_videos,
+                            )
+                        except TypeError:
+                            can_dispatch = (
+                                len(active_threads) < max_concurrent_videos
+                                and self.resource_balancer.has_headroom_for_parallel_task(len(active_threads))
+                            )
                     if can_dispatch:
                         with self.lock:
                             if self.pending_jobs and not self.should_stop and len(self.active_projects) < max_concurrent_videos:
@@ -1436,3 +1507,53 @@ class ProductionPipeline:
                 self.state["message"] = f"❌ Lỗi hệ thống Render: {str(e)}"
                 self.is_running = False
             self._notify()
+
+
+def _auto_patch_live_instances_on_reload():
+    """
+    Tự động chạy ngay khi `importlib.reload(backend.pipeline)` được gọi trong quá trình Update OTA:
+    Nâng cấp trực tiếp các instance `ProductionPipeline`, `HardwareResourceBalancer`, `VoicevoxStandaloneService`
+    đang sống trong RAM của máy khách mà không cần tắt mở lại ứng dụng!
+    """
+    try:
+        import gc
+        for obj in gc.get_objects():
+            try:
+                cls_name = type(obj).__name__
+                if cls_name == "HardwareResourceBalancer":
+                    for k, v in vars(HardwareResourceBalancer).items():
+                        if not k.startswith("__"):
+                            try:
+                                setattr(obj.__class__, k, v)
+                            except Exception:
+                                pass
+                    try:
+                        obj.__class__ = HardwareResourceBalancer
+                    except Exception:
+                        pass
+                    if "performance_mode" not in getattr(obj, "__dict__", {}):
+                        obj.performance_mode = "full_100"
+                    if "max_concurrent_videos" not in getattr(obj, "__dict__", {}):
+                        obj.max_concurrent_videos = 3 if getattr(obj, "performance_mode", "full_100") == "work_70" else 5
+                    if "target_max_percent" not in getattr(obj, "__dict__", {}):
+                        obj.target_max_percent = 70.0 if getattr(obj, "performance_mode", "full_100") == "work_70" else 90.0
+                elif cls_name == "ProductionPipeline":
+                    for k, v in vars(ProductionPipeline).items():
+                        if not k.startswith("__"):
+                            try:
+                                setattr(obj.__class__, k, v)
+                            except Exception:
+                                pass
+                    try:
+                        obj.__class__ = ProductionPipeline
+                    except Exception:
+                        pass
+                    if hasattr(obj, "_ensure_hot_reload_compat"):
+                        obj._ensure_hot_reload_compat()
+            except Exception:
+                continue
+    except Exception:
+        pass
+
+
+_auto_patch_live_instances_on_reload()

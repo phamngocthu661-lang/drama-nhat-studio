@@ -1392,4 +1392,22 @@
 - **Nâng cấp [`Cap_Nhat_Nhanh.bat`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/Cap_Nhat_Nhanh.bat) & Đóng gói lại `Drama_Nhat_Studio_Ban_Update_Nhanh.zip`**:
   - Cho phép máy khách (đang ở bản cũ chưa có API Update) chỉ cần bấm đúp `Cap_Nhat_Nhanh.bat` là tự động kết nối GitHub tải bản mới nhất về và lên đời `V1.0.3`.
 
+---
+
+## Cập nhật: 04/11/2026 (Lần 62) — Sửa Triệt Để Lỗi `'HardwareResourceBalancer' object has no attribute 'max_concurrent_videos'` Khi Hot-Reload Render Trên Bản `V1.0.3` (`backend/pipeline.py`, `backend/updater_service.py`, `frontend/app.js`, `version.json`)
+
+### 1. Nguyên Nhân Lỗi `'HardwareResourceBalancer' object has no attribute 'max_concurrent_videos'`
+- Khi máy khách bấm **`🔄 CẬP NHẬT`** từ bản `V1.0.0` lên `V1.0.3` mà không tắt mở lại ứng dụng, cơ chế nạp nóng (`_hot_reload_backend_modules`) cập nhật phương thức `start_batch` của `ProductionPipeline` nhưng đối tượng singleton `pipeline.resource_balancer` (`HardwareResourceBalancer`) được khởi tạo trong RAM từ lúc mở app ở bản `V1.0.0` chưa chạy lại `__init__` nên chưa có thuộc tính instance `max_concurrent_videos` và `performance_mode`.
+
+### 2. Giải Pháp Khắc Phục Triệt Để 100% (Giữ Phiên Bản `V1.0.3`, Build `#104`)
+- **Trong [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py)**:
+  - Khai báo thuộc tính mặc định cấp class (`max_concurrent_videos: int = 5`, `target_max_percent: float = 90.0`, `performance_mode: str = "full_100"`) trực tiếp trên [`HardwareResourceBalancer`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L48-L65) và [`ProductionPipeline`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L183-L186).
+  - Bổ sung phương thức [`_ensure_hot_reload_compat()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L245-L290) tự động kiểm tra và bù đầy đủ các thuộc tính & phương thức mới cho `self.resource_balancer` và `self` ngay khi gọi `get_state()`, `start_batch_production_async()`, `_run_batch()`.
+  - Bổ sung hàm [`_auto_patch_live_instances_on_reload()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1498-L1545) ở cuối file `backend/pipeline.py` để ngay tại thời điểm `importlib.reload(backend.pipeline)` chạy trong lúc bấm Update, hệ thống quét `gc.get_objects()` và vá nóng ngay lập tức mọi instance `HardwareResourceBalancer` và `ProductionPipeline` đang sống trong RAM.
+- **Trong [`backend/updater_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py#L241-L268)**:
+  - Cập nhật `_hot_reload_backend_modules()` để đồng bộ cả `HardwareResourceBalancer`, `VoicevoxStandaloneService` và gọi `pipeline._ensure_hot_reload_compat()`.
+- **Trong [`version.json`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/version.json)**:
+  - Giữ nguyên tên phiên bản **`V1.0.3`** theo yêu cầu và nâng `build_number` lên `104` để mọi máy khách (kể cả máy vừa lên `V1.0.3` Build #103) đều nhận diện được bản vá và bấm **`🔄 CẬP NHẬT`** là chạy Render mượt mà ngay lập tức.
+
+
 

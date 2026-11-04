@@ -243,10 +243,28 @@ def _hot_reload_backend_modules(adas_engine: Any = None, pipeline: Any = None):
             new_p_cls = getattr(reloaded_mods["backend.pipeline"], "ProductionPipeline", None)
             if new_p_cls is not None:
                 for attr_name, attr_val in vars(new_p_cls).items():
-                    if callable(attr_val) and not attr_name.startswith("__"):
+                    if not attr_name.startswith("__"):
                         setattr(pipeline.__class__, attr_name, attr_val)
+            new_rb_cls = getattr(reloaded_mods["backend.pipeline"], "HardwareResourceBalancer", None)
+            rb_inst = getattr(pipeline, "resource_balancer", None)
+            if new_rb_cls is not None and rb_inst is not None:
+                for attr_name, attr_val in vars(new_rb_cls).items():
+                    if not attr_name.startswith("__"):
+                        setattr(rb_inst.__class__, attr_name, attr_val)
+            if hasattr(pipeline, "_ensure_hot_reload_compat"):
+                pipeline._ensure_hot_reload_compat()
     except Exception as e:
         log_warn("UPDATER", f"Lưu ý khi cập nhật nóng ProductionPipeline: {e}")
+
+    try:
+        if "backend.voicevox_service" in reloaded_mods and pipeline is not None and getattr(pipeline, "voicevox_service", None) is not None:
+            new_vv_cls = getattr(reloaded_mods["backend.voicevox_service"], "VoicevoxStandaloneService", None)
+            if new_vv_cls is not None:
+                for attr_name, attr_val in vars(new_vv_cls).items():
+                    if not attr_name.startswith("__"):
+                        setattr(pipeline.voicevox_service.__class__, attr_name, attr_val)
+    except Exception as e:
+        log_warn("UPDATER", f"Lưu ý khi cập nhật nóng VoicevoxStandaloneService: {e}")
 
     try:
         if "backend.stock_manager" in reloaded_mods and pipeline is not None and getattr(pipeline, "stock_manager", None) is not None:
