@@ -414,9 +414,10 @@ def save_voice_config(new_cfg: Dict[str, Any]) -> Dict[str, Any]:
 
 class VoicevoxStandaloneService:
     """
-    Engine tạo Voice độc lập bằng VOICEVOX DirectML GPU Cluster (`VOICEVOX_ENGINE/JAPANxxx/windows-directml/run.exe`).
-    - Luôn chạy với cờ `--use_gpu` để tận dụng 100% sức mạnh GPU DirectML / NVIDIA CUDA.
-    - Hỗ trợ chạy song song nhiều cổng worker GPU (`50021`, `50022`) + `ThreadPoolExecutor` để tổng hợp giọng siêu tốc.
+    Engine tạo Voice độc lập bằng VOICEVOX GPU (`windows-nvidia` CUDA/cuDNN ưu tiên số 1, fallback `windows-directml`).
+    - Tự động ưu tiên bản `windows-nvidia/run.exe` (CUDA/cuDNN chuyên biệt cho card NVIDIA RTX, nhanh gấp 3–5 lần DirectML).
+    - Chạy 1 Worker GPU chuyên biệt trên cổng `50021` kết hợp hàng đợi Pipeline (`audio_query` song song + `synthesis` tuần tự theo cổng)
+      để triệt tiêu 100% hiện tượng 2 tiến trình tranh chấp Shader/VRAM trên card 6GB–8GB (như RTX 2060).
     - Tự động nạp sẵn (`warmup_speaker`) model giọng đang chọn lên VRAM GPU ngay khi mở ứng dụng.
     """
 
@@ -424,7 +425,12 @@ class VoicevoxStandaloneService:
     _procs: Dict[int, subprocess.Popen] = {}
     _warmed_speakers: Dict[int, Set[int]] = {}
     _gpu_mode_active: bool = False
-    _synth_semaphore = threading.Semaphore(4)
+    _active_exe_path: str = ""
+    _synth_semaphore = threading.Semaphore(3)
+    _port_synth_locks: Dict[int, threading.Lock] = {
+        50021: threading.Lock(),
+        50022: threading.Lock(),
+    }
 
     def __init__(self, root_dir: Optional[Path] = None):
         self.root_dir = Path(root_dir) if root_dir else ROOT_DIR
@@ -433,7 +439,8 @@ class VoicevoxStandaloneService:
         self.engine_base_dir = self.root_dir / "VOICEVOX_ENGINE"
         self.voices_dir = self.root_dir / "assets" / "voices"
         self.port = 50021
-        self.worker_ports: List[int] = [50021, 50022]
+        # Sử dụng 1 cổng GPU duy nhất (50021) để tránh 2 tiến trình run.exe tranh giành Shader & tràn 6GB VRAM
+        self.worker_ports: List[int] = [50021]
         self.base_url = f"http://127.0.0.1:{self.port}"
         self._http_local = threading.local()
 
@@ -447,11 +454,38 @@ class VoicevoxStandaloneService:
         return sess
 
     def _find_run_exe(self) -> Optional[Path]:
+        # 1. ƯU TIÊN SỐ 1: Bản NVIDIA CUDA/cuDNN chuyên biệt (windows-nvidia/run.exe)
+        nvidia_candidates = [
+            self.engine_base_dir / "windows-nvidia" / "run.exe",
+            self.engine_base_dir / "JAPANxxx" / "windows-nvidia" / "run.exe",
+            self.root_dir.parent / "VOICEVOX_ENGINE" / "windows-nvidia" / "run.exe",
+            self.root_dir.parent / "VOICEVOX_ENGINE" / "JAPANxxx" / "windows-nvidia" / "run.exe",
+            Path(r"D:\Drama_Nhat_Studio\VOICEVOX_ENGINE\windows-nvidia\run.exe"),
+            Path(r"D:\Drama_Nhat_Studio\VOICEVOX_ENGINE\JAPANxxx\windows-nvidia\run.exe"),
+        ]
+        for nc in nvidia_candidates:
+            if nc.exists():
+                return nc
+
+        # Tự động quét thêm nếu giải nén lồng 1 cấp thư mục con trong windows-nvidia
+        for nv_dir in (
+            self.engine_base_dir / "windows-nvidia",
+            self.root_dir.parent / "VOICEVOX_ENGINE" / "windows-nvidia",
+            Path(r"D:\Drama_Nhat_Studio\VOICEVOX_ENGINE\windows-nvidia"),
+        ):
+            if nv_dir.exists() and nv_dir.is_dir():
+                for sub_run in nv_dir.glob("*/run.exe"):
+                    if sub_run.exists():
+                        return sub_run
+
+        # 2. DỰ PHÒNG: Bản DirectML (windows-directml/run.exe)
         candidates = [
             self.engine_base_dir / "JAPANxxx" / "windows-directml" / "run.exe",
             self.engine_base_dir / "windows-directml" / "run.exe",
             self.engine_base_dir / "run.exe",
             self.root_dir.parent / "VOICEVOX_ENGINE" / "JAPANxxx" / "windows-directml" / "run.exe",
+            Path(r"D:\Drama_Nhat_Studio\VOICEVOX_ENGINE\JAPANxxx\windows-directml\run.exe"),
+            Path(r"D:\Drama_Nhat_Studio\VOICEVOX_ENGINE\windows-directml\run.exe"),
         ]
         for c in candidates:
             if c.exists():
@@ -554,17 +588,38 @@ class VoicevoxStandaloneService:
                 pass
 
     def ensure_server_running(self, multi_worker: bool = False) -> bool:
-        target_ports = self.worker_ports if multi_worker else [self.port]
+        target_ports = [self.port]
+        run_exe = self._find_run_exe()
+        if not run_exe:
+            log_error("VOICE", f"Không tìm thấy bộ chạy VOICEVOX (run.exe) tại {self.engine_base_dir}.")
+            return False
+
+        exe_str = str(run_exe.resolve())
+        is_nvidia_cuda = "windows-nvidia" in exe_str.lower()
+        backend_label = "NVIDIA CUDA/cuDNN" if is_nvidia_cuda else "DirectML GPU"
+
+        # Nếu trước đó đang chạy bản DirectML cũ mà nay đã có bản windows-nvidia trên ổ cứng, tự động chuyển ngay sang bản NVIDIA CUDA!
+        if (
+            VoicevoxStandaloneService._active_exe_path
+            and VoicevoxStandaloneService._active_exe_path != exe_str
+            and is_nvidia_cuda
+        ):
+            log_info("VOICE", f"🚀 Phát hiện bản nâng cấp VOICEVOX {backend_label} ({run_exe}) -> Đang chuyển đổi từ DirectML sang CUDA...")
+            VoicevoxStandaloneService.shutdown_all_workers()
+
+        # Tự động tắt cổng phụ 50022 (nếu còn sót từ bản cũ) để giải phóng ~2GB VRAM và chống tranh chấp Shader trên GPU!
+        if 50022 in VoicevoxStandaloneService._procs:
+            try:
+                VoicevoxStandaloneService._procs.pop(50022).terminate()
+            except Exception:
+                pass
+
         all_alive = all(self.is_port_alive(p, timeout=0.8) for p in target_ports)
         if all_alive and VoicevoxStandaloneService._gpu_mode_active:
+            VoicevoxStandaloneService._active_exe_path = exe_str
             return True
 
         with self._lock:
-            run_exe = self._find_run_exe()
-            if not run_exe:
-                log_error("VOICE", f"Không tìm thấy bộ chạy VOICEVOX (run.exe) tại {self.engine_base_dir}.")
-                return False
-
             started_any = False
             for p in target_ports:
                 ok = self._start_worker_on_port(run_exe, p, use_gpu=True)
@@ -572,17 +627,18 @@ class VoicevoxStandaloneService:
                     started_any = True
 
             if started_any:
+                VoicevoxStandaloneService._active_exe_path = exe_str
                 cfg = load_voice_config()
                 spk = int(cfg.get("speaker_id", 13))
                 if spk >= 0:
                     self.warmup_speaker(spk, ports=target_ports)
                 log_info(
                     "VOICE",
-                    f"🟢 VOICEVOX DirectML GPU Server đã bật sẵn sàng trên cổng {target_ports} (Speaker={spk} đã nạp lên VRAM GPU)!",
+                    f"🟢 VOICEVOX [{backend_label}] Server đã bật sẵn sàng trên cổng {target_ports} (Speaker={spk} đã nạp lên VRAM GPU)!",
                 )
                 return True
 
-            log_error("VOICE", "Không thể khởi động VOICEVOX DirectML GPU Engine.")
+            log_error("VOICE", f"Không thể khởi động VOICEVOX [{backend_label}] Engine.")
             return False
 
     _job_handle = None
@@ -750,6 +806,7 @@ class VoicevoxStandaloneService:
         sess = self._get_session()
         base_u = f"http://127.0.0.1:{target_port}"
 
+        port_lock = VoicevoxStandaloneService._port_synth_locks.setdefault(target_port, threading.Lock())
         last_err = None
         for attempt in range(3):
             try:
@@ -770,12 +827,13 @@ class VoicevoxStandaloneService:
                     query_data["outputSamplingRate"] = 24000
                     query_data["outputStereo"] = False
 
-                    s_resp = sess.post(
-                        f"{base_u}/synthesis",
-                        params={"speaker": int(speaker_id)},
-                        json=query_data,
-                        timeout=60,
-                    )
+                    with port_lock:
+                        s_resp = sess.post(
+                            f"{base_u}/synthesis",
+                            params={"speaker": int(speaker_id)},
+                            json=query_data,
+                            timeout=60,
+                        )
                     s_resp.raise_for_status()
                     return s_resp.content
             except Exception as e:

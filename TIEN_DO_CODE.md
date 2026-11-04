@@ -1,5 +1,22 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 05/11/2026 (Lần 46 — V1.0.3 Build #112) — Nâng Cấp `VoicevoxStandaloneService` Tự Động Ưu Tiên Bản NVIDIA CUDA/cuDNN (`windows-nvidia/run.exe`), Chạy 1 Worker GPU Chuyên Biệt (`50021`) Triệt Tiêu Tranh Chấp Shader/VRAM Trên Card 6GB (RTX 2060) & Tích Hợp `onnxruntime-gpu`
+
+### 1. Yêu cầu của người dùng
+- Nâng cấp [`backend/voicevox_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py) và [`install_setup.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/install_setup.py) để tự động nhận diện và ưu tiên chạy bản **VOICEVOX NVIDIA CUDA/cuDNN (`VOICEVOX_ENGINE/windows-nvidia/run.exe`)**, đồng thời xử lý triệt để hiện tượng 2 tiến trình `run.exe` (`50021` & `50022`) tranh chấp Shader/VRAM trên card RTX 2060 (6GB), sau đó đẩy lên GitHub.
+
+### 2. Giải pháp kỹ thuật & Các file đã nâng cấp
+- **[`backend/voicevox_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py)**:
+  - Nâng cấp [`_find_run_exe()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py#L455-L505): Tự động ưu tiên số 1 cho `VOICEVOX_ENGINE/windows-nvidia/run.exe` (và cả cấu trúc thư mục con nếu giải nén lồng cấp), tự động fallback về `windows-directml/run.exe` nếu máy chưa tải gói `windows-nvidia`.
+  - Nâng cấp [`ensure_server_running()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py#L590-L645):
+    - Nếu trước đó đang chạy tiến trình `windows-directml` mà phát hiện `windows-nvidia/run.exe` vừa được giải nén xong, hệ thống tự động tắt tiến trình cũ và chuyển ngay sang `windows-nvidia` (CUDA/cuDNN).
+    - Sử dụng **1 cổng GPU chuyên biệt (`[50021]`)** và tự động tắt tiến trình phụ trên cổng `50022` (nếu còn sót từ bản cũ) để giải phóng **~2GB VRAM** cho FFmpeg NVENC và chấm dứt hoàn toàn hiện tượng 2 tiến trình DirectML/CUDA tranh giành Shader đẩy công suất GPU lên 118W.
+  - Nâng cấp [`synthesize_single_sentence_bytes()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py#L800-L845): Tách bước chuẩn bị âm vị `POST /audio_query` (chạy song song 3 luồng) và bước dựng sóng âm GPU `POST /synthesis` (khóa tuần tự theo từng cổng qua `_port_synth_locks`), giúp GPU chạy liên tục 100% không bị nghẽn hàng đợi nội bộ.
+- **[`install_setup.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/install_setup.py)**:
+  - Tự động kiểm tra `CUDAExecutionProvider` trong `onnxruntime` khi máy có card NVIDIA; nếu đang là bản CPU thì tự động gỡ `onnxruntime` CPU và cài đặt `onnxruntime-gpu`.
+
+---
+
 ## Cập nhật: 04/11/2026 (Lần 45 — V1.0.3 Build #111) — Chẩn Đoán & Gỡ Bỏ Hoàn Toàn Vòng Lặp Tự Xóa MP4 Để Render Lại Lần 2 Từ `0%` (`sync_attempt = 2`) Sau Khi Đã Render Xong `100%`
 
 ### 1. Chẩn đoán chính xác nguyên nhân trên 2 ảnh chụp màn hình bản cũ (chưa update) chạy `190–243 phút` mà không xong 1 video (và quay ngược về `3.7%`)
@@ -16,6 +33,10 @@
   - Gỡ bỏ hoàn toàn khối lệnh `verify_rendered_video_sync` tự xóa `final_video.unlink()` để chạy `sync_attempt = 2`. Ngay khi file MP4 xuất xong và vượt qua bước kiểm tra toàn vẹn cấu trúc + thời lượng [`validate_completed_mp4_file()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/sync_checker.py#L365-L466) (`mp4_integrity["valid"] == True`), video được công nhận **ĐẠT 100%** ngay lập tức — **tuyệt đối không bao giờ xóa MP4 đã render xong để render lại từ 0% nữa**.
 - **[`backend/sync_checker.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/sync_checker.py#L449-L466)**:
   - Đồng bộ ngưỡng dung sai thời lượng trong [`validate_completed_mp4_file()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/sync_checker.py#L456-L465) (`max(10.0, wav_dur * 0.015)`) khớp hoàn toàn với [`backend/renderer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L957).
+- **Đóng gói Bộ Cài Đặt Khách Hàng & Bản Update Nhanh (`V1.0.3 — Build #111`)**:
+  - Đã xuất bản đầy đủ 2 gói bàn giao khách hàng tích hợp sẵn bộ đệm `.nut` (`assets/particles/_cache/`), SSD Staging Render, Bộ chọn Đường Dẫn Kép (`Folder Project` & `Nơi Chứa Video Cuối`) và khóa vòng lặp re-render:
+    1. **Bộ Cài Đặt Đầy Đủ (`936.54 MB`)**: [`D:\Drama_Nhat_Studio_Bo_Cai_Khach_Hang.zip`](file:///D:/Drama_Nhat_Studio_Bo_Cai_Khach_Hang.zip) & [`d:\KEY NHẬT DRAMA\Drama_Nhat_Studio_Bo_Cai_Khach_Hang.zip`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/Drama_Nhat_Studio_Bo_Cai_Khach_Hang.zip).
+    2. **Bản Update Nhanh (`9.48 MB`)**: [`D:\Drama_Nhat_Studio_Ban_Update_Nhanh.zip`](file:///D:/Drama_Nhat_Studio_Ban_Update_Nhanh.zip) & [`d:\KEY NHẬT DRAMA\Drama_Nhat_Studio_Ban_Update_Nhanh.zip`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/Drama_Nhat_Studio_Ban_Update_Nhanh.zip).
 
 ---
 

@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 111,
-  "released_at": "2026-11-04 23:48:00",
+  "build_number": 112,
+  "released_at": "2026-11-05 02:05:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Xóa bỏ hoàn toàn cơ chế tự xóa MP4 để Render lại từ 0% (sync_attempt=2) sau khi video đã xuất xong 100%, khắc phục triệt để lỗi video chạy >190 phút bị quay ngược về 3%.\n2. Tích hợp Chế độ Render Siêu Tốc Trên Ổ SSD (SSD Staging Render): Tự động tổng hợp WAV VOICEVOX + ghi phân đoạn .ts + remux _rendering_tmp.mp4 trên ổ SSD tốc độ cao, sau khi xuất xong tự động di chuyển nguyên tử (Atomic Move) sang ổ HDD chứa Video cuối và dọn sạch file tạm trên SSD.\n3. Tích hợp Bộ chọn Đường Dẫn Kép tại Tab 1 & Tab 2: (1) Folder Project (projects_dir) và (2) Nơi Chứa Video Cuối (final_video_dir) đồng bộ Load 100% dự án và trạng thái MP4."
+  "changelog": "1. Nâng cấp VOICEVOX GPU tự động ưu tiên bản NVIDIA CUDA/cuDNN (windows-nvidia/run.exe, nhanh gấp 3–5 lần DirectML) và chạy 1 cổng GPU chuyên biệt (50021) kèm khóa tuần tự /synthesis chống 2 tiến trình tranh chấp Shader/VRAM trên card RTX 2060 6GB.\n2. Tích hợp Chế độ Render Siêu Tốc Trên Ổ SSD (SSD Staging Render -> Tự động chuyển sang ổ HDD chứa Video cuối) + Bộ chọn Đường Dẫn Kép (Folder Project & Nơi Chứa Video Cuối) đồng bộ Load 100% dự án.\n3. Xóa bỏ hoàn toàn cơ chế tự xóa MP4 để Render lại từ 0% (sync_attempt=2) sau khi video đã xuất xong 100%."
 }

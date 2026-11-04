@@ -1,9 +1,33 @@
 ================================================================================
    CHI TIẾT BẢN CẬP NHẬT NHANH TỔNG HỢP — DRAMA NHẬT STUDIO
-   (Bản tích hợp đầy đủ toàn bộ các nâng cấp & sửa lỗi mới nhất đến Lần 43)
+   (Bản tích hợp đầy đủ toàn bộ các nâng cấp & sửa lỗi mới nhất đến Lần 45 — V1.0.3 Build #111)
 ================================================================================
 
-MỚI NHẤT TRONG BẢN CẬP NHẬT LẦN 33 -> 43 (03/11/2026):
+MỚI NHẤT TRONG BẢN CẬP NHẬT LẦN 33 -> 45 (05/11/2026 — V1.0.3 Build #111):
+  + TĂNG TỐC RENDER VIDEO FFMPEG 5 LỚP NHANH GẤP 5.5 LẦN (từ ~1.2x lên 6.0x–6.8x
+    realtime): Tích hợp Pre-baked Overlay Cache (.nut yuva420p @ 12fps gộp sẵn
+    Hạt Bụi Sao + Hộp Đen + Watermark), xử lý eq/vignette trên độ phân giải gốc
+    720p@12fps trước khi scale fast_bilinear, gỡ bỏ cờ -flush_packets 1 và
+    BelowNormal Priority.
+  + CHẾ ĐỘ RENDER SIÊU TỐC TRÊN Ổ SSD (SSD STAGING -> TỰ ĐỘNG CHUYỂN SANG Ổ HDD):
+    Toàn bộ 1.500–3.000 file WAV VOICEVOX + phân đoạn .ts + _rendering_tmp.mp4
+    được xử lý trên ổ SSD tốc độ cao, sau khi xuất xong 100% tự động di chuyển
+    nguyên tử (Atomic Move) sang thư mục Nơi Chứa Video Cuối (HDD) và xóa sạch
+    file tạm trên SSD.
+  + BỘ CHỌN ĐƯỜNG DẪN KÉP (1. FOLDER PROJECT & 2. NƠI CHỨA VIDEO CUỐI):
+    Cho phép chọn tùy ý Folder Project (projects_dir) và Nơi Chứa Video Cuối
+    (final_video_dir) trên cả Tab 1 và Tab 2; tự động nhận diện và load 100%
+    danh sách dự án cùng trạng thái "Đã có MP4" dù nằm ở 2 ổ đĩa khác nhau.
+  + XÓA BỎ VĨNH VIỄN LỖI VIDEO RENDER XONG 100% LẠI BỊ TỰ XÓA ĐI RENDER LẠI TỪ 0%:
+    Khóa bỏ vòng lặp sync_attempt=2 tự xóa MP4 sau khi đã xuất xong, đảm bảo
+    video chạy xong 100% được công nhận ngay lập tức.
+  + TĂNG TỐC VOICEVOX DIRECTML GPU & CHỐNG RƠI VỀ CPU: Tăng thời gian chờ khởi
+    tạo DirectML GPU lên 27s, ghép WAV bằng Python PCM (<0.3s) và chặn bão I/O
+    ghi đè saved_ideas.json mỗi giây khi đang Render.
+  + NÚT [🛡️ CHECK TOÀN BỘ (XÓA LỖI KỊCH BẢN & VIDEO)]: Quét và dọn sạch tự động
+    các dòng [LOCKED_TITLE] / Metadata bị rò rỉ trong kịch bản, phụ đề .srt,
+    master_voice.wav và tự động cắt mượt đoạn đọc lỗi trong MP4 bằng Hybrid
+    Smart Cut (-c copy).
   + Giao diện Workstation Studio mới (Industrial Cyber Deck) tích hợp bộ lọc
     dự án (Tất cả / Chưa xong / Đã xong) hiển thị 1 dòng siêu gọn, giữ nguyên
     chuẩn 4 Card phần Xuất Video và Giả Lập Bố Cục 5 Lớp (Live Preview) nguyên bản.

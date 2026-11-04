@@ -132,6 +132,17 @@ def main():
         for m in missing:
             run_pip(["install", "--prefer-binary", pkg_map.get(m, m)])
 
+    # Tự động đảm bảo onnxruntime-gpu được kích hoạt trên máy có card NVIDIA RTX/GTX
+    if has_nvidia_gpu:
+        has_ort_gpu = subprocess.run(
+            [PYTHON_EXE, "-c", "import onnxruntime as ort; raise SystemExit(0 if 'CUDAExecutionProvider' in ort.get_available_providers() else 1)"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        ).returncode == 0
+        if not has_ort_gpu:
+            print("⚡ Phát hiện GPU NVIDIA: Đang nâng cấp onnxruntime sang bản onnxruntime-gpu (CUDA)...")
+            subprocess.run([PYTHON_EXE, "-m", "pip", "uninstall", "-y", "onnxruntime"], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            run_pip(["install", "--prefer-binary", "onnxruntime-gpu"], "Đang cài đặt onnxruntime-gpu...")
+
     # 4. Kiểm tra và tự động tải Model AI OmniVoice (1.6 GB) nếu chưa có
     print("\n[BƯỚC 4/4] Kiểm tra bộ não giọng đọc AI Nhật Bản (OmniVoice)...")
     model_dir = ROOT_DIR / "pretrained_models" / "OmniVoice"
