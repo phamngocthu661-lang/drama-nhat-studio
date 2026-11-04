@@ -1430,6 +1430,47 @@
   - [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js#L1830-L1860) gửi kèm `performance_mode` trong cả `getCurrentVideoSettings()` và `getCurrentVoiceConfigFromUI()`.
   - [`_auto_patch_live_instances_on_reload()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1605-L1650) tự động tiêm route `GET/POST /api/performance-mode` vào đầu `app.router.routes` của tiến trình FastAPI đang chạy.
 
+---
 
+## Cập nhật: 04/11/2026 (Lần 64) — Sửa Lỗi ChatGPT Từ Chối Vẽ Ảnh Thumbnail Ở STEP 7 Do Nhầm Chế Độ Chỉnh Sửa Ảnh (`reference image`) & Khôi Phục Tiến Trình 300 Kịch Bản Sau Khi Máy Khởi Động Lại (`backend/adas_script_engine.py`)
+
+### 1. Chẩn Đoán Nguyên Nhân Tiến Độ Chậm Từ Mốc 231 ➔ 240 Kịch Bản & Dừng Lúc 17:15
+1. **Máy tính Windows vừa khởi động lại (Reboot) lúc `17:15:06` (`04/11/2026`)**:
+   - Tiến trình viết kịch bản vẫn đang chạy liên tục đến `17:08:16` (đã viết xong văn bản kịch bản cho **240 / 300 dự án**, trong đó `P976`, `P977` vừa xong kịch bản 49.000 chữ và `P978` vừa xong `STEP 3`), thì máy tính khởi động lại lúc `17:15:06` làm tắt Server và 3 trình duyệt Chrome.
+2. **Lỗi công cụ tạo ảnh ChatGPT (`gpt-image-1`) hiểu nhầm Prompt STEP 7 là lệnh chỉnh sửa ảnh (`edit mode`)**:
+   - Trong `logs/error_diagnostic.log`, một số bản Prompt `<THUMBNAIL_PROMPT_1>` do STEP 6 sinh ra chứa các động từ như `Overlay`, `Preserve`, `Keep the... brighter`, `reference image`, và khi thử lại Lượt 2–3 hệ thống nối thêm `Variation #2` lên cùng một Prompt gốc.
+   - Bộ phân loại của ChatGPT hiểu nhầm là yêu cầu chỉnh sửa ảnh có sẵn nên trả lời văn bản: *"Mình chưa thể tạo ảnh trong lượt này vì công cụ xử lý ảnh không nhận được ảnh tham chiếu hợp lệ"*, làm tốn 3 lượt chờ (~10–12 phút/dự án) và khiến 11 dự án dù đã viết xong 100% Kịch bản + SEO nhưng chưa có file `THUMBNAIL_1.png`.
+
+### 2. Giải Pháp Khắc Phục Triệt Để
+- **Trong [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py)**:
+  - Nâng cấp [`_sanitize_raw_thumbnail_prompt()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2319-L2386): Cắt bỏ phần `TEXT DESIGN` / `TEXT POSITIONING` / `LINE 1` bị trùng lặp trong prompt thô của STEP 6, lọc sạch các từ khóa `reference`, `original image`, `target image`, `existing image`, `variation`, và chuyển hóa các động từ `Overlay -> Include`, `Preserve -> Show`, `Keep the -> Make the`.
+  - Nâng cấp [`generate_and_verify_three_thumbnails_sync()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2546-L2615): Nếu Lượt 1 không thu được ảnh, Lượt 2 và Lượt 3 tự động chuyển sang gửi mẫu Prompt tinh gọn độc lập (`prompts_list[1]`, `prompts_list[2]` từ `variant_angles`) thay vì gửi lặp lại `prompts_list[0]` kèm chữ `Variation #2`, triệt tiêu 100% lỗi ChatGPT đòi ảnh tham chiếu.
+- **Khởi động lại Server & Watchdog 300 Kịch Bản**:
+  - Ưu tiên chạy tiếp ngay `P978` (đã có sẵn `STEP 2` + `STEP 3`) và 59 kịch bản chưa viết để đẩy nhanh tốc độ hoàn tất từ `240/300` lên `300/300`.
+
+---
+
+## Cập nhật: 04/11/2026 (Lần 65) — Nâng Cấp Agent Kiểm Tra Kịch Bản (`CLEAN_TTS_SCRIPT_GATE`) Tự Động Ghi Nhận & Xóa Sạch 100% Dòng `[LOCKED_TITLE]` / Metadata Bị Rò Rỉ Trong Kịch Bản Trước Khi Tạo Voice & Render Video (`adas_skills/05_script_auditor_100/SKILL.md`, `adas_skills/04_longform_script_writer/SKILL.md`, `backend/voice_service.py`, `backend/adas_script_engine.py`, `backend/pipeline.py`, `version.json`)
+
+### 1. Nguyên Nhân Gốc Rễ Khiến `[LOCKED_TITLE]` & Metadata Rò Rỉ Vào File Kịch Bản (`*_KICH_BAN.txt`)
+1. **ChatGPT bọc `LOCKED_TITLE:` trong ký tự in đậm Markdown (`**LOCKED_TITLE:** 「...」`) hoặc thẻ `<CodeBlock language="text">SELECTED_TITLE: ...`**:
+   - Khi viết đầu mỗi Part (`PART A`, `PART B`, `PART C`) hoặc đầu lượt viết tiếp (`Continue`), ChatGPT đôi khi tự động lặp lại dòng tiêu đề khóa `**LOCKED_TITLE:** 「...」` hoặc `P955 — STEP 4 · BUILD PART A · 日本語脚本`.
+   - Trong bộ lọc cũ của `extract_clean_japanese_narration()`, biểu thức chính quy `is_meta_kv` kiểm tra trước khi bóc ký tự `**` và `<CodeBlock>`, dẫn đến dòng `LOCKED_TITLE:` lọt qua bộ lọc.
+2. **Hàm cắt độ dài `trim_japanese_to_max_pure_chars()` gọi `split_japanese_script()` tách câu theo dấu `。`, `！`, `？`**:
+   - Khi tiêu đề Nhật chứa 2–3 câu (ngăn cách bởi dấu chấm `。`), `split_japanese_script()` tách dòng `LOCKED_TITLE: 「Câu 1。Câu 2。Câu 3…」` thành **2 đến 4 dòng liên tiếp** (dòng 1 bắt đầu bằng `LOCKED_TITLE: 「...`, các dòng tiếp theo là phần còn lại của tiêu đề kết thúc bằng `…」` hoặc `…`).
+
+### 2. Giải Pháp Khắc Phục Triệt Để 4 Lớp (`CLEAN_TTS_SCRIPT_GATE`)
+- **Lớp 1 — Cập nhật Quy tắc Cứng trong Skill của Agent Kiểm Tra Kịch Bản & Agent Viết Kịch Bản**:
+  - Cập nhật [`adas_skills/05_script_auditor_100/SKILL.md`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/05_script_auditor_100/SKILL.md#L18-L35) (bổ sung mục **`0.1. QUY TẮC TỐI THƯỢNG (CLEAN_TTS_SCRIPT_GATE — CHỐNG RÒ RỈ [LOCKED_TITLE] & METADATA)`**: bắt buộc quét, ghi nhận vào `AUDIT_SUMMARY_NOTES` và xóa sạch 100% mọi dòng `LOCKED_TITLE:`, `SELECTED_TITLE:`, `PART A/B/C`, `CONTINUITY:`, `ENDING:` kể cả khi bị tách thành nhiều dòng).
+  - Cập nhật [`adas_skills/04_longform_script_writer/SKILL.md`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/04_longform_script_writer/SKILL.md#L156-L166) và Prompt `_build_step4_part_initial_prompt` / `_build_step5_audit_prompt` trong [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2190-L2318).
+- **Lớp 2 — Xây dựng bộ lọc đa dòng `strip_leaked_titles_and_metadata()` trong [`backend/voice_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L177-L295)**:
+  - Phát hiện và xóa chính xác cả dòng đơn lẫn **cụm tiêu đề bị ngắt thành 2–4 dòng liên tiếp** (`LOCKED_TITLE: 「...` kéo dài tới dấu đóng ngoặc tiêu đề `…」` / `…`), cùng toàn bộ các dòng `SELECTED_TITLE:`, `STEP 4 · BUILD PART`, `PART A — 日本語脚本`, `<CodeBlock>`, `<WritingBlock>`, `CONTINUITY:`, `ENDING:`.
+  - Tích hợp trực tiếp vào `split_japanese_script()` để mọi luồng tạo Voice TTS (VOICEVOX / OmniVoice) và tạo Phụ đề (`.srt`) đều tự động loại bỏ 100% phần rò rỉ.
+- **Lớp 3 — Tự động Ghi nhận (Note) & Làm sạch trong [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L962-L1150) và [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L841-L925)**:
+  - Bổ sung `_sanitize_and_note_script_text()`: Mỗi khi hệ thống đọc, kiểm tra (`get_script_parts_progress`, `has_valid_script_on_disk`), chạy STEP 5 Audit, hoặc bắt đầu tạo Voice / Render Video (`_process_single_video`), nếu phát hiện dòng `[LOCKED_TITLE]` hay Metadata rò rỉ sẽ **tự động ghi chú (`[AUTO-CLEAN NOTE]`) vào `step5_audit_report.txt` + Nhật ký hệ thống** và **xóa sạch ngay trên ổ cứng** (`part_a.txt`, `part_b.txt`, `part_c.txt`, `script_clean.txt`, `renders/{ma_id}_KICH_BAN.txt`).
+  - Trong `_process_single_video()`, kiểm tra thêm file `subtitles.srt` cũ: nếu từng tạo Voice khi kịch bản còn dính `LOCKED_TITLE`, hệ thống tự động ghép lại Voice & Phụ đề sạch.
+- **Lớp 4 — Quét & Làm sạch toàn bộ 240 kịch bản hiện có trên ổ cứng & Đẩy bản cập nhật `V1.0.3` (Build `#106`) lên GitHub**:
+  - Đã quét toàn bộ kho dự án hiện tại, ghi nhận và xóa sạch **1.990 dòng** `[LOCKED_TITLE]` / Metadata rò rỉ trên **636 file** (`part_a/b/c.txt`, `script_clean.txt`, `*_KICH_BAN.txt`) của **167 dự án**.
+  - Kiểm tra xác nhận lần cuối trên toàn bộ **240 file `*_KICH_BAN.txt` và `script_clean.txt`**: **0 dự án còn sót lỗi (`remaining_leaks = 0`)**.
 
 

@@ -11,7 +11,7 @@ from typing import Dict, Any, List, Optional, Callable, Tuple
 
 from .chatgpt_web_client import ChatGPTWebSession
 from .gemini_web_client import GeminiWebSession, check_all_gemini_accounts_status
-from .voice_service import split_japanese_script
+from .voice_service import split_japanese_script, strip_leaked_titles_and_metadata
 from .logger_service import log_info, log_warn, log_error
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -623,12 +623,15 @@ def extract_locked_title_from_step2(step2_text: str, fallback_title: str = "") -
 
 def extract_clean_japanese_narration(raw_text: str) -> str:
     """
-    Lọc bỏ toàn bộ dòng tiêu đề tiếng Anh/Việt, bảng Handoff/Continuity Ledger, số đếm ký tự,
-    chỉ giữ lại 100% văn bản tự sự & lời thoại tiếng Nhật thuần túy để đếm Pure Chars
-    và đưa vào giọng đọc AI OmniVoice.
+    Lọc bỏ toàn bộ dòng tiêu đề tiếng Anh/Việt, [LOCKED_TITLE], [SELECTED_TITLE], bảng Handoff/Continuity Ledger,
+    số đếm ký tự, chỉ giữ lại 100% văn bản tự sự & lời thoại tiếng Nhật thuần túy để đếm Pure Chars
+    và đưa vào giọng đọc AI TTS / Render Video.
     """
     if not raw_text:
         return ""
+
+    # Bước 1: Quét và xóa trọn cụm LOCKED_TITLE / SELECTED_TITLE / STEP 4 / PART A / <CodeBlock> / Metadata
+    pre_cleaned, _ = strip_leaked_titles_and_metadata(raw_text)
 
     stop_markers = [
         "PART_PURE_CHARACTER_COUNT",
@@ -648,7 +651,7 @@ def extract_clean_japanese_narration(raw_text: str) -> str:
     vi_re = re.compile(r"[ăâđêôơưáàảãạéèẻẽẹíìỉĩịóòỏõọúùủũụýỳỷỹỵ]", re.IGNORECASE)
 
     clean_lines: List[str] = []
-    for raw_ln in raw_text.splitlines():
+    for raw_ln in pre_cleaned.splitlines():
         ln = raw_ln.strip()
         if not ln:
             continue
@@ -658,21 +661,23 @@ def extract_clean_japanese_narration(raw_text: str) -> str:
         # Bỏ các dòng tiêu đề markdown hoặc nhãn kỹ thuật
         if ln.startswith(("#", "```", "---", "===")):
             continue
-        if re.match(r"^(?:PART\s*[:：\-]?\s*[ABC]|SCENE\s+[ABC]?\d+|CHAPTER\s+\d+|第\d+章|【.*】)\s*[:：\-]?.*$", ln, re.IGNORECASE) and len(ln) < 45:
+        # Làm sạch dấu ** hoặc ` hoặc thẻ XML trước khi kiểm tra key:value
+        cleaned = re.sub(r"<[^>]+>", "", ln).replace("**", "").replace("`", "").strip()
+        if not cleaned:
+            continue
+        if re.match(r"^(?:[A-Z]{1,6}\d{1,5}\s*[—–\-·:：]+\s*)?(?:STEP\s*[1-7]\b|BUILD\s+PART\s*[ABC]\b|PART\s*[:：\-—–·]?\s*[ABC]\b|SCENE\s+[ABC]?\d+\b|CHAPTER\s+\d+\b|第\d+章|【.*】)\s*[:：\-—–·]?.*$", cleaned, re.IGNORECASE) and len(cleaned) < 90:
             continue
         # Bỏ các dòng có chứa ký tự dấu tiếng Việt (tránh ghi chú tiếng Việt lọt vào kịch bản TTS)
-        if vi_re.search(ln):
+        if vi_re.search(cleaned):
             continue
         # Chỉ giữ dòng có chứa chữ Nhật (Hiragana / Katakana / Kanji) và không phải dòng key:value tiếng Anh
-        has_jp = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", ln))
-        is_meta_kv = bool(re.match(r"^[A-Z0-9_/\-\s]{3,35}[:：]", ln))
+        has_jp = bool(re.search(r"[\u3040-\u30ff\u4e00-\u9faf]", cleaned))
+        is_meta_kv = bool(re.match(r"^[A-Z][A-Z0-9_/\-\s]{1,35}[:：]", cleaned))
         if has_jp and not is_meta_kv:
-            # Làm sạch dấu ** hoặc ` nếu có
-            cleaned = ln.replace("**", "").replace("`", "").strip()
-            if cleaned:
-                clean_lines.append(cleaned)
+            clean_lines.append(cleaned)
 
-    return "\n".join(clean_lines)
+    final_clean, _ = strip_leaked_titles_and_metadata("\n".join(clean_lines))
+    return final_clean
 
 
 def trim_japanese_to_max_pure_chars(text: str, max_pure_chars: int = 16800) -> str:
@@ -954,10 +959,44 @@ class ADASScriptEngine:
             except Exception:
                 pass
 
+    def _sanitize_and_note_script_text(self, ma_id: str, raw_text: str, source_label: str = "") -> Tuple[str, int]:
+        """
+        Quét, ghi nhận (note) và xóa sạch 100% các dòng [LOCKED_TITLE], SELECTED_TITLE,
+        PART A/B/C header, CONTINUITY, ENDING hoặc thẻ XML bị rò rỉ trong kịch bản.
+        Trả về `(cleaned_text, removed_lines_count)`.
+        """
+        if not raw_text:
+            return "", 0
+        cleaned, removed_lines = strip_leaked_titles_and_metadata(raw_text)
+        if removed_lines:
+            lbl = f" ({source_label})" if source_label else ""
+            sample_preview = " | ".join([ln[:55] for ln in removed_lines[:2]])
+            log_info(
+                "SCRIPT",
+                f"🛡️ [Agent Kiểm Tra Kịch Bản] Đã ghi nhận & tự động xóa {len(removed_lines)} dòng [LOCKED_TITLE]/Metadata rò rỉ trong [{ma_id}]{lbl}: {sample_preview}",
+                project_id=ma_id,
+            )
+            try:
+                audit_note_file = self.projects_dir / ma_id / "step5_audit_report.txt"
+                note_block = (
+                    f"\n[AUTO-CLEAN NOTE — {time.strftime('%Y-%m-%d %H:%M:%S')}]{lbl}: "
+                    f"Đã phát hiện và xóa {len(removed_lines)} dòng [LOCKED_TITLE]/Metadata rò rỉ:\n"
+                    + "\n".join([f"  - Removed: {ln}" for ln in removed_lines])
+                    + "\n"
+                )
+                if audit_note_file.exists():
+                    existing_audit = audit_note_file.read_text(encoding="utf-8", errors="ignore")
+                    if removed_lines[0] not in existing_audit:
+                        audit_note_file.write_text(existing_audit + note_block, encoding="utf-8")
+            except Exception:
+                pass
+        return cleaned, len(removed_lines)
+
     def get_script_parts_progress(self, ma_id: str, min_part_chars: int = 9500) -> Dict[str, Any]:
         """
         Kiểm tra chi tiết tiến độ 3 phần (`part_a.txt`, `part_b.txt`, `part_c.txt`) của dự án `ma_id`.
-        Giúp phát hiện chính xác các dự án bị thiếu Part (ví dụ mới xong Part A 15.848 chữ hoặc Part A+B 32.684 chữ).
+        Giúp phát hiện chính xác các dự án bị thiếu Part (ví dụ mới xong Part A 15.848 chữ hoặc Part A+B 32.684 chữ)
+        đồng thời tự động làm sạch [LOCKED_TITLE]/Metadata nếu bị rò rỉ trong các file Part.
         """
         proj_dir = self.projects_dir / ma_id
         done_parts: List[str] = []
@@ -971,7 +1010,10 @@ class ADASScriptEngine:
             txt = ""
             if p_file.exists():
                 try:
-                    txt = p_file.read_text(encoding="utf-8").strip()
+                    raw_p = p_file.read_text(encoding="utf-8").strip()
+                    txt, rem_cnt = self._sanitize_and_note_script_text(ma_id, raw_p, source_label=f"part_{p_let.lower()}.txt")
+                    if rem_cnt > 0 and txt:
+                        p_file.write_text(txt, encoding="utf-8")
                     cnt = pure_char_count(txt)
                 except Exception:
                     cnt = 0
@@ -997,6 +1039,7 @@ class ADASScriptEngine:
         Kiểm tra nghiêm ngặt xem dự án `ma_id` đã có kịch bản tiếng Nhật ĐỦ 3 PART (A + B + C) và ĐỦ ĐỘ DÀI CHUẨN hay chưa:
         - Nếu dự án có tạo các file `part_a.txt`, `part_b.txt`, `part_c.txt`: BẮT BUỘC cả 3 Part đều phải đạt `>= min_part_chars` (9.500 chữ/part)
           và tổng cộng `>= min_pure_chars` (35.000 chữ thuần).
+        - Tự động quét và xóa sạch mọi dòng `[LOCKED_TITLE]` / Metadata rò rỉ trong cả `script_clean.txt` và `renders/{ma_id}_KICH_BAN.txt`.
         - Nếu trước đó `script_clean.txt` bị ghi dở dang khi mới xong 1 Part (~15.800 chữ) hoặc 2 Part (~32.600 chữ),
           hệ thống tự động xóa file `script_clean.txt` bị thiếu đó (giữ nguyên các `part_a.txt` / `part_b.txt` đã viết xong)
           và trả về `False` để viết tiếp các Part còn thiếu!
@@ -1007,19 +1050,35 @@ class ADASScriptEngine:
 
         pa, pb, pc = proj_dir / "part_a.txt", proj_dir / "part_b.txt", proj_dir / "part_c.txt"
         script_file = proj_dir / "script_clean.txt"
+        render_script_file = proj_dir / "renders" / f"{ma_id}_KICH_BAN.txt"
         has_any_part_file = pa.exists() or pb.exists() or pc.exists()
 
         if has_any_part_file:
             prog = self.get_script_parts_progress(ma_id, min_part_chars=min_part_chars)
             if prog["all_three_valid"]:
                 combined = "\n\n".join([prog["part_texts"]["A"], prog["part_texts"]["B"], prog["part_texts"]["C"]]).strip()
+                combined, _ = self._sanitize_and_note_script_text(ma_id, combined, source_label="combined_parts")
                 cnt = pure_char_count(combined)
                 if cnt >= min_pure_chars:
-                    if not script_file.exists() or pure_char_count(script_file.read_text(encoding="utf-8")) != cnt:
-                        try:
+                    try:
+                        need_sync_sc = not script_file.exists()
+                        if not need_sync_sc:
+                            cur_sc_raw = script_file.read_text(encoding="utf-8", errors="ignore")
+                            _, sc_rem = strip_leaked_titles_and_metadata(cur_sc_raw)
+                            if sc_rem or pure_char_count(cur_sc_raw) != cnt:
+                                need_sync_sc = True
+                        if need_sync_sc:
                             script_file.write_text(combined, encoding="utf-8")
-                        except Exception:
-                            pass
+                    except Exception:
+                        pass
+                    try:
+                        if render_script_file.exists():
+                            cur_ren_raw = render_script_file.read_text(encoding="utf-8", errors="ignore")
+                            _, ren_rem = strip_leaked_titles_and_metadata(cur_ren_raw)
+                            if ren_rem or pure_char_count(cur_ren_raw) != cnt:
+                                render_script_file.write_text(combined, encoding="utf-8")
+                    except Exception:
+                        pass
                     return True, combined, cnt
 
             # Nếu có file part nhưng chưa đủ cả 3 Part hợp lệ (VD: P16 mới có Part A, P17 mới có Part A+B):
@@ -1044,18 +1103,29 @@ class ADASScriptEngine:
         alt_script_candidates = [
             script_file,
             proj_dir / f"{ma_id}_KICH_BAN.txt",
-            proj_dir / "renders" / f"{ma_id}_KICH_BAN.txt",
+            render_script_file,
             proj_dir / f"{ma_id}.txt",
         ]
         for cand_f in alt_script_candidates:
             if cand_f.exists():
                 try:
-                    txt = cand_f.read_text(encoding="utf-8", errors="ignore").strip()
+                    raw_txt = cand_f.read_text(encoding="utf-8", errors="ignore").strip()
+                    txt, rem_cnt = self._sanitize_and_note_script_text(ma_id, raw_txt, source_label=cand_f.name)
                     cnt = pure_char_count(txt)
                     if cnt >= min_pure_chars:
-                        if cand_f != script_file:
+                        if rem_cnt > 0:
+                            try:
+                                cand_f.write_text(txt, encoding="utf-8")
+                            except Exception:
+                                pass
+                        if cand_f != script_file or rem_cnt > 0:
                             try:
                                 script_file.write_text(txt, encoding="utf-8")
+                            except Exception:
+                                pass
+                        if render_script_file.exists() and (cand_f != render_script_file or rem_cnt > 0):
+                            try:
+                                render_script_file.write_text(txt, encoding="utf-8")
                             except Exception:
                                 pass
                         return True, txt, cnt
@@ -1072,9 +1142,15 @@ class ADASScriptEngine:
                 if any(k in up_name for k in ignore_kw) or up_name in ("PART_A.TXT", "PART_B.TXT", "PART_C.TXT"):
                     continue
                 try:
-                    txt = tf.read_text(encoding="utf-8", errors="ignore").strip()
+                    raw_txt = tf.read_text(encoding="utf-8", errors="ignore").strip()
+                    txt, rem_cnt = self._sanitize_and_note_script_text(ma_id, raw_txt, source_label=tf.name)
                     cnt = pure_char_count(txt)
                     if cnt >= min_pure_chars:
+                        if rem_cnt > 0:
+                            try:
+                                tf.write_text(txt, encoding="utf-8")
+                            except Exception:
+                                pass
                         try:
                             script_file.write_text(txt, encoding="utf-8")
                         except Exception:
@@ -2118,9 +2194,10 @@ LOCKED_TITLE: 「{locked_title}」{ctx_block}{prev_block}{skill_block}
 
 QUY TẮC BẮT BUỘC (04_longform_script_writer):
 1. CHỈ VIẾT VĂN BẢN TỰ SỰ VÀ LỜI THOẠI TIẾNG NHẬT THUẦN TÚY (Japanese Narration & Dialogue) của PART {part_letter} theo đúng `PART_{part_letter}_SCENE_PLAN` đã duyệt ở STEP 3.
-2. MỤC TIÊU ĐỘ DÀI CỨNG CỦA PART {part_letter}: {min_c:,}–{max_c:,} ký tự thuần (Đích an toàn: ~{target_c:,} ký tự thuần Unicode L+N).
-3. Triển khai chi tiết, sâu sắc từng cảnh trong PART_{part_letter}_SCENE_PLAN bằng diễn biến hành động cụ thể, đối thoại giàu cảm xúc đời thực Nhật Bản, chi tiết vật chứng và tâm lý nhân vật. TUYỆT ĐỐI KHÔNG tóm tắt, không nhảy cóc cảnh, không chèn tiêu đề Scene hay ghi chú đạo diễn tiếng Anh/Việt vào giữa văn bản truyện.
-4. ⚠️ QUY TẮC TỐC ĐỘ & HIỂN THỊ: TUYỆT ĐỐI KHÔNG bật công cụ Python / Code Interpreter, KHÔNG đóng gói thành file tải về (.txt/.md/.docx). BẮT BUỘC in trực tiếp toàn bộ 100% văn bản kịch bản tiếng Nhật ra khung chat ngay lập tức (hệ thống bên ngoài sẽ tự đếm ký tự thuần). Ở cuối cùng mới ghi khối `PART_{part_letter}_HANDOFF_LEDGER`."""
+2. ⚠️ CẤM TUYỆT ĐỐI RÒ RỈ TIÊU ĐỀ KHÓA & METADATA: TUYỆT ĐỐI KHÔNG in lại dòng `LOCKED_TITLE: ...`, `SELECTED_TITLE: ...`, `PART {part_letter} — 日本語脚本`, `{ma_id} — STEP 4`, `CONTINUITY:`, `ENDING:` vào đầu hoặc giữa văn bản truyện (để tránh bị đọc nhầm khi tạo Voice TTS và Phụ đề Video). Dòng đầu tiên phải vào thẳng câu chuyện tiếng Nhật!
+3. MỤC TIÊU ĐỘ DÀI CỨNG CỦA PART {part_letter}: {min_c:,}–{max_c:,} ký tự thuần (Đích an toàn: ~{target_c:,} ký tự thuần Unicode L+N).
+4. Triển khai chi tiết, sâu sắc từng cảnh trong PART_{part_letter}_SCENE_PLAN bằng diễn biến hành động cụ thể, đối thoại giàu cảm xúc đời thực Nhật Bản, chi tiết vật chứng và tâm lý nhân vật. TUYỆT ĐỐI KHÔNG tóm tắt, không nhảy cóc cảnh, không chèn tiêu đề Scene hay ghi chú đạo diễn tiếng Anh/Việt vào giữa văn bản truyện.
+5. ⚠️ QUY TẮC TỐC ĐỘ & HIỂN THỊ: TUYỆT ĐỐI KHÔNG bật công cụ Python / Code Interpreter, KHÔNG đóng gói thành file tải về (.txt/.md/.docx). BẮT BUỘC in trực tiếp toàn bộ 100% văn bản kịch bản tiếng Nhật ra khung chat ngay lập tức (hệ thống bên ngoài sẽ tự đếm ký tự thuần). Ở cuối cùng mới ghi khối `PART_{part_letter}_HANDOFF_LEDGER`."""
 
     def _build_step4_part_continue_prompt(
         self,
@@ -2185,9 +2262,10 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
 ⚠️ YÊU CẦU KIỂM TRA ĐỘC LẬP & VIẾT LẠI (TRÊN ĐOẠN CHAT MỚI):
 1. Bạn là Giám khảo Độc lập kiểm tra kịch bản từ đoạn chat khác chuyển sang. Hãy đọc kỹ toàn bộ PART A, PART B, PART C ở trên và chấm điểm Rubric 100đ (logic nhân-quả, vật chứng, cảm xúc gia đình Nhật Bản, văn phong tự nhiên, không lặp ý).
-2. NẾU PHÁT HIỆN BẤT KỲ PHẦN NÀO (PART A, PART B hoặc PART C) CÓ LỖI LOGIC, LẶP CÂU HOẶC ĐOẠN VĂN CHƯA ĐẠT CHUẨN (< 85 điểm):
-   - Hãy VIẾT LẠI / SỬA LẠI trực tiếp phần đó bằng tiếng Nhật thuần túy đặt trong cặp thẻ `<REWRITE_PART_A>...</REWRITE_PART_A>` (hoặc `<REWRITE_PART_B>...</REWRITE_PART_B>`, `<REWRITE_PART_C>...</REWRITE_PART_C>`), giữ nguyên độ dài chuẩn (~14.000–16.000 ký tự thuần/phần) để hệ thống tự động cập nhật bản mới!
-3. NẾU CẢ 3 PHẦN ĐỀU ĐẠT CHUẨN TỐT (>= 85 điểm, mạch truyện cuốn hút, nhất quán):
+2. KIỂM TRA & XÓA SẠCH RÒ RỈ `[LOCKED_TITLE]` / METADATA: Nếu phát hiện trong văn bản kịch bản có dính dòng `LOCKED_TITLE:`, `SELECTED_TITLE:`, `PART A/B/C — 日本語脚本`, `STEP 4`, `<CodeBlock>`, `<WritingBlock>`, `CONTINUITY:`, `ENDING:`, hãy ghi chú lại và loại bỏ hoàn toàn khỏi phần văn bản truyện để tránh tuyệt đối việc tạo Voice TTS và Render Video đọc nhầm các dòng này.
+3. NẾU PHÁT HIỆN BẤT KỲ PHẦN NÀO (PART A, PART B hoặc PART C) CÓ LỖI LOGIC, LẶP CÂU HOẶC ĐOẠN VĂN CHƯA ĐẠT CHUẨN (< 85 điểm):
+   - Hãy VIẾT LẠI / SỬA LẠI trực tiếp phần đó bằng tiếng Nhật thuần túy đặt trong cặp thẻ `<REWRITE_PART_A>...</REWRITE_PART_A>` (hoặc `<REWRITE_PART_B>...</REWRITE_PART_B>`, `<REWRITE_PART_C>...</REWRITE_PART_C>`), giữ nguyên độ dài chuẩn (~14.000–16.000 ký tự thuần/phần), tuyệt đối không chèn `LOCKED_TITLE:` vào trong thẻ `<REWRITE_PART_...>`, để hệ thống tự động cập nhật bản mới!
+4. NẾU CẢ 3 PHẦN ĐỀU ĐẠT CHUẨN TỐT (>= 85 điểm, mạch truyện cuốn hút, nhất quán):
    - Không cần mở thẻ `<REWRITE_PART_...>`, chỉ cần xuất bảng chấm điểm chi tiết, `PART_STATUS_TABLE` (`PART_A: PASS_LOCKED`, `PART_B: PASS_LOCKED`, `PART_C: PASS_LOCKED`), `LOCK_MANIFEST` và chốt `AUDIT_RESULT: PASS_PUBLISH_READY`! TUYỆT ĐỐI KHÔNG dùng Python/Code Interpreter."""
 
     def _build_step6_seo_prompt(self, ma_id: str, locked_title: str, total_count: int, step2_context: str = "", script_excerpt: str = "") -> str:
@@ -2329,9 +2407,9 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             maxsplit=1,
             flags=re.IGNORECASE,
         )[0]
-        # Cắt bỏ toàn bộ phần liệt kê L1..L6 thô bên trong prompt gốc để hệ thống luôn gắn đúng bộ 6 dòng ngắn chuẩn (six_lines_str)
+        # Cắt bỏ toàn bộ phần liệt kê L1..L6 / TEXT DESIGN / LINE 1 thô bên trong prompt gốc để hệ thống luôn gắn đúng 1 bộ 6 dòng ngắn chuẩn duy nhất (six_lines_str)
         txt = re.split(
-            r"\n\s*(?:EXACTLY\s+SIX\s+(?:VISIBLE\s+)?(?:PHYSICAL\s+)?TEXT\s+LINES|RENDER\s+THESE\s+EXACTLY\s+SIX\s+TEXT\s+ROWS|\bL1\s*(?:\[|WHITE|[:：]))",
+            r"\n\s*(?:TEXT\s+DESIGN|TEXT\s+POSITIONING|EXACTLY\s+SIX\s+(?:VISIBLE\s+)?(?:PHYSICAL\s+)?TEXT\s+LINES|RENDER\s+THESE\s+EXACTLY\s+SIX\s+TEXT\s+ROWS|\bL(?:INE|AYER)?\s*1\s*(?:\[|WHITE|YELLOW|—|-|[:：]))",
             txt,
             maxsplit=1,
             flags=re.IGNORECASE,
@@ -2356,6 +2434,11 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             r"\breplace\b",
             r"\bedit\b",
             r"\binstead\b",
+            r"\breference\b",
+            r"\boriginal\s+image\b",
+            r"\btarget\s+image\b",
+            r"\bexisting\s+image\b",
+            r"\bvariation\b",
             r"competitor",
             r"framed\s+photo",
             r"family\s+photograph",
@@ -2364,6 +2447,15 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         for ln in txt.splitlines():
             if any(re.search(fp, ln, flags=re.IGNORECASE) for fp in forbidden_line_pats):
                 continue
+            # Thay các động từ dễ bị gpt-image-1 hiểu nhầm là chỉnh sửa ảnh có sẵn (Overlay / Preserve / Keep)
+            ln = re.sub(r"\bOverlay\b", "Include", ln)
+            ln = re.sub(r"\boverlay\b", "include", ln)
+            ln = re.sub(r"\bPreserve\b", "Show", ln)
+            ln = re.sub(r"\bpreserve\b", "show", ln)
+            ln = re.sub(r"\bpreserving\b", "showing", ln, flags=re.IGNORECASE)
+            ln = re.sub(r"\bKeep\s+the\b", "Make the", ln)
+            ln = re.sub(r"\bkeep\s+the\b", "make the", ln)
+            ln = re.sub(r"\bremain\b", "appear", ln, flags=re.IGNORECASE)
             cleaned_lines.append(ln)
         return "\n".join(cleaned_lines).strip()
 
@@ -2423,17 +2515,17 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         final_prompts: List[str] = []
         for idx, p in enumerate(prompts[:3], start=1):
             enforced = (
-                "Create a new photorealistic horizontal landscape illustration (1536x1024) composed for a 16:9 YouTube thumbnail frame "
-                "(keep ~8% dark ceiling/table breathing margin at the very top and bottom edges so all text and faces stay inside the central 16:9 widescreen band):\n\n"
+                "Generate a new standalone photorealistic horizontal landscape image from text description only (size 1536x1024) composed for a 16:9 YouTube thumbnail frame "
+                "(with ~8% dark ceiling/table breathing margin at the very top and bottom edges so all text and faces stay inside the central 16:9 widescreen band):\n\n"
                 f"{p}\n\n"
                 + (
-                    f"Render EXACTLY 6 physical horizontal rows of compact, ultra-bold Japanese Gothic text on the left/center (thick black outline, strong drop shadow, occupying ~58-64% width). "
-                    f"The text rows may slightly overlap the character's shoulder or outer face edge so every phrase stays on its own single horizontal row without wrapping:\n"
+                    f"Include EXACTLY 6 physical horizontal rows of compact, ultra-bold Japanese Gothic text on the left/center (thick black outline, strong drop shadow, occupying ~58-64% width). "
+                    f"The text rows may slightly touch the character's shoulder or outer face edge so every phrase stays on its own single horizontal row without wrapping:\n"
                     f"{six_lines_str}\n\n"
                     if six_lines_str
                     else ""
                 )
-                + "Strict rule: Render ONLY the exact 6 short Japanese text rows listed above (do not print 'Row 1..6' labels), strictly 6 physical rows from top to bottom, with both Cyan and Vivid Pink phrases on Row 6 sharing the same single bottom horizontal line."
+                + "Strict rule: Show ONLY the exact 6 short Japanese text rows listed above (do not print 'Row 1..6' labels), strictly 6 physical rows from top to bottom, with both Cyan and Vivid Pink phrases on Row 6 sharing the same single bottom horizontal line."
             )
             final_prompts.append(enforced)
         return final_prompts
@@ -2567,13 +2659,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
                 session.start_fresh_chat(f"STEP7_THUMB_1_TRY_{attempt}")
 
-                prompt_to_send = base_prompt
+                # Lượt 1 dùng prompt chi tiết từ STEP 6; nếu Lượt 1 bị từ chối/chưa đạt thì Lượt 2-3 chuyển sang prompt tinh gọn (variant_angles) để tránh 100% lỗi nhầm chế độ chỉnh sửa ảnh
+                prompt_to_send = prompts_list[min(attempt - 1, len(prompts_list) - 1)]
                 if attempt > 1:
                     prompt_to_send += (
-                        f"\n\nADDITIONAL TYPOGRAPHY LOCK (Variation #{attempt}):\n"
-                        f"- Create a brand-new standalone illustration from scratch (size 1536x1024).\n"
-                        f"- Keep font size compact and allow text rows to slightly overlap the character's shoulder/outer face edge on the right "
-                        f"so that the Japanese text forms EXACTLY 6 physical horizontal rows from top to bottom (never 5 rows, never 7 or 8 rows)."
+                        "\n\nTYPOGRAPHY LAYOUT REQUIREMENT:\n"
+                        "- Draw a completely new standalone illustration from scratch (size 1536x1024).\n"
+                        "- Use compact font size so the Japanese text forms EXACTLY 6 physical horizontal rows from top to bottom (never 5 rows, never 7 or 8 rows)."
                     )
 
                 img_res = session.generate_image_and_harvest_base64(
@@ -3410,6 +3502,24 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 part_c_file.write_text(part_c_clean, encoding="utf-8")
                 count_c = pure_char_count(part_c_clean)
 
+            # Làm sạch tự động [LOCKED_TITLE] & Metadata rò rỉ trong cả 3 Part trước khi ghép kịch bản
+            part_a_clean, rem_a = self._sanitize_and_note_script_text(ma_id, part_a_clean, source_label="PART_A")
+            if rem_a > 0:
+                part_a_file.write_text(part_a_clean, encoding="utf-8")
+                count_a = pure_char_count(part_a_clean)
+            part_b_clean, rem_b = self._sanitize_and_note_script_text(ma_id, part_b_clean, source_label="PART_B")
+            if rem_b > 0:
+                part_b_file.write_text(part_b_clean, encoding="utf-8")
+                count_b = pure_char_count(part_b_clean)
+            part_c_clean, rem_c = self._sanitize_and_note_script_text(ma_id, part_c_clean, source_label="PART_C")
+            if rem_c > 0:
+                part_c_file.write_text(part_c_clean, encoding="utf-8")
+                count_c = pure_char_count(part_c_clean)
+            if (rem_a + rem_b + rem_c) > 0:
+                self._emit(
+                    message=f"[{ma_id}] 🛡️ [Agent Kiểm Tra Kịch Bản] Đã ghi nhận & tự động xóa {rem_a + rem_b + rem_c} dòng [LOCKED_TITLE]/Metadata bị rò rỉ khỏi Part A/B/C!"
+                )
+
             # CHỐT CHẶN NGHIÊM NGẶT: Cả 3 Part A, B, C phải đủ chuẩn mới được ghép thành script_clean.txt
             if count_a < accept_a or count_b < accept_bc or count_c < accept_bc:
                 raise RuntimeError(
@@ -3418,6 +3528,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 )
 
             full_clean_script = "\n\n".join([part_a_clean, part_b_clean, part_c_clean]).strip()
+            full_clean_script, rem_full = self._sanitize_and_note_script_text(ma_id, full_clean_script, source_label="FULL_SCRIPT")
             total_pure = pure_char_count(full_clean_script)
             if total_pure < 35000:
                 raise RuntimeError(
@@ -3486,6 +3597,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     m_rw = re.search(rf"<REWRITE_PART_{p_let}>([\s\S]*?)</REWRITE_PART_{p_let}>", step5_out, flags=re.IGNORECASE)
                     if m_rw:
                         rw_clean = extract_clean_japanese_narration(m_rw.group(1))
+                        rw_clean, _ = self._sanitize_and_note_script_text(ma_id, rw_clean, source_label=f"STEP5_REWRITE_PART_{p_let}")
                         rw_cnt = pure_char_count(rw_clean)
                         if rw_cnt >= int(min_req * 0.75):
                             p_file.write_text(rw_clean, encoding="utf-8")
@@ -3500,11 +3612,17 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                                 message=f"[{ma_id}] ✍️ Đoạn chat Kiểm tra (#4) đã viết lại & nâng cấp PART {p_let} ({rw_cnt:,} chữ thuần)!"
                             )
 
-                if rewritten_any:
-                    full_clean_script = "\n\n".join([part_a_clean, part_b_clean, part_c_clean]).strip()
+                # Quét kiểm định CLEAN_TTS_SCRIPT_GATE lần cuối sau STEP 5
+                full_clean_script = "\n\n".join([part_a_clean, part_b_clean, part_c_clean]).strip()
+                full_clean_script, post_s5_rem = self._sanitize_and_note_script_text(ma_id, full_clean_script, source_label="STEP5_FINAL_GATE")
+                if rewritten_any or post_s5_rem > 0:
                     total_pure = pure_char_count(full_clean_script)
                     (proj_dir / "script_clean.txt").write_text(full_clean_script, encoding="utf-8")
                     self._update_idea_record(ma_id, pure_char_count=total_pure)
+                    if post_s5_rem > 0:
+                        self._emit(
+                            message=f"[{ma_id}] 🛡️ [STEP 5 — Agent Kiểm Tra Kịch Bản] Đã ghi nhận & xóa sạch {post_s5_rem} dòng [LOCKED_TITLE]/Metadata còn sót để bảo vệ Voice & Video!"
+                        )
             except Exception as e_s5:
                 if self.should_stop:
                     raise

@@ -174,12 +174,122 @@ def split_long_subtitle_segments(
     return results
 
 
+def strip_leaked_titles_and_metadata(raw_text: str):
+    """
+    Quét, ghi nhận và xóa sạch 100% các dòng [LOCKED_TITLE], [SELECTED_TITLE], [WINNING_TITLE],
+    bao gồm cả phần câu tiêu đề bị tách thành 2–4 dòng kế tiếp, cũng như các dòng nhãn kỹ thuật
+    (STEP 4 · BUILD PART A, PART A — 日本語脚本, <CodeBlock>, <WritingBlock>, CONTINUITY:, ENDING:...)
+    để tuyệt đối không bao giờ bị lọt vào quá trình tạo Voice (TTS) hay Phụ đề Video (Render MP4).
+    """
+    import re
+    if not raw_text:
+        return "", []
+
+    cleaned_raw = re.sub(
+        r"</?(?:CodeBlock|WritingBlock|title|grid|grid-item|caption)[^>]*>",
+        "",
+        raw_text,
+        flags=re.IGNORECASE,
+    )
+    lines = cleaned_raw.splitlines()
+    kept = []
+    removed = []
+    n = len(lines)
+    i = 0
+
+    title_key_re = re.compile(
+        r"(?:LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE|TITLE_LOCKED|LOCKED_TITLE_PROMISE|TITLE_FACTS)\s*[:：\-—]?",
+        re.IGNORECASE,
+    )
+    step_part_re = re.compile(
+        r"^(?:[A-Z]{1,6}\d{1,5}\s*[—–\-·:：]+\s*)?(?:STEP\s*[1-7]\b|BUILD\s+PART\s*[ABC]\b|PART\s*[:：\-—–·]?\s*[ABC]\b|SCENE\s+[ABC]?\d+\b|CHAPTER\s+\d+\b)",
+        re.IGNORECASE,
+    )
+    stop_block_re = re.compile(
+        r"^(?:PART_PURE_CHARACTER_COUNT|PART_LENGTH_GATE|CONTINUITY_LEDGER|CONTINUITY\s+LEDGER|PART_HANDOFF_LEDGER|HANDOFF_LEDGER|HANDOFF\s+LEDGER|PART_[ABC]_HANDOFF|NEXT_ACTION|READY_FOR_AUDIT|PATCH_CHANGELOG)\b",
+        re.IGNORECASE,
+    )
+    meta_kv_re = re.compile(r"^[A-Z][A-Z0-9_/\-\s]{1,35}[:：]")
+    ellipsis_endings = ("…", "…」", "…」」", "…』", "…。", "…。」", "…！」", "…？」")
+
+    while i < n:
+        raw_ln = lines[i]
+        s = raw_ln.strip()
+        if not s:
+            kept.append(raw_ln)
+            i += 1
+            continue
+
+        s_clean = re.sub(r"^[#*>\-\s`•]+", "", s).replace("**", "").replace("`", "").strip()
+        if not s_clean or s_clean.startswith(("```", "---", "===")):
+            removed.append((i + 1, s))
+            i += 1
+            continue
+
+        if stop_block_re.match(s_clean):
+            for k in range(i, n):
+                if lines[k].strip():
+                    removed.append((k + 1, lines[k].strip()))
+            break
+
+        # 1. Phát hiện và xóa trọn cụm LOCKED_TITLE / SELECTED_TITLE (kể cả khi tiêu đề bị tách thành 2-4 dòng)
+        if title_key_re.search(s_clean):
+            body0 = re.sub(
+                r"^.*?(?:LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE|TITLE_LOCKED|LOCKED_TITLE_PROMISE|TITLE_FACTS)\s*[:：\-—]*\s*",
+                "",
+                s_clean,
+                flags=re.IGNORECASE,
+            ).strip()
+            end_i = i + 1
+            open_q = body0.count("「")
+            close_q = body0.count("」")
+            if not (body0.endswith(ellipsis_endings) and open_q <= close_q + 1):
+                acc = body0
+                for k in range(i + 1, min(n, i + 5)):
+                    cand = lines[k].strip()
+                    if not cand:
+                        break
+                    acc += cand
+                    if cand.endswith(ellipsis_endings) and len(acc) <= 185:
+                        end_i = k + 1
+                        break
+                    if open_q > close_q and acc.count("「") <= acc.count("」") and len(acc) <= 185:
+                        end_i = k + 1
+                        break
+            for k in range(i, end_i):
+                removed.append((k + 1, lines[k].strip()))
+            i = end_i
+            continue
+
+        # 2. Phát hiện và xóa các dòng tiêu đề STEP / PART / 日本語脚本
+        if (step_part_re.match(s_clean) and len(s_clean) < 90) or (
+            re.search(r"(?:日本語脚本|日本語ナレーション本文|HANDOFF_LEDGER|PURE_CHARACTER_COUNT)", s_clean, re.IGNORECASE)
+            and len(s_clean) < 90
+        ):
+            removed.append((i + 1, s))
+            i += 1
+            continue
+
+        # 3. Phát hiện và xóa các dòng Metadata tiếng Anh (CONTINUITY:, ENDING:, ID:, STATUS:...)
+        if meta_kv_re.match(s_clean):
+            removed.append((i + 1, s))
+            i += 1
+            continue
+
+        kept.append(s_clean)
+        i += 1
+
+    out_text = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    return out_text, removed
+
+
 def split_japanese_script(raw_text: str) -> List[str]:
-    """Tách kịch bản thành các câu thoại chuẩn cảm xúc, giữ nguyên dấu đóng ngoặc kép."""
+    """Tách kịch bản thành các câu thoại chuẩn cảm xúc, giữ nguyên dấu đóng ngoặc kép (tự động lọc bỏ LOCKED_TITLE & Metadata rò rỉ)."""
+    cleaned_script, _ = strip_leaked_titles_and_metadata(raw_text)
     closing_chars = set("」』）)】］\"'”’")
     punct_only_chars = set("。！？、…・　 \t\r\n「『（(【［」』）)】］\"'”’")
 
-    lines = raw_text.strip().split("\n")
+    lines = cleaned_script.strip().split("\n")
     sentences = []
     for line in lines:
         line = line.strip()

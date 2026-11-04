@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 105,
-  "released_at": "2026-11-04 09:57:00",
+  "build_number": 106,
+  "released_at": "2026-11-04 17:58:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Khóa cứng Chế độ 70% chạy đúng tối đa 3 video song song (kể cả khi đang chạy 5 video bấm sang 70% sẽ tự động hạ ngay về 3 video). 2. Render nối tiếp từ đoạn dở. 3. Vá lỗi Hot-Reload V1.0.3."
+  "changelog": "1. Nâng cấp Agent Kiểm Tra Kịch Bản (CLEAN_TTS_SCRIPT_GATE): Tự động phát hiện, ghi nhận (note) và xóa sạch 100% các dòng [LOCKED_TITLE], SELECTED_TITLE, PART A/B/C header, CONTINUITY, ENDING (kể cả tiêu đề bị ngắt thành 2-4 dòng) trong kịch bản trước khi tạo Voice & Render Video. 2. Sửa lỗi ChatGPT từ chối vẽ Thumbnail ở STEP 7. 3. Khóa cứng Chế độ 70% tối đa 3 video song song."
 }

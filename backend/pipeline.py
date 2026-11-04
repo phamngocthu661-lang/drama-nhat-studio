@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional, Callable, List
 
 from .stock_manager import StockManager
-from .voice_service import VoiceStudioService, split_japanese_script
+from .voice_service import VoiceStudioService, split_japanese_script, strip_leaked_titles_and_metadata
 from .voicevox_service import (
     VoicevoxStandaloneService,
     load_voice_config,
@@ -838,6 +838,32 @@ class ProductionPipeline:
                             progress_map[proj_name] = 100.0
                         return
 
+                    # Quét và xóa tự động 100% các dòng [LOCKED_TITLE] / Metadata bị rò rỉ trước khi tạo Voice & Render Video
+                    cleaned_script_text, leaked_lines = strip_leaked_titles_and_metadata(script_text)
+                    if leaked_lines:
+                        script_text = cleaned_script_text
+                        sample_leak = " | ".join([ln[:55] for ln in leaked_lines[:2]])
+                        log_warn(
+                            f"🛡️ [Agent Kiểm Tra Kịch Bản] Đã phát hiện & xóa tự động {len(leaked_lines)} dòng [LOCKED_TITLE]/Metadata bị rò rỉ trong '{proj_name}' trước khi tạo Voice/Video: {sample_leak}",
+                            category="RENDER",
+                            project_id=proj_name,
+                        )
+                        try:
+                            for clean_target in (
+                                proj_dir / "script_clean.txt",
+                                proj_dir / "renders" / f"{proj_name}_KICH_BAN.txt",
+                                proj_dir / "part_a.txt",
+                                proj_dir / "part_b.txt",
+                                proj_dir / "part_c.txt",
+                            ):
+                                if clean_target.exists():
+                                    ct_raw = clean_target.read_text(encoding="utf-8", errors="ignore")
+                                    ct_clean, ct_rem = strip_leaked_titles_and_metadata(ct_raw)
+                                    if ct_rem and ct_clean:
+                                        clean_target.write_text(ct_clean, encoding="utf-8")
+                        except Exception:
+                            pass
+
                     # Luôn đọc cấu hình Voice mới nhất (ưu tiên cấu hình đi kèm job hoặc vừa chọn trên UI)
                     v_cfg = load_voice_config()
                     if isinstance(job.get("voice_config"), dict) and job["voice_config"]:
@@ -879,7 +905,22 @@ class ProductionPipeline:
                         except Exception:
                             saved_sig = ""
 
-                    # Chỉ tái sử dụng master_voice.wav nếu CÙNG CHỮ KÝ GIỌNG (hoặc chưa có file chữ ký) VÀ đủ thời lượng tương ứng độ dài kịch bản!
+                    # Kiểm tra xem subtitles.srt cũ có bị dính LOCKED_TITLE / SELECTED_TITLE không
+                    srt_has_leaked_meta = False
+                    if existing_srt.exists():
+                        try:
+                            srt_txt_check = existing_srt.read_text(encoding="utf-8", errors="ignore")
+                            if "LOCKED_TITLE" in srt_txt_check or "SELECTED_TITLE" in srt_txt_check or "日本語脚本" in srt_txt_check:
+                                srt_has_leaked_meta = True
+                                log_warn(
+                                    f"🛡️ [{proj_name}] Phát hiện phụ đề/voice cũ có chứa [LOCKED_TITLE]/Metadata -> Tự động ghép lại Voice & Phụ đề sạch!",
+                                    category="VOICE",
+                                    project_id=proj_name,
+                                )
+                        except Exception:
+                            pass
+
+                    # Chỉ tái sử dụng master_voice.wav nếu CÙNG CHỮ KÝ GIỌNG (hoặc chưa có file chữ ký), KHÔNG dính LOCKED_TITLE VÀ đủ thời lượng tương ứng độ dài kịch bản!
                     reuse_wav_dur = 0.0
                     min_expected_wav_dur = max(120.0, float(len(script_text)) * 0.08) if len(script_text) >= 5000 else 15.0
                     if (
@@ -887,6 +928,8 @@ class ProductionPipeline:
                         and existing_master_wav.stat().st_size > 500_000
                         and existing_srt.exists()
                         and existing_srt.stat().st_size > 200
+                        and not srt_has_leaked_meta
+                        and not leaked_lines
                         and (not saved_sig or saved_sig == current_sig)
                         and not job.get("force_regenerate_voice")
                     ):

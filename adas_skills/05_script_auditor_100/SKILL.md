@@ -15,13 +15,20 @@ Mục tiêu: **đánh giá, khóa phần đã tốt, chỉ định chính xác p
 - `references/hard_length_contract.md`
 - `references/three_part_contract.md`
 
-# 1. INPUT GATE — KHÔNG NHẬN DRAFT THIẾU LENGTH
+# 1. INPUT GATE — KHÔNG NHẬN DRAFT THIẾU LENGTH & KIỂM TRA VỆ SINH KỊCH BẢN (ZERO METADATA LEAK)
 Baseline audit chỉ chạy khi STEP 4 đã cung cấp:
 - PART A count PASS;
 - PART B count PASS;
 - PART C count PASS;
 - TOTAL 40,001–50,000;
 - `READY_FOR_AUDIT: YES`.
+
+### ⚠️ QUY TẮC BẮT BUỘC VỀ VỆ SINH VĂN BẢN KỊCH BẢN (CLEAN_TTS_SCRIPT_GATE — CHỐNG RÒ RỈ `[LOCKED_TITLE]` & METADATA):
+- Khi kiểm tra PART A, PART B, PART C và bản ghép `script_clean.txt` / `{ID}_KICH_BAN.txt`, Agent Kiểm Tra Kịch Bản **BẮT BUỘC quét, ghi chú (note lại) và XÓA BỎ NGAY LẬP TỨC** mọi dòng tiêu đề khóa hoặc nhãn kỹ thuật bị rò rỉ vào văn bản truyện để tránh tuyệt đối tình trạng tạo Voice (TTS) và Render Video đọc/hiển thị nhầm các dòng này:
+  1. Mọi dòng bắt đầu bằng hoặc chứa `LOCKED_TITLE:`, `SELECTED_TITLE:`, `WINNING_TITLE:`, `FINAL_TITLE:`, `DRAFT_TITLE:` (bao gồm cả trường hợp câu tiêu đề dài bị tách thành 2–4 dòng kế tiếp kết thúc bằng `…` hoặc `…」`).
+  2. Mọi dòng tiêu đề bước/phần như `Pxxx — STEP 4 · BUILD PART A · 日本語脚本`, `PART A — 日本語脚本`, `PART A — 日本語ナレーション本文`, `STEP 4`, `BUILD PART A/B/C`.
+  3. Mọi thẻ bọc UI/Code như `<CodeBlock...>`, `</CodeBlock>`, `<WritingBlock...>`, `</WritingBlock>` và các dòng ghi chú kỹ thuật `CONTINUITY: ...`, `ENDING: ...`, `HANDOFF_LEDGER`, `PURE_CHARACTER_COUNT`.
+- Văn bản kịch bản bàn giao sang tạo Voice & Render Video phải là **100% văn bản tự sự và lời thoại tiếng Nhật thuần túy**.
 
 Nếu một part fail mechanical length:
 > `AUDIT_NOT_STARTED — RETURN_TO_STEP_4_BUILD_PART_X`

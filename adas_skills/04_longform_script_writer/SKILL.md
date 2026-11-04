@@ -155,8 +155,8 @@ Sau mỗi part:
 
 # 9. OUTPUT CONTRACT — BUILD MODE
 Mỗi lần chỉ output **một part**:
-- `PART: A/B/C`
-- Japanese narration for that part
+- Japanese narration thuần túy cho part đó (**TUYỆT ĐỐI KHÔNG in dòng `LOCKED_TITLE: ...`, `SELECTED_TITLE: ...`, `PART A — 日本語脚本`, `Pxxx — STEP 4 · BUILD PART A · 日本語脚本`, `<CodeBlock>`, `<WritingBlock>`, `CONTINUITY:`, `ENDING:` vào đầu hay giữa văn bản truyện để tránh rò rỉ vào giọng đọc TTS và phụ đề Video!**)
+- Ở cuối cùng (sau khi kết thúc hoàn toàn văn bản truyện tiếng Nhật) mới ghi:
 - `PART_PURE_CHARACTER_COUNT`
 - `PART_LENGTH_GATE: PASS/FAIL`
 - Continuity ledger
