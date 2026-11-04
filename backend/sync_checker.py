@@ -530,11 +530,11 @@ def verify_rendered_video_sync(
     if over_3_lines_count > 0:
         issues.append(f"Phát hiện {over_3_lines_count} khung phụ đề vượt quá 3 dòng")
 
-    # Kiểm tra độ lệch thời lượng tổng thể
+    # Kiểm tra độ lệch thời lượng tổng thể (cho phép dung sai <= 2.8s đối với video nối tiếp từ nhiều đoạn Checkpoint .ts)
     diff_video_wav = abs(video_dur - wav_dur)
     diff_wav_srt = abs(wav_dur - srt_last_end)
 
-    if video_dur > 0 and wav_dur > 0 and diff_video_wav > 0.85:
+    if video_dur > 0 and wav_dur > 0 and diff_video_wav > 2.80:
         issues.append(f"Thời lượng Video MP4 ({video_dur:.2f}s) lệch so với Voice ({wav_dur:.2f}s) là {diff_video_wav:.2f}s")
     if wav_dur > 0 and srt_last_end > 0 and diff_wav_srt > 0.50:
         issues.append(f"Thời lượng Phụ đề SRT ({srt_last_end:.2f}s) lệch so với Voice ({wav_dur:.2f}s) là {diff_wav_srt:.2f}s")

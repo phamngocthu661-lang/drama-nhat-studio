@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.2",
-  "build_number": 102,
-  "released_at": "2026-11-04 08:54:14",
+  "version": "V1.0.3",
+  "build_number": 103,
+  "released_at": "2026-11-04 09:26:30",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "Bổ sung 2 chức năng chạy: (1) Chạy Full 100% công suất như hiện tại và (2) Chạy 70% công suất (giới hạn tối đa 3 luồng, vừa chạy vừa làm việc khác mượt mà)."
+  "changelog": "1. Render nối tiếp từ đoạn dở (MPEG-TS Smart Resume). 2. Chế độ 70% giới hạn tối đa 3 luồng. 3. Sửa triệt để lỗi cập nhật trên máy khách (SSL/Permission/404)."
 }

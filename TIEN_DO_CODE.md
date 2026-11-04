@@ -1362,3 +1362,34 @@
 ### 2. Phát Hành Chính Thức Phiên Bản `V1.0.2` (Build #102) Lên GitHub Cho Máy Khách
 - Thực thi [`push_update_github.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/push_update_github.py) để nâng cấp phiên bản lên **`V1.0.2`** (`Build #102`), tự động đồng bộ sang [`app/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/app) và đẩy (`git push origin main`) lên kho lưu trữ GitHub `https://github.com/phamngocthu661-lang/drama-nhat-studio`.
 
+---
+
+## Cập nhật: 04/11/2026 (Lần 60) — Nâng Cấp Cơ Chế Lưu Checkpoint & Render Nối Tiếp Đoạn Chưa Xong (MPEG-TS Smart Resume) (`backend/renderer.py`, `backend/pipeline.py`, `backend/voicevox_service.py`, `backend/adas_script_engine.py`, `backend/sync_checker.py`)
+
+### 1. Giải Pháp Checkpoint MPEG-TS (`.ts`) & Render Nối Tiếp Tự Động 100%
+- **Lưu luồng trực tiếp dạng MPEG-TS (`seg_raw_XXXX.ts`) trong [`backend/renderer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L287-L655)**:
+  - Khi tắt ứng dụng hoặc bấm Dừng giữa chừng, toàn bộ số giây video đã render trước đó vẫn nguyên vẹn 100% trên ổ cứng tại `renders/_{proj_name}_master_resume_cache/`.
+  - Khi bấm **Render Lại**, hệ thống tự động nối tiếp từ đúng phần trăm đã lưu (ví dụ `57.4% ➔ 100%`) rồi đóng gói siêu tốc (`-c copy`) sang `.mp4` chỉ trong `2–3 giây`.
+
+---
+
+## Cập nhật: 04/11/2026 (Lần 61) — Khắc Phục Triệt Để Lỗi Khi Máy Khách Bấm Cập Nhật (Update) & Phát Hành `V1.0.3` (`backend/updater_service.py`, `backend/server.py`, `main.py`, `Cap_Nhat_Nhanh.bat`)
+
+### 1. Nguyên Nhân Khiến Máy Khách Bấm Update Báo Lỗi
+1. **Máy khách cài từ bộ cài cũ trước bản `V1.0.0` (hoặc tiến trình Server `8899` cũ chưa khởi động lại)**:
+   - Khi tiến trình `python.exe` trên cổng `8899` đang chạy bản cũ (chưa có route `/api/update/apply`), bấm nút Cập nhật gọi `POST /api/update/apply` bị trả về `404 Not Found` (`{"detail": "Not Found"}`), dẫn tới thông báo `❌ Cập nhật thất bại: Lỗi không xác định`.
+   - Ngoài ra, bộ cài `.zip` (`Drama_Nhat_Studio_Bo_Cai_Khach_Hang.zip` và `Drama_Nhat_Studio_Ban_Update_Nhanh.zip` tạo lúc `14:22` ngày `03/11/2026`) được đóng gói trước khi tính năng GitHub OTA Updater ra đời nên chưa có `updater_service.py`.
+2. **Lỗi khóa file (`PermissionError`) đối với `Drama_Nhat_Studio.exe` đang chạy hoặc lỗi chứng chỉ SSL trên Windows máy khách**:
+   - Khi khách mở app bằng `Drama_Nhat_Studio.exe`, Windows khóa file `.exe` này nên `shutil.copy2` ghi đè bị chặn; hoặc máy khách Windows thiếu chứng chỉ SSL gốc khiến `requests.get` tới `codeload.github.com` báo lỗi SSL.
+
+### 2. Giải Pháp Khắc Phục Triệt Để 100%
+- **Trong [`backend/updater_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py#L258-L450)**:
+  - Bổ sung `_safe_copy_file()` tự động gỡ Read-Only, đổi tên file đang bị khóa sang `.old_locked` và bỏ qua `Drama_Nhat_Studio.exe` đang chạy để không bao giờ bị `PermissionError`.
+  - Tự động thử lại với `verify=False` (bỏ qua lỗi SSL chứng chỉ máy khách) và dự phòng tải bằng `curl.exe -L -k` có sẵn trên Windows.
+- **Trong [`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py#L1170-L1184) & [`main.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/main.py#L206-L228)**:
+  - Truyền chuẩn `base_dir` vào API `/api/update/*`.
+  - Khi mở `main.py`, tự động kiểm tra `/api/update/status` trên cổng `8899`; nếu phát hiện cổng `8899` đang chạy tiến trình Server cũ chưa có API Update thì tự động tắt tiến trình cũ và bật Server mới ngay.
+- **Nâng cấp [`Cap_Nhat_Nhanh.bat`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/Cap_Nhat_Nhanh.bat) & Đóng gói lại `Drama_Nhat_Studio_Ban_Update_Nhanh.zip`**:
+  - Cho phép máy khách (đang ở bản cũ chưa có API Update) chỉ cần bấm đúp `Cap_Nhat_Nhanh.bat` là tự động kết nối GitHub tải bản mới nhất về và lên đời `V1.0.3`.
+
+

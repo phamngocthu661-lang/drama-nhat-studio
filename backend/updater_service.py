@@ -60,11 +60,18 @@ def parse_version_tuple(ver_str: str) -> Tuple[int, int, int]:
     return (nums[0], nums[1], nums[2])
 
 
-def get_local_version_info(root_dir: Path) -> Dict[str, Any]:
+def _resolve_root_dir(root_dir: Optional[Path] = None) -> Path:
+    r = Path(root_dir).resolve() if root_dir else Path(__file__).resolve().parent.parent
+    if r.name.lower() == "app":
+        r = r.parent
+    elif not (r / "STOOK").exists() and (r.parent / "STOOK").exists():
+        r = r.parent
+    return r
+
+
+def get_local_version_info(root_dir: Optional[Path] = None) -> Dict[str, Any]:
     """Đọc thông tin phiên bản hiện tại của ứng dụng từ file version.json."""
-    root_dir = Path(root_dir).resolve()
-    if root_dir.name.lower() == "app":
-        root_dir = root_dir.parent
+    root_dir = _resolve_root_dir(root_dir)
 
     candidates = [
         root_dir / "version.json",
@@ -99,8 +106,14 @@ def get_local_version_info(root_dir: Path) -> Dict[str, Any]:
 def _fetch_remote_version_json(repo: str, branch: str = "main", timeout: float = 8.0) -> Optional[Dict[str, Any]]:
     """
     Lấy file version.json mới nhất trực tiếp từ GitHub.
-    Ưu tiên GitHub REST API (không bị trễ cache CDN) và dự phòng sang raw.githubusercontent.com.
+    Ưu tiên GitHub REST API (không bị trễ cache CDN) và dự phòng sang raw.githubusercontent.com + bỏ qua lỗi SSL nếu máy khách thiếu chứng chỉ.
     """
+    try:
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    except Exception:
+        pass
+
     headers_api = {
         "Accept": "application/vnd.github.v3.raw",
         "Cache-Control": "no-cache, no-store, must-revalidate",
@@ -108,36 +121,27 @@ def _fetch_remote_version_json(repo: str, branch: str = "main", timeout: float =
         "User-Agent": "DramaNhatStudio-Updater/1.0",
     }
     api_url = f"https://api.github.com/repos/{repo}/contents/version.json?ref={branch}&_t={int(time.time())}"
-    try:
-        resp = requests.get(api_url, headers=headers_api, timeout=timeout)
-        if resp.status_code == 200:
-            data = resp.json()
-            if isinstance(data, dict) and data.get("version"):
-                return data
-    except Exception:
-        pass
-
     raw_url = f"https://raw.githubusercontent.com/{repo}/{branch}/version.json?t={int(time.time())}"
-    try:
-        resp2 = requests.get(
-            raw_url,
-            headers={"Cache-Control": "no-cache", "User-Agent": "DramaNhatStudio-Updater/1.0"},
-            timeout=timeout,
-        )
-        if resp2.status_code == 200:
-            data2 = resp2.json()
-            if isinstance(data2, dict) and data2.get("version"):
-                return data2
-    except Exception:
-        pass
+
+    for url, hdrs in [(api_url, headers_api), (raw_url, {"Cache-Control": "no-cache", "User-Agent": "DramaNhatStudio-Updater/1.0"})]:
+        for verify_ssl in (True, False):
+            try:
+                resp = requests.get(url, headers=hdrs, timeout=timeout, verify=verify_ssl)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if isinstance(data, dict) and data.get("version"):
+                        return data
+            except Exception:
+                continue
 
     return None
 
 
-def check_for_github_update(root_dir: Path, force_refresh: bool = False) -> Dict[str, Any]:
+def check_for_github_update(root_dir: Optional[Path] = None, force_refresh: bool = False) -> Dict[str, Any]:
     """
     Kiểm tra xem trên GitHub đã có phiên bản mới hơn phiên bản đang chạy ở máy khách hay chưa.
     """
+    root_dir = _resolve_root_dir(root_dir)
     local_info = get_local_version_info(root_dir)
     now = time.time()
 
@@ -255,8 +259,43 @@ def _hot_reload_backend_modules(adas_engine: Any = None, pipeline: Any = None):
         log_warn("UPDATER", f"Lưu ý khi cập nhật nóng StockManager: {e}")
 
 
+def _safe_copy_file(src_file: Path, dst_file: Path) -> bool:
+    """
+    Sao chép file an toàn trên Windows:
+    - Tự động gỡ cờ Read-Only nếu có.
+    - Nếu file đích đang bị khóa bởi tiến trình đang chạy (VD: Drama_Nhat_Studio.exe),
+      tự động đổi tên file đang chạy sang `.old_locked` rồi chép file mới vào để không bao giờ văng PermissionError!
+    """
+    try:
+        dst_file.parent.mkdir(parents=True, exist_ok=True)
+        if dst_file.exists():
+            try:
+                os.chmod(dst_file, 0o666)
+            except Exception:
+                pass
+        shutil.copy2(src_file, dst_file)
+        return True
+    except PermissionError:
+        try:
+            old_locked = dst_file.with_suffix(dst_file.suffix + ".old_locked")
+            if old_locked.exists():
+                try:
+                    old_locked.unlink()
+                except Exception:
+                    pass
+            dst_file.rename(old_locked)
+            shutil.copy2(src_file, dst_file)
+            return True
+        except Exception as e2:
+            log_warn("UPDATER", f"Bỏ qua file đang khóa {dst_file.name}: {e2}")
+            return False
+    except Exception as e:
+        log_warn("UPDATER", f"Lưu ý khi chép file {dst_file.name}: {e}")
+        return False
+
+
 def apply_github_update(
-    root_dir: Path,
+    root_dir: Optional[Path] = None,
     adas_engine: Any = None,
     pipeline: Any = None,
 ) -> Dict[str, Any]:
@@ -265,106 +304,130 @@ def apply_github_update(
     mà giữ nguyên 100% dữ liệu dự án, kho Stock, bản quyền và cấu hình của máy khách.
     """
     with _update_lock:
-        root_dir = Path(root_dir).resolve()
-        if root_dir.name.lower() == "app":
-            root_dir = root_dir.parent
-
-        local_info = get_local_version_info(root_dir)
-        old_version = local_info.get("version", DEFAULT_VERSION)
-        repo = local_info.get("repo") or DEFAULT_GITHUB_REPO
-        branch = local_info.get("branch") or DEFAULT_GITHUB_BRANCH
-
-        log_info("UPDATER", f"🚀 Bắt đầu tải bản cập nhật mới nhất từ GitHub ({repo}@{branch})...")
-
-        tmp_dir = root_dir / "_ota_update_tmp"
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-        tmp_dir.mkdir(parents=True, exist_ok=True)
-        zip_path = tmp_dir / "update_package.zip"
-
-        download_urls = [
-            f"https://codeload.github.com/{repo}/zip/refs/heads/{branch}?t={int(time.time())}",
-            f"https://api.github.com/repos/{repo}/zipball/{branch}",
-        ]
-
-        downloaded = False
-        last_err = ""
-        for d_url in download_urls:
+        try:
+            import subprocess
             try:
-                resp = requests.get(
-                    d_url,
-                    headers={"User-Agent": "DramaNhatStudio-Updater/1.0", "Cache-Control": "no-cache"},
-                    stream=True,
-                    timeout=45,
-                )
-                if resp.status_code == 200:
-                    with open(zip_path, "wb") as f:
-                        for chunk in resp.iter_content(chunk_size=256 * 1024):
-                            if chunk:
-                                f.write(chunk)
+                import urllib3
+                urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+            except Exception:
+                pass
+
+            root_dir = _resolve_root_dir(root_dir)
+
+            local_info = get_local_version_info(root_dir)
+            old_version = local_info.get("version", DEFAULT_VERSION)
+            repo = local_info.get("repo") or DEFAULT_GITHUB_REPO
+            branch = local_info.get("branch") or DEFAULT_GITHUB_BRANCH
+
+            log_info("UPDATER", f"🚀 Bắt đầu tải bản cập nhật mới nhất từ GitHub ({repo}@{branch})...")
+
+            tmp_dir = root_dir / "_ota_update_tmp"
+            if tmp_dir.exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            tmp_dir.mkdir(parents=True, exist_ok=True)
+            zip_path = tmp_dir / "update_package.zip"
+
+            download_urls = [
+                f"https://codeload.github.com/{repo}/zip/refs/heads/{branch}?t={int(time.time())}",
+                f"https://api.github.com/repos/{repo}/zipball/{branch}",
+            ]
+
+            downloaded = False
+            last_err = ""
+            for d_url in download_urls:
+                for verify_ssl in (True, False):
+                    try:
+                        resp = requests.get(
+                            d_url,
+                            headers={"User-Agent": "DramaNhatStudio-Updater/1.0", "Cache-Control": "no-cache"},
+                            stream=True,
+                            timeout=60,
+                            verify=verify_ssl,
+                        )
+                        if resp.status_code == 200:
+                            with open(zip_path, "wb") as f:
+                                for chunk in resp.iter_content(chunk_size=256 * 1024):
+                                    if chunk:
+                                        f.write(chunk)
+                            if zip_path.exists() and zip_path.stat().st_size > 10_000:
+                                downloaded = True
+                                break
+                        else:
+                            last_err = f"HTTP {resp.status_code}"
+                    except Exception as e:
+                        last_err = str(e)
+                if downloaded:
+                    break
+
+            # Dự phòng tải bằng curl.exe có sẵn trên Windows nếu Python requests bị chặn bởi Firewall/SSL máy khách
+            if not downloaded:
+                try:
+                    subprocess.run(
+                        ["curl.exe", "-L", "-k", "-s", "-o", str(zip_path), download_urls[0]],
+                        timeout=60,
+                        check=False,
+                    )
                     if zip_path.exists() and zip_path.stat().st_size > 10_000:
                         downloaded = True
-                        break
-                else:
-                    last_err = f"HTTP {resp.status_code}"
+                except Exception as e_curl:
+                    last_err = f"{last_err} | curl: {e_curl}"
+
+            if not downloaded:
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                msg = f"Không thể tải gói cập nhật từ GitHub ({last_err}). Vui lòng kiểm tra kết nối mạng!"
+                log_error("UPDATER", msg)
+                return {"success": False, "error": msg}
+
+            extract_dir = tmp_dir / "extracted"
+            extract_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with zipfile.ZipFile(zip_path, "r") as zf:
+                    zf.extractall(extract_dir)
             except Exception as e:
-                last_err = str(e)
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                msg = f"Gói cập nhật tải về bị lỗi giải nén: {e}"
+                log_error("UPDATER", msg)
+                return {"success": False, "error": msg}
 
-        if not downloaded:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            msg = f"Không thể tải gói cập nhật từ GitHub ({last_err}). Vui lòng kiểm tra kết nối mạng!"
-            log_error("UPDATER", msg)
-            return {"success": False, "error": msg}
+            # Tìm thư mục gốc bên trong file zip của GitHub (thường là <repo>-<branch>/)
+            sub_dirs = [d for d in extract_dir.iterdir() if d.is_dir()]
+            src_root = sub_dirs[0] if len(sub_dirs) == 1 else extract_dir
 
-        extract_dir = tmp_dir / "extracted"
-        extract_dir.mkdir(parents=True, exist_ok=True)
-        try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(extract_dir)
-        except Exception as e:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            msg = f"Gói cập nhật tải về bị lỗi giải nén: {e}"
-            log_error("UPDATER", msg)
-            return {"success": False, "error": msg}
+            if not (src_root / "backend").exists() or not (src_root / "frontend").exists():
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+                msg = "Gói cập nhật không hợp lệ (Thiếu thư mục backend/frontend)."
+                log_error("UPDATER", msg)
+                return {"success": False, "error": msg}
 
-        # Tìm thư mục gốc bên trong file zip của GitHub (thường là <repo>-<branch>/)
-        sub_dirs = [d for d in extract_dir.iterdir() if d.is_dir()]
-        src_root = sub_dirs[0] if len(sub_dirs) == 1 else extract_dir
+            updated_files_count = 0
+            app_subdir = root_dir / "app"
 
-        if not (src_root / "backend").exists() or not (src_root / "frontend").exists():
-            shutil.rmtree(tmp_dir, ignore_errors=True)
-            msg = "Gói cập nhật không hợp lệ (Thiếu thư mục backend/frontend)."
-            log_error("UPDATER", msg)
-            return {"success": False, "error": msg}
+            # 1. Cập nhật các thư mục code: backend, frontend, adas_skills (An toàn chống lỗi PermissionError)
+            for folder_name in ("backend", "frontend", "adas_skills"):
+                s_folder = src_root / folder_name
+                if not s_folder.exists():
+                    continue
+                for src_file in s_folder.rglob("*"):
+                    if src_file.is_file() and "__pycache__" not in src_file.parts and not src_file.name.endswith(".pyc"):
+                        rel_path = src_file.relative_to(s_folder)
+                        dst_main = root_dir / folder_name / rel_path
+                        if _safe_copy_file(src_file, dst_main):
+                            updated_files_count += 1
+                        if app_subdir.exists():
+                            dst_app = app_subdir / folder_name / rel_path
+                            _safe_copy_file(src_file, dst_app)
 
-        updated_files_count = 0
-        app_subdir = root_dir / "app"
-
-        # 1. Cập nhật các thư mục code: backend, frontend, adas_skills
-        for folder_name in ("backend", "frontend", "adas_skills"):
-            s_folder = src_root / folder_name
-            if not s_folder.exists():
-                continue
-            for src_file in s_folder.rglob("*"):
-                if src_file.is_file() and "__pycache__" not in src_file.parts and not src_file.name.endswith(".pyc"):
-                    rel_path = src_file.relative_to(s_folder)
-                    # Copy vào root/<folder_name>
-                    dst_main = root_dir / folder_name / rel_path
-                    dst_main.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src_file, dst_main)
-                    updated_files_count += 1
-                    # Đồng bộ vào root/app/<folder_name> nếu có thư mục app/
-                    if app_subdir.exists():
-                        dst_app = app_subdir / folder_name / rel_path
-                        dst_app.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copy2(src_file, dst_app)
-
-        # 2. Cập nhật các file lẻ ở thư mục gốc (trừ các file cấu hình/dữ liệu khách hàng trong PROTECTED_CUSTOMER_PATHS)
-        for item in src_root.iterdir():
-            if item.is_file() and item.name not in PROTECTED_CUSTOMER_PATHS and not item.name.startswith(".git"):
-                try:
-                    shutil.copy2(item, root_dir / item.name)
-                    updated_files_count += 1
+            # 2. Cập nhật các file lẻ ở thư mục gốc (trừ các file cấu hình/dữ liệu khách hàng trong PROTECTED_CUSTOMER_PATHS,
+            #    và bỏ qua Drama_Nhat_Studio.exe đang chạy để không chạm vào file thực thi đang mở)
+            for item in src_root.iterdir():
+                if (
+                    item.is_file()
+                    and item.name not in PROTECTED_CUSTOMER_PATHS
+                    and not item.name.startswith(".git")
+                    and item.name.lower() != "drama_nhat_studio.exe"
+                ):
+                    if _safe_copy_file(item, root_dir / item.name):
+                        updated_files_count += 1
                     if app_subdir.exists() and item.name in (
                         "main.py",
                         "install_setup.py",
@@ -374,33 +437,35 @@ def apply_github_update(
                         "TIEN_DO_CODE.md",
                         "HUONG_DAN_CAI_DAT_KHACH_HANG.txt",
                     ):
-                        shutil.copy2(item, app_subdir / item.name)
-                except Exception:
-                    pass
+                        _safe_copy_file(item, app_subdir / item.name)
 
-        shutil.rmtree(tmp_dir, ignore_errors=True)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        # Làm mới cache kiểm tra phiên bản
-        _update_check_cache["ts"] = 0.0
-        _update_check_cache["data"] = None
+            # Làm mới cache kiểm tra phiên bản
+            _update_check_cache["ts"] = 0.0
+            _update_check_cache["data"] = None
 
-        new_info = get_local_version_info(root_dir)
-        new_version = new_info.get("version", DEFAULT_VERSION)
-        changelog = new_info.get("changelog", "")
+            new_info = get_local_version_info(root_dir)
+            new_version = new_info.get("version", DEFAULT_VERSION)
+            changelog = new_info.get("changelog", "")
 
-        # Hot-reload các module backend đang chạy
-        _hot_reload_backend_modules(adas_engine=adas_engine, pipeline=pipeline)
+            # Hot-reload các module backend đang chạy
+            _hot_reload_backend_modules(adas_engine=adas_engine, pipeline=pipeline)
 
-        log_info(
-            "UPDATER",
-            f"🎉 Đã cập nhật ứng dụng thành công từ [{old_version}] lên [{new_version}] ({updated_files_count} file được nâng cấp)!",
-        )
-        return {
-            "success": True,
-            "old_version": old_version,
-            "new_version": new_version,
-            "build_number": new_info.get("build_number", DEFAULT_BUILD_NUMBER),
-            "changelog": changelog,
-            "updated_files_count": updated_files_count,
-            "message": f"🎉 Đã cập nhật thành công lên phiên bản {new_version}!",
-        }
+            log_info(
+                "UPDATER",
+                f"🎉 Đã cập nhật ứng dụng thành công từ [{old_version}] lên [{new_version}] ({updated_files_count} file được nâng cấp)!",
+            )
+            return {
+                "success": True,
+                "old_version": old_version,
+                "new_version": new_version,
+                "build_number": new_info.get("build_number", DEFAULT_BUILD_NUMBER),
+                "changelog": changelog,
+                "updated_files_count": updated_files_count,
+                "message": f"🎉 Đã cập nhật thành công lên phiên bản {new_version}!",
+            }
+        except Exception as fatal_err:
+            err_msg = f"Lỗi khi áp dụng bản cập nhật: {fatal_err}"
+            log_error("UPDATER", err_msg, exc=fatal_err)
+            return {"success": False, "error": err_msg}

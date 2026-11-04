@@ -1170,17 +1170,17 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
     @app.get("/api/update/status")
     def api_get_local_version():
         from backend.updater_service import get_local_version_info
-        return get_local_version_info(root_dir)
+        return get_local_version_info(base_dir)
 
     @app.get("/api/update/check")
     def api_check_github_update(force: bool = False):
         from backend.updater_service import check_for_github_update
-        return check_for_github_update(root_dir, force_refresh=bool(force))
+        return check_for_github_update(base_dir, force_refresh=bool(force))
 
     @app.post("/api/update/apply")
     def api_apply_github_update():
         from backend.updater_service import apply_github_update
-        return apply_github_update(root_dir, adas_engine=adas_engine, pipeline=pipeline)
+        return apply_github_update(base_dir, adas_engine=adas_engine, pipeline=pipeline)
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):

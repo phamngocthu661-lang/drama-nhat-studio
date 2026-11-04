@@ -1552,7 +1552,26 @@ class ADASScriptEngine:
                         item_changed = True
                 elif has_sc and not has_mp4:
                     if not is_vp_busy_for_mid:
-                        if mp4_reason not in ("missing", "rendering_in_progress", "ok"):
+                        ckpt_step_msg = ""
+                        if (p_dir / "renders" / f"_{mid}_master_resume_cache").exists():
+                            try:
+                                from backend.renderer import get_saved_render_progress
+                                ckpt_d = get_saved_render_progress(str(p_dir / "renders" / f"{mid}_master.mp4"))
+                                if ckpt_d.get("has_checkpoint"):
+                                    ckpt_step_msg = (
+                                        f"⏸️ Đã lưu Checkpoint Render {ckpt_d['percent']}% "
+                                        f"({ckpt_d['completed_sec']:.0f}s/{ckpt_d['total_dur']:.0f}s) — Bấm Render để chạy tiếp đoạn còn lại!"
+                                    )
+                            except Exception:
+                                ckpt_step_msg = ""
+
+                        if ckpt_step_msg:
+                            if curr_st != "ERROR_VIDEO" or it.get("current_step") != ckpt_step_msg:
+                                it["status"] = "ERROR_VIDEO"
+                                it["current_step"] = ckpt_step_msg
+                                changed = True
+                                item_changed = True
+                        elif mp4_reason not in ("missing", "rendering_in_progress", "ok"):
                             err_step = f"❌ Video bị ngắt/lỗi ({mp4_reason}) — Chờ Render lại ({effective_chars:,} chữ)"
                             if curr_st != "ERROR_VIDEO" or it.get("current_step") != err_step:
                                 it["status"] = "ERROR_VIDEO"

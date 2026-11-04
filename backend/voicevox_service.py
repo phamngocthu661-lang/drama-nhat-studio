@@ -880,6 +880,13 @@ class VoicevoxStandaloneService:
             prog_lock = threading.Lock()
             worker_threads = max(2, len(active_ports) * 2)
 
+            if done_count > 0 and progress_callback:
+                init_v_pct = round((done_count / max(1, total_sentences)) * 92.0, 1)
+                progress_callback(
+                    init_v_pct,
+                    f"♻️ Khôi phục {done_count}/{total_sentences} câu Voice đã tạo — Đang tạo tiếp {len(todo_items)} câu còn lại...",
+                )
+
             def _synth_worker(item: tuple[int, str, Path]) -> tuple[int, float]:
                 nonlocal done_count
                 s_idx, s_text, s_path = item

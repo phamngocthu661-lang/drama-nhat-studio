@@ -209,8 +209,22 @@ def is_existing_studio_running(port=8899) -> bool:
         proxy_handler = urllib.request.ProxyHandler({})
         opener = urllib.request.build_opener(proxy_handler)
         with opener.open(f"http://127.0.0.1:{port}/api/status", timeout=1.5) as resp:
-            return resp.status == 200
+            if resp.status != 200:
+                return False
+        # Đảm bảo Server đang chạy trên cổng 8899 là bản mới có đầy đủ API Cập nhật OTA (/api/update/status)
+        with opener.open(f"http://127.0.0.1:{port}/api/update/status", timeout=1.5) as resp_upd:
+            return resp_upd.status == 200
     except Exception:
+        # Nếu cổng 8899 đang chạy bản Server cũ chưa có API /api/update/status -> tắt tiến trình cũ trên cổng 8899 để bật bản mới!
+        try:
+            ps_kill = (
+                f"Get-NetTCPConnection -LocalPort {port} -State Listen -ErrorAction SilentlyContinue | "
+                f"ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }}"
+            )
+            subprocess.run(["powershell", "-NoProfile", "-Command", ps_kill], capture_output=True, timeout=3, creationflags=0x08000000)
+            time.sleep(0.5)
+        except Exception:
+            pass
         return False
 
 

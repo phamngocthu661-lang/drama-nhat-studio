@@ -789,7 +789,7 @@ class ProductionPipeline:
                         except Exception:
                             saved_sig = ""
 
-                    # Chỉ tái sử dụng master_voice.wav nếu CÙNG CHỮ KÝ GIỌNG VÀ đủ thời lượng tương ứng độ dài kịch bản!
+                    # Chỉ tái sử dụng master_voice.wav nếu CÙNG CHỮ KÝ GIỌNG (hoặc chưa có file chữ ký) VÀ đủ thời lượng tương ứng độ dài kịch bản!
                     reuse_wav_dur = 0.0
                     min_expected_wav_dur = max(120.0, float(len(script_text)) * 0.08) if len(script_text) >= 5000 else 15.0
                     if (
@@ -797,7 +797,7 @@ class ProductionPipeline:
                         and existing_master_wav.stat().st_size > 500_000
                         and existing_srt.exists()
                         and existing_srt.stat().st_size > 200
-                        and saved_sig == current_sig
+                        and (not saved_sig or saved_sig == current_sig)
                         and not job.get("force_regenerate_voice")
                     ):
                         try:
@@ -907,38 +907,54 @@ class ProductionPipeline:
                         raise InterruptedError("Đã dừng tiến trình Render theo yêu cầu")
 
                     # ==========================================================
-                    # GIAI ĐOẠN 2: CẤP PHÁT VIDEO STOCK (AN TOÀN ĐA LUỒNG)
+                    # GIAI ĐOẠN 2: CẤP PHÁT VIDEO STOCK (KHÔI PHỤC STOCK CŨ NẾU ĐANG RENDER DỞ)
                     # ==========================================================
+                    saved_stock_json = assets_dir / "selected_stock.json"
                     with self.stock_alloc_lock:
                         chosen_stock = None
                         max_uses = self.stock_manager.MAX_STOCK_USAGES
-                        if stock_selection == "auto_unique":
-                            chosen_stock = self.stock_manager.get_best_available_stock(exclude_ids=allocated_stock_ids)
-                        else:
-                            stocks = self.stock_manager.get_all_stocks()["items"]
-                            for s in stocks:
-                                if s["id"] == stock_selection or s["abs_path"] == stock_selection or s["rel_path"] == stock_selection:
-                                    use1_key = f"{s['id']}::use1"
-                                    use2_key = f"{s['id']}::use2"
-                                    curr_uses = s.get("usage_count", 0)
-                                    if curr_uses >= max_uses or s.get("status") == "used" or (use1_key in allocated_stock_ids and use2_key in allocated_stock_ids):
-                                        raise RuntimeError(
-                                            f"Video stock '{s['name']}' đã dùng hết {max_uses}/{max_uses} lần."
-                                        )
-                                    chosen_stock = dict(s)
-                                    if curr_uses == 0 and use1_key not in allocated_stock_ids:
-                                        chosen_stock["use_number"] = 1
-                                        chosen_stock["flip_horizontal"] = False
-                                        chosen_stock["zoom_factor"] = 1.0
-                                        chosen_stock["transform_label"] = "Lần 1/2 (Bản Gốc 100%)"
-                                        chosen_stock["slot_key"] = use1_key
-                                    else:
-                                        chosen_stock["use_number"] = 2
-                                        chosen_stock["flip_horizontal"] = True
-                                        chosen_stock["zoom_factor"] = 1.10
-                                        chosen_stock["transform_label"] = "Lần 2/2 (Lật Video + Zoom 110%)"
-                                        chosen_stock["slot_key"] = use2_key
-                                    break
+
+                        if saved_stock_json.exists() and stock_selection == "auto_unique":
+                            try:
+                                prev_st = json.loads(saved_stock_json.read_text(encoding="utf-8"))
+                                if isinstance(prev_st, dict) and prev_st.get("abs_path") and os.path.exists(prev_st["abs_path"]):
+                                    chosen_stock = prev_st
+                                    log_info(
+                                        f"♻️ Khôi phục đúng Stock Video cũ '{chosen_stock.get('name')}' để Render nối tiếp cho '{proj_name}'.",
+                                        category="STOCK",
+                                        project_id=proj_name,
+                                    )
+                            except Exception:
+                                chosen_stock = None
+
+                        if not chosen_stock:
+                            if stock_selection == "auto_unique":
+                                chosen_stock = self.stock_manager.get_best_available_stock(exclude_ids=allocated_stock_ids)
+                            else:
+                                stocks = self.stock_manager.get_all_stocks()["items"]
+                                for s in stocks:
+                                    if s["id"] == stock_selection or s["abs_path"] == stock_selection or s["rel_path"] == stock_selection:
+                                        use1_key = f"{s['id']}::use1"
+                                        use2_key = f"{s['id']}::use2"
+                                        curr_uses = s.get("usage_count", 0)
+                                        if curr_uses >= max_uses or s.get("status") == "used" or (use1_key in allocated_stock_ids and use2_key in allocated_stock_ids):
+                                            raise RuntimeError(
+                                                f"Video stock '{s['name']}' đã dùng hết {max_uses}/{max_uses} lần."
+                                            )
+                                        chosen_stock = dict(s)
+                                        if curr_uses == 0 and use1_key not in allocated_stock_ids:
+                                            chosen_stock["use_number"] = 1
+                                            chosen_stock["flip_horizontal"] = False
+                                            chosen_stock["zoom_factor"] = 1.0
+                                            chosen_stock["transform_label"] = "Lần 1/2 (Bản Gốc 100%)"
+                                            chosen_stock["slot_key"] = use1_key
+                                        else:
+                                            chosen_stock["use_number"] = 2
+                                            chosen_stock["flip_horizontal"] = True
+                                            chosen_stock["zoom_factor"] = 1.10
+                                            chosen_stock["transform_label"] = "Lần 2/2 (Lật Video + Zoom 110%)"
+                                            chosen_stock["slot_key"] = use2_key
+                                        break
 
                         if not chosen_stock and stock_selection == "auto_unique":
                             log_info(
@@ -967,6 +983,10 @@ class ProductionPipeline:
 
                         slot_key = chosen_stock.get("slot_key", f"{chosen_stock['id']}::use{chosen_stock.get('use_number', 1)}")
                         allocated_stock_ids.add(slot_key)
+                        try:
+                            saved_stock_json.write_text(json.dumps(chosen_stock, ensure_ascii=False, indent=2), encoding="utf-8")
+                        except Exception:
+                            pass
 
                     use_number = chosen_stock.get("use_number", 1)
                     flip_horizontal = chosen_stock.get("flip_horizontal", False)
@@ -1291,10 +1311,22 @@ class ProductionPipeline:
                         project_id=proj_name,
                         exc=job_err,
                     )
+                    ckpt_msg = f"❌ Chưa xong / Lỗi Render (Chờ chạy lại): {str(job_err)[:85]}"
+                    try:
+                        import backend.renderer as _r_ckpt
+                        ckpt_info = _r_ckpt.get_saved_render_progress(str(proj_dir / "renders" / f"{proj_name}_master.mp4"))
+                        if ckpt_info.get("has_checkpoint"):
+                            ckpt_pct = ckpt_info.get("percent", 0.0)
+                            ckpt_sec = ckpt_info.get("completed_sec", 0.0)
+                            ckpt_msg = f"⏸️ Đã lưu Checkpoint Render {ckpt_pct}% ({ckpt_sec:.0f}s) — Bấm Render để chạy tiếp đoạn còn lại!"
+                        elif (proj_dir / "assets" / "master_voice.wav").exists():
+                            ckpt_msg = "⏸️ Đã tạo xong 100% Voice GPU — Bấm Render để ghép tiếp Video MP4!"
+                    except Exception:
+                        pass
                     self._update_job_card_status(
                         proj_name,
                         "ERROR_VIDEO",
-                        f"❌ Chưa xong / Lỗi Render (Chờ chạy lại): {str(job_err)[:85]}",
+                        ckpt_msg,
                     )
                     with self.lock:
                         failed_projects.append(f"{proj_name}: {job_err}")
