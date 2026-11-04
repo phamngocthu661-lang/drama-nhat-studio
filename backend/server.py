@@ -803,6 +803,18 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
             log_error("STOCK", f"❌ Lỗi đổi thư mục Kho Stock: {e}")
             raise HTTPException(status_code=400, detail=str(e))
 
+    class PerformanceModeRequest(BaseModel):
+        mode: str = "full_100"
+
+    @app.get("/api/performance-mode")
+    def api_get_performance_mode():
+        return {"success": True, **pipeline.get_performance_mode_info()}
+
+    @app.post("/api/performance-mode")
+    def api_set_performance_mode(req: PerformanceModeRequest):
+        info = pipeline.set_performance_mode(req.mode, persist=True)
+        return {"success": True, **info}
+
     @app.get("/api/config")
     def get_config():
         import torch
@@ -812,6 +824,7 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
             "default_output_dir": str(base_dir / "projects"),
             "gpu_name": gpu_name,
             "cuda_available": torch.cuda.is_available(),
+            "performance_mode": pipeline.get_performance_mode_info(),
             "resolutions": [
                 {"id": "1920x1080", "label": "Full HD 1080p (1920x1080 - Khuyên dùng)", "default": True},
                 {"id": "2560x1440", "label": "2K Quad HD (2560x1440 - Siêu nét)", "default": False},

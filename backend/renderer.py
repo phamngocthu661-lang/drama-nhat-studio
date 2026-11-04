@@ -175,7 +175,8 @@ def render_drama_nhat_video(
     fonts_dir: Optional[str] = None,
     bgm_path: Optional[str] = None,
     bgm_volume: float = 0.08,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    performance_mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Render video Drama Nhật 5 lớp đồ họa với độ phân giải, FPS và chế độ Lật + Zoom 110%.
@@ -340,19 +341,43 @@ def render_drama_nhat_video(
 
     fc = ";".join(filters)
 
+    if not performance_mode:
+        performance_mode = os.environ.get("STUDIO_PERF_MODE", "")
+        if not performance_mode:
+            try:
+                cfg_p = Path(__file__).resolve().parent.parent / "config.json"
+                if not cfg_p.exists():
+                    cfg_p = Path(__file__).resolve().parent.parent.parent / "config.json"
+                if cfg_p.exists():
+                    performance_mode = json.loads(cfg_p.read_text(encoding="utf-8")).get("performance_mode", "full_100")
+            except Exception:
+                performance_mode = "full_100"
+    perf_mode = (performance_mode or "full_100").strip().lower()
+    is_work_70 = perf_mode == "work_70"
+    total_cores = os.cpu_count() or 8
+    if is_work_70:
+        # Chế độ 70% (Vừa chạy vừa làm việc khác): Giới hạn ~60% số luồng CPU và hạ mức ưu tiên tiến trình (Below Normal)
+        cpu_threads = max(2, int(round(total_cores * 0.60)))
+        filter_threads = max(2, cpu_threads // 3)
+        win_flags = (0x08000000 | 0x00004000) if os.name == "nt" else 0
+    else:
+        # Chế độ Full 100%: Bung tối đa nhân CPU như mặc định
+        cpu_threads = max(4, total_cores - 1)
+        filter_threads = max(2, cpu_threads // 2)
+        win_flags = 0x08000000 if os.name == "nt" else 0
+
     use_nvenc = check_nvenc_available()
-    cpu_threads = max(4, (os.cpu_count() or 8) - 1)
     if use_nvenc:
         v_codec_args = [
             "-c:v", "h264_nvenc",
-            "-preset", "p2",
+            "-preset", "p1" if is_work_70 else "p2",
             "-tune", "hq",
             "-rc", "vbr",
             "-cq", "21",
             "-b:v", "0",
             "-pix_fmt", "yuv420p"
         ]
-        encoder_label = "NVIDIA GPU NVENC Turbo (h264_nvenc p2)"
+        encoder_label = f"NVIDIA GPU NVENC ({'Chế độ 70% Mượt' if is_work_70 else 'Full 100% Turbo'})"
     else:
         v_codec_args = [
             "-c:v", "libx264",
@@ -361,7 +386,7 @@ def render_drama_nhat_video(
             "-threads", str(cpu_threads),
             "-pix_fmt", "yuv420p"
         ]
-        encoder_label = f"CPU Multi-Thread ({cpu_threads} threads libx264)"
+        encoder_label = f"CPU Multi-Thread ({cpu_threads} threads libx264 • {'70%' if is_work_70 else '100%'})"
 
     # Render ra file tạm (_rendering_tmp.mp4) trước; chỉ đổi tên sang output_path chính thức sau khi
     # FFmpeg thoát mã 0 VÀ kiểm định đủ 100% thời lượng + moov atom hợp lệ (Chống lỗi ngắt giữa chừng vẫn báo thành công)
@@ -376,7 +401,7 @@ def render_drama_nhat_video(
 
     cmd.extend([
         "-t", str(dur),
-        "-filter_complex_threads", str(max(2, cpu_threads // 2)),
+        "-filter_complex_threads", str(filter_threads),
         "-filter_complex", fc,
         "-map", "[v_out]",
         "-map", "[a_out]",
@@ -400,7 +425,7 @@ def render_drama_nhat_video(
         universal_newlines=True,
         encoding="utf-8",
         errors="replace",
-        creationflags=0x08000000 if os.name == "nt" else 0,
+        creationflags=win_flags,
     )
 
     time_regex = re.compile(r"out_time=(\d{2}:\d{2}:\d{2}\.\d+)")

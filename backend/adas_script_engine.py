@@ -3949,6 +3949,18 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
                     max_workers = max(1, max_workers)
 
+                    # Nếu đang chọn Chức năng 2: Chạy 70% công suất (work_70) -> Giới hạn cứng tối đa 3 luồng tổng cộng!
+                    perf_mode_now = (os.environ.get("STUDIO_PERF_MODE") or "").strip().lower()
+                    if not perf_mode_now:
+                        try:
+                            cfg_p = self.root_dir / "config.json"
+                            if cfg_p.exists():
+                                perf_mode_now = str(json.loads(cfg_p.read_text(encoding="utf-8")).get("performance_mode", "full_100")).strip().lower()
+                        except Exception:
+                            perf_mode_now = "full_100"
+                    if perf_mode_now == "work_70":
+                        max_workers = min(max_workers, 3)
+
                     if not auto_produce_video:
                         self._emit(
                             status="running",
@@ -3968,95 +3980,132 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                             ),
                         )
 
-                    def _run_one_with_auto_retry(mid_item: str, acc_item: Optional[str]):
-                        # Tổng số lần chạy = 1 lần chạy chính + tối đa `max_retries` (mặc định 3) lần tự động Retry khi lỗi
-                        total_attempts = 1 + max(1, int(max_retries))
-                        last_err: Optional[Exception] = None
-                        for attempt_idx in range(total_attempts):
-                            if self.should_stop:
-                                return
-                            is_first_try = (attempt_idx == 0)
-                            use_force_rw = bool(force_rewrite_script and is_first_try)
-                            try_acc = acc_item
-                            if attempt_idx > 0 and not preferred_acc_id and len(active_accs) > 1:
-                                try_acc = active_accs[(attempt_idx) % len(active_accs)] if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") else None
-                            try:
-                                if attempt_idx > 0:
-                                    retry_msg = f"🔄 [{mid_item}] Tự động Retry lần {attempt_idx}/{max_retries} (Tiếp tục viết phần còn thiếu)..."
-                                    self._update_idea_record(
-                                        mid_item,
-                                        status="RUNNING",
-                                        retry_count=attempt_idx,
-                                        current_step=f"🔄 Đang tự động Retry ({attempt_idx}/{max_retries})...",
-                                    )
-                                    self._emit(
-                                        status="running",
-                                        current_ma_id=mid_item,
-                                        current_step=f"🔄 Tự động Retry ({attempt_idx}/{max_retries})",
-                                        message=retry_msg,
-                                    )
-                                    log_warn("SCRIPT", retry_msg, project_id=mid_item)
+                    active_slot_lock = threading.Lock()
+                    active_slot_state = {"count": 0}
+                    cfg_perf_file = self.root_dir / "config.json"
 
-                                res_single = self.run_single_idea_pipeline_sync(
-                                    mid_item,
-                                    try_acc,
-                                    bool(auto_produce_video),       # Viết xong kịch bản nào đẩy sang Render ngay kịch bản đó!
-                                    video_settings,
-                                    target_part_min,
-                                    not bool(auto_produce_video),   # defer_video_handoff=False khi auto_produce_video=True
-                                    use_force_rw,                   # chỉ xóa cũ ở lượt đầu nếu người dùng bấm "Viết Lại"
-                                    ai_provider,
-                                )
-                                has_sc_ok, _, _ = self.has_valid_script_on_disk(mid_item)
-                                if has_sc_ok:
-                                    if auto_produce_video and not (isinstance(res_single, dict) and res_single.get("video_triggered")):
+                    def _get_live_perf_mode() -> str:
+                        env_pm = (os.environ.get("STUDIO_PERF_MODE") or "").strip().lower()
+                        if env_pm in ("work_70", "full_100"):
+                            return env_pm
+                        try:
+                            if cfg_perf_file.exists():
+                                m = str(json.loads(cfg_perf_file.read_text(encoding="utf-8")).get("performance_mode", "full_100")).strip().lower()
+                                if m in ("work_70", "full_100"):
+                                    return m
+                        except Exception:
+                            pass
+                        return "full_100"
+
+                    def _acquire_perf_slot():
+                        while not self.should_stop:
+                            pm = _get_live_perf_mode()
+                            limit_slots = 3 if pm == "work_70" else 9
+                            with active_slot_lock:
+                                if active_slot_state["count"] < limit_slots:
+                                    active_slot_state["count"] += 1
+                                    return True
+                            time.sleep(1.0)
+                        return False
+
+                    def _release_perf_slot():
+                        with active_slot_lock:
+                            active_slot_state["count"] = max(0, active_slot_state["count"] - 1)
+
+                    def _run_one_with_auto_retry(mid_item: str, acc_item: Optional[str]):
+                        if not _acquire_perf_slot():
+                            return
+                        try:
+                            # Tổng số lần chạy = 1 lần chạy chính + tối đa `max_retries` (mặc định 3) lần tự động Retry khi lỗi
+                            total_attempts = 1 + max(1, int(max_retries))
+                            last_err: Optional[Exception] = None
+                            for attempt_idx in range(total_attempts):
+                                if self.should_stop:
+                                    return
+                                is_first_try = (attempt_idx == 0)
+                                use_force_rw = bool(force_rewrite_script and is_first_try)
+                                try_acc = acc_item
+                                if attempt_idx > 0 and not preferred_acc_id and len(active_accs) > 1:
+                                    try_acc = active_accs[(attempt_idx) % len(active_accs)] if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") else None
+                                try:
+                                    if attempt_idx > 0:
+                                        retry_msg = f"🔄 [{mid_item}] Tự động Retry lần {attempt_idx}/{max_retries} (Tiếp tục viết phần còn thiếu)..."
+                                        self._update_idea_record(
+                                            mid_item,
+                                            status="RUNNING",
+                                            retry_count=attempt_idx,
+                                            current_step=f"🔄 Đang tự động Retry ({attempt_idx}/{max_retries})...",
+                                        )
+                                        self._emit(
+                                            status="running",
+                                            current_ma_id=mid_item,
+                                            current_step=f"🔄 Tự động Retry ({attempt_idx}/{max_retries})",
+                                            message=retry_msg,
+                                        )
+                                        log_warn("SCRIPT", retry_msg, project_id=mid_item)
+
+                                    res_single = self.run_single_idea_pipeline_sync(
+                                        mid_item,
+                                        try_acc,
+                                        bool(auto_produce_video),       # Viết xong kịch bản nào đẩy sang Render ngay kịch bản đó!
+                                        video_settings,
+                                        target_part_min,
+                                        not bool(auto_produce_video),   # defer_video_handoff=False khi auto_produce_video=True
+                                        use_force_rw,                   # chỉ xóa cũ ở lượt đầu nếu người dùng bấm "Viết Lại"
+                                        ai_provider,
+                                    )
+                                    has_sc_ok, _, _ = self.has_valid_script_on_disk(mid_item)
+                                    if has_sc_ok:
+                                        if auto_produce_video and not (isinstance(res_single, dict) and res_single.get("video_triggered")):
+                                            self.start_render_video_for_ideas_async(
+                                                ma_ids=[mid_item],
+                                                video_settings=video_settings,
+                                                only_unrendered=(len(clean_ids) > 1),
+                                            )
+                                        return
+                                    last_err = RuntimeError("Chưa ghép đủ 3 Part kịch bản chuẩn trên ổ cứng.")
+                                except Exception as exc_try:
+                                    last_err = exc_try
+                                    if self.should_stop or "Đã dừng theo yêu cầu" in str(exc_try):
+                                        return
+                                    # Nếu kịch bản 3 Part đã kịp viết xong trên ổ cứng và auto_produce_video=True -> đẩy luôn vào Render!
+                                    has_sc_now, _, _ = self.has_valid_script_on_disk(mid_item)
+                                    if has_sc_now and auto_produce_video:
                                         self.start_render_video_for_ideas_async(
                                             ma_ids=[mid_item],
                                             video_settings=video_settings,
                                             only_unrendered=(len(clean_ids) > 1),
                                         )
-                                    return
-                                last_err = RuntimeError("Chưa ghép đủ 3 Part kịch bản chuẩn trên ổ cứng.")
-                            except Exception as exc_try:
-                                last_err = exc_try
-                                if self.should_stop or "Đã dừng theo yêu cầu" in str(exc_try):
-                                    return
-                                # Nếu kịch bản 3 Part đã kịp viết xong trên ổ cứng và auto_produce_video=True -> đẩy luôn vào Render!
-                                has_sc_now, _, _ = self.has_valid_script_on_disk(mid_item)
-                                if has_sc_now and auto_produce_video:
-                                    self.start_render_video_for_ideas_async(
-                                        ma_ids=[mid_item],
-                                        video_settings=video_settings,
-                                        only_unrendered=(len(clean_ids) > 1),
-                                    )
-                                    return
-                                if attempt_idx < max_retries:
-                                    wait_s = 3.5 * (attempt_idx + 1)
-                                    log_warn(
-                                        "SCRIPT",
-                                        f"[{mid_item}] ⚠️ Lỗi ở lượt chạy {attempt_idx + 1}: {exc_try} -> Sẽ tự động Retry lần {attempt_idx + 1}/{max_retries} sau {wait_s:.1f}s...",
-                                        project_id=mid_item,
-                                    )
-                                    self._update_idea_record(
-                                        mid_item,
-                                        status="RUNNING",
-                                        retry_count=attempt_idx + 1,
-                                        current_step=f"⏳ Chờ tự động Retry lần {attempt_idx + 1}/{max_retries}...",
-                                    )
-                                    time.sleep(wait_s)
-                                else:
-                                    log_error(
-                                        "SCRIPT",
-                                        f"[{mid_item}] ❌ Đã thử tự động tối đa {max_retries}/{max_retries} lần nhưng vẫn gặp lỗi: {exc_try}",
-                                        project_id=mid_item,
-                                    )
-                                    self._update_idea_record(
-                                        mid_item,
-                                        status="ERROR",
-                                        retry_count=max_retries,
-                                        current_step=f"❌ Lỗi sau {max_retries} lần Retry — Bấm '🔁 Viết Lại' để chạy lại ({str(exc_try)[:55]})",
-                                    )
-                                    raise
+                                        return
+                                    if attempt_idx < max_retries:
+                                        wait_s = 3.5 * (attempt_idx + 1)
+                                        log_warn(
+                                            "SCRIPT",
+                                            f"[{mid_item}] ⚠️ Lỗi ở lượt chạy {attempt_idx + 1}: {exc_try} -> Sẽ tự động Retry lần {attempt_idx + 1}/{max_retries} sau {wait_s:.1f}s...",
+                                            project_id=mid_item,
+                                        )
+                                        self._update_idea_record(
+                                            mid_item,
+                                            status="RUNNING",
+                                            retry_count=attempt_idx + 1,
+                                            current_step=f"⏳ Chờ tự động Retry lần {attempt_idx + 1}/{max_retries}...",
+                                        )
+                                        time.sleep(wait_s)
+                                    else:
+                                        log_error(
+                                            "SCRIPT",
+                                            f"[{mid_item}] ❌ Đã thử tự động tối đa {max_retries}/{max_retries} lần nhưng vẫn gặp lỗi: {exc_try}",
+                                            project_id=mid_item,
+                                        )
+                                        self._update_idea_record(
+                                            mid_item,
+                                            status="ERROR",
+                                            retry_count=max_retries,
+                                            current_step=f"❌ Lỗi sau {max_retries} lần Retry — Bấm '🔁 Viết Lại' để chạy lại ({str(exc_try)[:55]})",
+                                        )
+                                        raise
+                        finally:
+                            _release_perf_slot()
 
                     with ThreadPoolExecutor(max_workers=max_workers) as executor:
                         futs = {}

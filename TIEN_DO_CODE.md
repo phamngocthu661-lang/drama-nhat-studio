@@ -1322,8 +1322,43 @@
   - Commit và đẩy (`git push origin main`) lên kho lưu trữ chính thức `https://github.com/phamngocthu661-lang/drama-nhat-studio`.
 - Ngay sau khi phát hành `V1.0.1`, mọi máy khách đang chạy `V1.0.0` khi mở ứng dụng hoặc bấm nút **`🔄 CẬP NHẬT`** sẽ lập tức thấy thông báo **`🎉 Đã có bản cập nhật V1.0.1 trên GitHub`** kèm nút **`🚀 Cập Nhật Ngay`** (hoặc **`Để sau`**).
 
+---
 
+## Cập nhật: 04/11/2026 (Lần 58) — Tích Hợp 2 Chức Năng Chạy Công Suất Máy: [1] Chạy Full 100% (Như Hiện Tại) & [2] Chạy 70% (Vừa Chạy Vừa Làm Việc Khác) (`backend/pipeline.py`, `backend/renderer.py`, `backend/server.py`, `frontend/index.html`, `frontend/app.js`)
 
+### 1. Thiết Kế 2 Chức Năng Chạy Công Suất Linh Hoạt (Chuyển Đổi Tức Thì Kể Cả Khi Đang Chạy)
+1. **Chức năng 1 — `🔥 1. Chạy Full 100% (Tối Đa Tốc Độ - Như Hiện Tại)` (`mode = "full_100"`)**:
+   - **Ngưỡng tài nguyên (`HardwareResourceBalancer`)**: Tối đa `90.0%` CPU & GPU, `92.0%` RAM.
+   - **Số video Render song song tối đa**: `5` video cùng lúc (`max_concurrent_videos = 5`).
+   - **Luồng CPU FFmpeg & Ưu tiên tiến trình**: Bung tối đa nhân CPU (`os.cpu_count() - 1`), mức ưu tiên chuẩn `Normal`.
+   - **Luồng viết kịch bản AI (`MAX_THREADS_PER_ACCOUNT`)**: `3` tab/tài khoản (tối đa `9` luồng trên 3 Acc).
+2. **Chức năng 2 — `💼 2. Chạy 70% Công Suất (Vừa Chạy Vừa Làm Việc Khác)` (`mode = "work_70"`)**:
+   - **Ngưỡng tài nguyên (`HardwareResourceBalancer`)**: Giới hạn ở **`70.0%` CPU & GPU**, `84.0%` RAM (chừa lại `30%` tài nguyên máy trống hoàn toàn cho các tác vụ khác).
+   - **Số video Render song song tối đa**: Giới hạn tối đa **`3` video cùng lúc** (`max_concurrent_videos = 3`).
+   - **Luồng CPU FFmpeg & Ưu tiên tiến trình ([`backend/renderer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L344-L370))**: Chỉ sử dụng `~60%` số nhân CPU mỗi tiến trình, preset NVENC nhẹ mượt (`p1`), và đặc biệt đặt cờ ưu tiên Windows **`BELOW_NORMAL_PRIORITY_CLASS` (`0x00004000`)** (đồng thời tự động cập nhật `PriorityClass = 'BelowNormal'` cho cả các tiến trình `ffmpeg.exe` đang chạy) để hệ điều hành luôn ưu tiên chuột/bàn phím/trình duyệt của người dùng trước, tuyệt đối không giật lag khi làm việc khác.
+   - **Luồng viết kịch bản AI (`MAX_THREADS_PER_ACCOUNT`)**: Giới hạn `2` tab/tài khoản để giảm tải RAM/CPU của Chrome ngầm.
 
+### 2. Đồng Bộ Giao Diện Ở Cả 3 Vị Trí & API Điều Khiển ([`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html), [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js), [`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py))
+- Bổ sung API `GET /api/performance-mode` và `POST /api/performance-mode` trong [`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py#L806-L818), tự động lưu chế độ đang chọn vào `config.json`.
+- Đặt bộ nút chọn **2 Chức năng chạy (`🔥 1. Chạy Full 100%` | `💼 2. Chạy 70% (Làm Việc Khác)`)** đồng bộ tại 3 vị trí:
+  1. Ngay trên **Thanh Menu 4 Tab Chính (`#studio-tab-nav`)** cạnh nút Cập nhật.
+  2. Trong **Tab 1 (`TRẠM AI ADAS`)** ngay trên nút `Chạy Tự Động A ➔ Z`.
+  3. Trong **Tab 2 (`BÀN DỰNG VIDEO CHÍNH`)** ngay trên nút `🎬 BẮT ĐẦU SẢN XUẤT 1-CLICK`.
+- Đồng bộ toàn bộ sang thư mục [`app/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/app) (chưa đẩy lên GitHub theo đúng quy tắc chỉ đẩy khi Admin yêu cầu).
 
+---
+
+## Cập nhật: 04/11/2026 (Lần 59) — Khóa Cứng Chế Độ Chạy 70% Tối Đa 3 Luồng Trên Toàn Hệ Thống & Phát Hành Chính Thức Bản Cập Nhật `V1.0.2` (Build #102) Lên GitHub (`backend/adas_script_engine.py`, `backend/pipeline.py`, `frontend/index.html`, `frontend/app.js`, `version.json`)
+
+### 1. Khóa Cứng Tối Đa 3 Luồng Khi Ở Chế Độ Chạy 70% (`work_70`)
+- **Trong [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L3952-L4018)**:
+  - Giới hạn cứng `max_workers = min(max_workers, 3)` khi khởi tạo `ThreadPoolExecutor` ở chế độ `work_70`.
+  - Bổ sung cổng điều tiết luồng động thời gian thực `_acquire_perf_slot()` / `_release_perf_slot()` (`limit_slots = 3 if pm == "work_70" else 9`, đọc trực tiếp cả `STUDIO_PERF_MODE` và `config.json`) để kể cả khi đang chạy dở lô kịch bản mà người dùng bấm chuyển sang **`💼 2. Chạy 70% (Tối Đa 3 Luồng)`**, hệ thống sẽ lập tức khóa số luồng đang hoạt động về **tối đa 3 luồng**.
+- **Trong [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L249-L290)**:
+  - Khi chọn `work_70`: đặt `threads_per_acc = 1` (1 luồng/Acc × tối đa 3 Acc = **tối đa 3 luồng AI**), `max_concurrent_videos = 3` (**tối đa 3 luồng Render Video**), và `target_max_percent = 70.0%`.
+- **Cập nhật nhãn hiển thị trên [`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html) và [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js)**:
+  - Hiển thị rõ ràng: **`💼 2. Chạy 70% (Tối Đa 3 Luồng)`** ở cả Thanh Menu Chính, Tab 1 ADAS và Tab 2 Render Video.
+
+### 2. Phát Hành Chính Thức Phiên Bản `V1.0.2` (Build #102) Lên GitHub Cho Máy Khách
+- Thực thi [`push_update_github.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/push_update_github.py) để nâng cấp phiên bản lên **`V1.0.2`** (`Build #102`), tự động đồng bộ sang [`app/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/app) và đẩy (`git push origin main`) lên kho lưu trữ GitHub `https://github.com/phamngocthu661-lang/drama-nhat-studio`.
 

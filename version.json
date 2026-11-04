@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.1",
-  "build_number": 101,
-  "released_at": "2026-11-03 18:03:52",
+  "version": "V1.0.2",
+  "build_number": 102,
+  "released_at": "2026-11-04 08:54:14",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "Gộp thanh Menu 4 Tab duy nhất gọn gàng, bổ sung nút Cập Nhật nổi bật trên thanh Menu chính và tối ưu luồng cập nhật tự động OTA."
+  "changelog": "Bổ sung 2 chức năng chạy: (1) Chạy Full 100% công suất như hiện tại và (2) Chạy 70% công suất (giới hạn tối đa 3 luồng, vừa chạy vừa làm việc khác mượt mà)."
 }

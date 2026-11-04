@@ -3973,7 +3973,7 @@ Capacity: PASS`;
             const latestBuild = Number(ghData.build_number || 100);
             renderUpdateUI({
               success: true,
-              update_available: latestBuild > 100 || latestVer !== curVer,
+              update_available: latestVer !== curVer,
               current_version: curVer,
               latest_version: latestVer,
               changelog: ghData.changelog || ""
@@ -4079,8 +4079,105 @@ Capacity: PASS`;
     }, 120000);
   }
 
+  function setupPerformanceModeSelector() {
+    let currentPerfMode = localStorage.getItem("studio_perf_mode") || "full_100";
+
+    const applyPerfModeUI = (mode) => {
+      const is70 = mode === "work_70";
+      currentPerfMode = is70 ? "work_70" : "full_100";
+      localStorage.setItem("studio_perf_mode", currentPerfMode);
+
+      document.querySelectorAll(".perf-mode-btn").forEach((btn) => {
+        const active = btn.dataset.perfMode === currentPerfMode;
+        if (active) {
+          btn.className = "perf-mode-btn active whitespace-nowrap flex items-center gap-1 px-2.5 py-1 rounded bg-primary-container text-on-primary-fixed font-label-md text-[11px] font-bold shadow-[0_0_10px_rgba(0,255,135,0.35)] transition-all";
+        } else {
+          btn.className = "perf-mode-btn whitespace-nowrap flex items-center gap-1 px-2.5 py-1 rounded bg-transparent hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface font-label-md text-[11px] font-semibold transition-all";
+        }
+      });
+
+      document.querySelectorAll(".perf-mode-card").forEach((card) => {
+        const active = card.dataset.perfMode === currentPerfMode;
+        const dot = card.querySelector(".perf-dot");
+        const titleDiv = card.querySelector("div:first-child");
+        if (active) {
+          card.className = "perf-mode-card active p-2 rounded-lg bg-primary-container/15 border-2 border-primary-container text-left transition-all";
+          if (titleDiv) {
+            titleDiv.classList.add("text-primary");
+            titleDiv.classList.remove("text-on-surface");
+          }
+          if (dot) {
+            dot.className = "perf-dot w-2 h-2 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.8)]";
+          }
+        } else {
+          card.className = "perf-mode-card p-2 rounded-lg bg-surface-container-lowest hover:bg-surface-container border border-surface-container-high text-left transition-all";
+          if (titleDiv) {
+            titleDiv.classList.remove("text-primary");
+            titleDiv.classList.add("text-on-surface");
+          }
+          if (dot) {
+            dot.className = "perf-dot w-2 h-2 rounded-full bg-surface-container-highest";
+          }
+        }
+      });
+
+      document.querySelectorAll(".perf-mode-status-label").forEach((lbl) => {
+        lbl.innerText = is70
+          ? "Đang chọn: 💼 Chạy 70% (Tối đa 3 luồng)"
+          : "Đang chọn: 🔥 Chạy Full 100% (Như hiện tại)";
+      });
+
+      const balancerBadge = document.getElementById("gpu-balancer-badge");
+      if (balancerBadge) {
+        balancerBadge.innerText = is70
+          ? "💼 Chế độ 70% (Vừa làm việc khác): Giới hạn ~70% GPU & CPU (Tối đa 3 luồng)"
+          : "⚡ Chế độ Full 100%: Mục tiêu ~90% GPU & CPU (Tối đa 5 video)";
+      }
+    };
+
+    const setPerfMode = async (targetMode, notifyUser = true) => {
+      const norm = targetMode === "work_70" ? "work_70" : "full_100";
+      applyPerfModeUI(norm);
+      try {
+        await fetch("/api/performance-mode", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: norm }),
+        });
+      } catch (e) {}
+      if (notifyUser) {
+        appendInstantLogToUI(
+          norm === "work_70"
+            ? "💼 Đã bật Chức năng 2: Chạy 70% Công Suất (Khóa cứng tối đa 3 luồng • Giới hạn 70% CPU/GPU • 1 tab AI/Acc) — Vừa chạy vừa làm việc khác mượt mà!"
+            : "🔥 Đã bật Chức năng 1: Chạy Full 100% Công Suất như hiện tại (Ngưỡng 90% CPU/GPU • Tối đa 5 video • 3 tab AI/Acc)!",
+          "SYSTEM",
+          "INFO"
+        );
+      }
+    };
+
+    document.querySelectorAll(".perf-mode-btn, .perf-mode-card").forEach((el) => {
+      el.addEventListener("click", () => {
+        const m = el.dataset.perfMode || "full_100";
+        setPerfMode(m, true);
+      });
+    });
+
+    // Đồng bộ trạng thái ban đầu từ Server
+    applyPerfModeUI(currentPerfMode);
+    fetch("/api/performance-mode")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && d.mode) {
+          applyPerfModeUI(d.mode);
+        }
+      })
+      .catch(() => {});
+  }
+
   setupSystemLogsAndDiagnostics();
   setupVoiceSelectorAndTuning();
   setupWindowCloseAutoShutdown();
   setupGithubOtaAutoUpdater();
+  setupPerformanceModeSelector();
 });

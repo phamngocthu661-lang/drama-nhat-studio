@@ -54,6 +54,8 @@ class HardwareResourceBalancer:
 
     def __init__(self, target_max_percent: float = 90.0):
         self.target_max_percent = float(target_max_percent)
+        self.max_concurrent_videos = 5
+        self.performance_mode = "full_100"
         self._lock = threading.Lock()
         self._last_cpu_times = self._read_win_cpu_times()
         self._last_metrics: Dict[str, float] = {
@@ -151,21 +153,21 @@ class HardwareResourceBalancer:
             }
             return dict(self._last_metrics)
 
-    def has_headroom_for_parallel_task(self, current_active_tasks: int, max_concurrent: int = 5) -> bool:
+    def has_headroom_for_parallel_task(self, current_active_tasks: int, max_concurrent: Optional[int] = None) -> bool:
         """
-        Kiểm tra xem máy còn khoảng trống tài nguyên (< 90% GPU & CPU) để đẩy thêm luồng chạy song song không.
-        GIỚI HẠN TỐI ĐA 5 VIDEO CÙNG LÚC (`max_concurrent = 5`):
-        - Luồng đầu tiên (current_active_tasks == 0) luôn chạy ngay lập tức.
-        - Từ luồng thứ 2 đến luồng thứ 5: chỉ mở thêm khi CPU < 90% và GPU < 90%.
-        - Đạt 5 video đang chạy cùng lúc thì khóa cứng, chờ xong 1 video mới nạp tiếp video sau để kiểm soát lỗi và tránh nghẽn.
+        Kiểm tra xem máy còn khoảng trống tài nguyên để đẩy thêm luồng chạy song song không:
+        - Chế độ Full 100% (`full_100`): Tối đa 5 video cùng lúc, ngưỡng CPU/GPU < 90%, RAM < 92%.
+        - Chế độ 70% (`work_70` - Vừa chạy vừa làm việc khác): Tối đa 3 video cùng lúc, ngưỡng CPU/GPU < 70%, RAM < 84%.
         """
-        if current_active_tasks >= max_concurrent:
+        eff_max = max_concurrent if max_concurrent is not None else self.max_concurrent_videos
+        if current_active_tasks >= eff_max:
             return False
         if current_active_tasks <= 0:
             return True
         m = self.get_metrics(force_refresh=True)
-        limit = self.target_max_percent  # Tối đa 90.0% CPU và 90.0% GPU (Tối đa 5 video cùng lúc)
-        if m["cpu_percent"] < limit and m["gpu_percent"] < limit and m["ram_percent"] < 92.0:
+        limit = self.target_max_percent
+        ram_limit = 84.0 if self.performance_mode == "work_70" else 92.0
+        if m["cpu_percent"] < limit and m["gpu_percent"] < limit and m["ram_percent"] < ram_limit:
             return True
         return False
 
@@ -190,6 +192,7 @@ class ProductionPipeline:
         self.voice_service = VoiceStudioService(self.root_dir)
         self.voicevox_service = VoicevoxStandaloneService(self.root_dir)
         self.resource_balancer = HardwareResourceBalancer(target_max_percent=90.0)
+        self.performance_mode: str = "full_100"
 
         # Trạng thái hiện tại & Hàng đợi động đa luồng (Dynamic Multi-Worker Queue)
         self.lock = threading.Lock()
@@ -221,11 +224,108 @@ class ProductionPipeline:
             "completed_count": 0,
             "error": None,
             "hardware_load": {},
+            "performance_mode": "full_100",
         }
         self.subscribers: list[Callable[[Dict[str, Any]], None]] = []
 
+        # Khôi phục chế độ hiệu suất (100% hoặc 70%) đã lưu trong config.json
+        self._init_performance_mode_from_config()
+
         # BẬT NGAY SERVER VOICE GPU KHI ỨNG DỤNG KHỞI ĐỘNG!
         threading.Thread(target=self._auto_start_gpu_server_on_boot, daemon=True).start()
+
+    def _init_performance_mode_from_config(self):
+        cfg_file = self.root_dir / "config.json"
+        saved_mode = "full_100"
+        if cfg_file.exists():
+            try:
+                cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+                if cfg.get("performance_mode") in ("full_100", "work_70"):
+                    saved_mode = cfg["performance_mode"]
+            except Exception:
+                pass
+        self.set_performance_mode(saved_mode, persist=False)
+
+    def get_performance_mode_info(self) -> Dict[str, Any]:
+        is_70 = self.performance_mode == "work_70"
+        return {
+            "mode": self.performance_mode,
+            "label": "💼 Chạy 70% (Tối Đa 3 Luồng — Vừa Chạy Vừa Làm Việc Khác)" if is_70 else "🔥 Chạy Full 100% (Tối Đa Tốc Độ)",
+            "target_max_percent": self.resource_balancer.target_max_percent,
+            "max_concurrent_videos": self.resource_balancer.max_concurrent_videos,
+            "max_total_threads": 3 if is_70 else 9,
+            "threads_per_account": 1 if is_70 else 3,
+        }
+
+    def set_performance_mode(self, mode: str, persist: bool = True) -> Dict[str, Any]:
+        """
+        Chuyển đổi tức thì giữa 2 chế độ hoạt động (áp dụng ngay cả khi đang chạy):
+        1. `full_100`: Chạy Full 100% công suất (Tối đa 5 video render song song, <90% CPU/GPU, 3 tab AI/Acc = 9 luồng).
+        2. `work_70`: Chạy 70% công suất (Khóa cứng TỐI ĐA 3 LUỒNG trên toàn hệ thống: tối đa 3 luồng viết kịch bản AI / 1 tab mỗi Acc,
+           tối đa 3 luồng render video, <70% CPU/GPU, ưu tiên tiến trình BelowNormal) để người dùng vừa chạy vừa làm việc khác mượt mà.
+        """
+        norm_mode = "work_70" if str(mode or "").strip().lower() in ("work_70", "70", "70%", "balanced") else "full_100"
+        self.performance_mode = norm_mode
+        os.environ["STUDIO_PERF_MODE"] = norm_mode
+
+        if norm_mode == "work_70":
+            self.resource_balancer.performance_mode = "work_70"
+            self.resource_balancer.target_max_percent = 70.0
+            self.resource_balancer.max_concurrent_videos = 3
+            threads_per_acc = 1
+        else:
+            self.resource_balancer.performance_mode = "full_100"
+            self.resource_balancer.target_max_percent = 90.0
+            self.resource_balancer.max_concurrent_videos = 5
+            threads_per_acc = 3
+
+        try:
+            import backend.chatgpt_web_client as _cwc
+            _cwc.MAX_THREADS_PER_ACCOUNT = threads_per_acc
+        except Exception:
+            pass
+        try:
+            import backend.adas_script_engine as _ase
+            _ase.MAX_THREADS_PER_ACCOUNT = threads_per_acc
+        except Exception:
+            pass
+
+        with self.lock:
+            self.state["performance_mode"] = norm_mode
+
+        # Điều chỉnh mức ưu tiên của các tiến trình ffmpeg.exe đang chạy ngay lập tức trên Windows
+        if os.name == "nt":
+            priority_name = "BelowNormal" if norm_mode == "work_70" else "Normal"
+            try:
+                subprocess.Popen(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-Command",
+                        f"Get-Process ffmpeg -ErrorAction SilentlyContinue | ForEach-Object {{ $_.PriorityClass = '{priority_name}' }}",
+                    ],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=0x08000000,
+                )
+            except Exception:
+                pass
+
+        if persist:
+            cfg_file = self.root_dir / "config.json"
+            try:
+                cfg = json.loads(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
+                cfg["performance_mode"] = norm_mode
+                cfg_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+            log_info(
+                "SYSTEM",
+                f"⚡ Đã chuyển sang chế độ [{'💼 CHẠY 70% — Vừa chạy vừa làm việc khác (Giới hạn 70% CPU/GPU • Tối đa 3 video • 2 tab AI/Acc)' if norm_mode == 'work_70' else '🔥 CHẠY FULL 100% — Tối đa công suất (Ngưỡng 90% CPU/GPU • Tối đa 5 video • 3 tab AI/Acc)'}]!",
+            )
+
+        self._notify()
+        return self.get_performance_mode_info()
 
     def _auto_start_gpu_server_on_boot(self):
         """Khởi động sẵn Server Voice GPU đang chọn ngay sau khi cửa sổ giao diện đã mở xong."""
@@ -988,6 +1088,7 @@ class ProductionPipeline:
                                 bgm_path=bgm_path,
                                 bgm_volume=bgm_volume,
                                 progress_callback=render_cb,
+                                performance_mode=self.performance_mode,
                             )
 
                             # Kiểm định nghiêm ngặt tính toàn vẹn & thời lượng của file MP4 vừa xuất
@@ -1252,20 +1353,19 @@ class ProductionPipeline:
                             # Có kịch bản mới vừa được AI viết xong và đẩy vào đúng lúc video trước hoàn tất -> chạy tiếp ngay!
                             continue
 
-                # GIỚI HẠN CHẠY TỐI ĐA 5 VIDEO CÙNG LÚC (MAX 5 CONCURRENT VIDEOS & < 90% CPU/GPU):
-                # Tránh bung ồ ạt hàng chục video cùng lúc gây nghẽn ổ cứng/GPU và khó kiểm soát lỗi.
-                MAX_CONCURRENT_VIDEOS = 5
-                if has_pending and len(active_threads) < MAX_CONCURRENT_VIDEOS:
+                # ĐIỀU PHỐI THEO CHẾ ĐỘ HIỆU SUẤT ĐỘNG (Full 100%: tối đa 5 video <90% CPU/GPU | Chế độ 70%: tối đa 3 video <70% CPU/GPU):
+                max_concurrent_videos = int(self.resource_balancer.max_concurrent_videos or 5)
+                if has_pending and len(active_threads) < max_concurrent_videos:
                     can_dispatch = (
                         len(active_threads) == 0
                         or self.resource_balancer.has_headroom_for_parallel_task(
                             len(active_threads),
-                            max_concurrent=MAX_CONCURRENT_VIDEOS,
+                            max_concurrent=max_concurrent_videos,
                         )
                     )
                     if can_dispatch:
                         with self.lock:
-                            if self.pending_jobs and not self.should_stop and len(self.active_projects) < MAX_CONCURRENT_VIDEOS:
+                            if self.pending_jobs and not self.should_stop and len(self.active_projects) < max_concurrent_videos:
                                 next_job = self.pending_jobs.pop(0)
                                 job_counter += 1
                                 total_jobs = max(job_counter + len(self.pending_jobs), self.state.get("batch_total", 1))
