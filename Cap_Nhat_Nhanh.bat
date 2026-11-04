@@ -4,7 +4,7 @@ title CẬP NHẬT TỰ ĐỘNG DRAMA NHẬT STUDIO TỪ GITHUB (KHÔNG MẤT K�
 color 0A
 
 echo ============================================================================
-echo   CÔNG CỤ CẬP NHẬT TỰ ĐỘNG — DRAMA NHẬT STUDIO (OTA GITHUB + LOCAL)
+echo   CÔNG CỤ CẬP NHẬT TỰ ĐỘNG — DRAMA NHẬT STUDIO (OTA GITHUB V1.0.3+)
 echo   - Tự động tải bản mới nhất trực tiếp từ GitHub chính thức
 echo   - Giữ nguyên 100%% Kịch bản đã tạo (projects/, saved_ideas.json)
 echo   - Giữ nguyên 100%% Key bản quyền (license.json) ^& Chrome (BROWSER_PROFILE)
@@ -33,25 +33,38 @@ if exist "%SRC_DIR%\bin" (
 )
 
 if /I not "%SRC_DIR%"=="%TARGET_DIR%" (
-    echo [2/4] Đang chép file từ gói giải nén vào thư mục chính: "%TARGET_DIR%"
-    xcopy "%SRC_DIR%\backend\*" "%TARGET_DIR%\backend\" /E /I /Y /Q >nul
-    xcopy "%SRC_DIR%\frontend\*" "%TARGET_DIR%\frontend\" /E /I /Y /Q >nul
-    xcopy "%SRC_DIR%\adas_skills\*" "%TARGET_DIR%\adas_skills\" /E /I /Y /Q >nul
-    if exist "%SRC_DIR%\app" xcopy "%SRC_DIR%\app\*" "%TARGET_DIR%\app\" /E /I /Y /Q >nul
-    for %%F in (main.py install_setup.py requirements.txt version.json Chay_App.bat Cai_Dat_May_Moi.bat QUY_TRINH_HOAT_DONG.md TIEN_DO_CODE.md) do (
-        if exist "%SRC_DIR%\%%F" copy /Y "%SRC_DIR%\%%F" "%TARGET_DIR%\%%F" >nul
+    if exist "%SRC_DIR%\backend" (
+        echo [2/4] Đang chép file từ gói giải nén vào thư mục chính: "%TARGET_DIR%"
+        xcopy "%SRC_DIR%\backend\*" "%TARGET_DIR%\backend\" /E /I /Y /Q >nul
+        xcopy "%SRC_DIR%\frontend\*" "%TARGET_DIR%\frontend\" /E /I /Y /Q >nul
+        xcopy "%SRC_DIR%\adas_skills\*" "%TARGET_DIR%\adas_skills\" /E /I /Y /Q >nul
+        if exist "%SRC_DIR%\app" xcopy "%SRC_DIR%\app\*" "%TARGET_DIR%\app\" /E /I /Y /Q >nul
+        for %%F in (main.py install_setup.py requirements.txt version.json Chay_App.bat Cai_Dat_May_Moi.bat QUY_TRINH_HOAT_DONG.md TIEN_DO_CODE.md) do (
+            if exist "%SRC_DIR%\%%F" copy /Y "%SRC_DIR%\%%F" "%TARGET_DIR%\%%F" >nul
+        )
     )
 )
 
-:: 3. Tự động gọi updater_service.py để tải bản mới nhất trực tiếp từ GitHub về máy
-echo [3/4] Đang kết nối GitHub để tải và cập nhật phiên bản mới nhất...
-cd /d "%TARGET_DIR%"
-set "PY_CMD=python"
-if exist "%TARGET_DIR%\python_path.txt" (
-    set /p SAVED_PY=<"%TARGET_DIR%\python_path.txt"
-    if exist "%SAVED_PY%" set "PY_CMD=%SAVED_PY%"
+:: 3. Tự động tải bản mới nhất trực tiếp từ GitHub bằng curl.exe + tar của Windows (Chạy được cả trên máy khách bản cũ chưa có updater_service.py)
+echo [3/4] Đang tải gói cập nhật mới nhất từ GitHub (phamngocthu661-lang/drama-nhat-studio)...
+set "GH_TMP=%TARGET_DIR%\_gh_ota_tmp"
+if exist "%GH_TMP%" rmdir /S /Q "%GH_TMP%" >nul 2>&1
+mkdir "%GH_TMP%" >nul 2>&1
+
+curl.exe -L -k -s -o "%GH_TMP%\update.zip" "https://codeload.github.com/phamngocthu661-lang/drama-nhat-studio/zip/refs/heads/main"
+if exist "%GH_TMP%\update.zip" (
+    tar -xf "%GH_TMP%\update.zip" -C "%GH_TMP%" >nul 2>&1
+    for /d %%D in ("%GH_TMP%\drama-nhat-studio-*") do (
+        echo       -^> Đang nâng cấp mã nguồn lên phiên bản mới nhất...
+        xcopy "%%D\backend\*" "%TARGET_DIR%\backend\" /E /I /Y /Q >nul
+        xcopy "%%D\frontend\*" "%TARGET_DIR%\frontend\" /E /I /Y /Q >nul
+        xcopy "%%D\adas_skills\*" "%TARGET_DIR%\adas_skills\" /E /I /Y /Q >nul
+        for %%F in (main.py install_setup.py requirements.txt version.json Chay_App.bat Cai_Dat_May_Moi.bat QUY_TRINH_HOAT_DONG.md TIEN_DO_CODE.md) do (
+            if exist "%%D\%%F" copy /Y "%%D\%%F" "%TARGET_DIR%\%%F" >nul 2>&1
+        )
+    )
 )
-"%PY_CMD%" -c "import sys; from pathlib import Path; sys.path.insert(0, r'%TARGET_DIR%'); from backend.updater_service import apply_github_update; res = apply_github_update(Path(r'%TARGET_DIR%')); print(res.get('message') or res.get('error'))" 2>nul
+if exist "%GH_TMP%" rmdir /S /Q "%GH_TMP%" >nul 2>&1
 
 :: Đồng bộ sang thư mục app/
 if exist "%TARGET_DIR%\app" (
@@ -62,8 +75,9 @@ if exist "%TARGET_DIR%\app" (
     copy /Y "%TARGET_DIR%\version.json" "%TARGET_DIR%\app\version.json" >nul 2>&1
 )
 
+echo       -^> Đã nâng cấp thành công lên phiên bản mới nhất!
 echo.
-echo [4/4] Đang khởi động Drama Nhật Studio phiên bản mới nhất...
+echo [4/4] Đang khởi động Drama Nhật Studio...
 cd /d "%TARGET_DIR%"
 if exist "%TARGET_DIR%\Drama_Nhat_Studio.exe" (
     start "" "%TARGET_DIR%\Drama_Nhat_Studio.exe"
