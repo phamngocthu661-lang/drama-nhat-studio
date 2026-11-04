@@ -539,9 +539,18 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
         return {"success": True, **res}
 
     @app.post("/api/adas/check-and-repair-all")
-    def api_adas_check_and_repair_all():
+    def api_adas_check_and_repair_all(payload: dict = None):
+        payload = payload or {}
+        action = str(payload.get("action") or "").strip().lower()
+        folder_path = str(payload.get("folder_path") or "").strip() or None
         try:
-            res = adas_engine.check_and_repair_all_projects()
+            if action == "start":
+                res = adas_engine.start_check_and_repair_async(custom_folder=folder_path)
+                return {"success": True, **res}
+            if action == "status":
+                res = adas_engine.get_check_and_repair_status()
+                return {"success": True, **res}
+            res = adas_engine.check_and_repair_all_projects(custom_folder=folder_path)
             return {"success": True, **res}
         except Exception as e:
             raise HTTPException(status_code=500, detail=str(e))

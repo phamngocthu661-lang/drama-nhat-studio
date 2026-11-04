@@ -1703,7 +1703,7 @@ def _auto_patch_live_instances_on_reload():
                     live_balancers.append(obj)
                 elif cls_name == "ProductionPipeline":
                     live_pipelines.append(obj)
-                elif cls_name == "AdasScriptEngine":
+                elif cls_name in ("ADASScriptEngine", "AdasScriptEngine"):
                     live_adas_engines.append(obj)
                 elif cls_name == "FastAPI":
                     live_fastapi_apps.append(obj)
@@ -1746,24 +1746,30 @@ def _auto_patch_live_instances_on_reload():
 
         try:
             import backend.adas_script_engine as _adas_mod
-            for a_inst in live_adas_engines:
-                try:
-                    for k, v in vars(_adas_mod.AdasScriptEngine).items():
-                        if not k.startswith("__"):
-                            try:
-                                setattr(a_inst.__class__, k, v)
-                            except Exception:
-                                pass
+            try:
+                importlib.reload(_adas_mod)
+            except Exception:
+                pass
+            adas_cls = getattr(_adas_mod, "ADASScriptEngine", None) or getattr(_adas_mod, "AdasScriptEngine", None)
+            if adas_cls is not None:
+                for a_inst in live_adas_engines:
                     try:
-                        a_inst.__class__ = _adas_mod.AdasScriptEngine
+                        for k, v in vars(adas_cls).items():
+                            if not k.startswith("__"):
+                                try:
+                                    setattr(a_inst.__class__, k, v)
+                                except Exception:
+                                    pass
+                        try:
+                            a_inst.__class__ = adas_cls
+                        except Exception:
+                            pass
                     except Exception:
                         pass
-                except Exception:
-                    pass
         except Exception:
             pass
 
-        # Tự động tiêm route /api/performance-mode và /api/adas/check-and-repair-all vào FastAPI app nếu server cũ chưa có
+        # Tự động tiêm/cập nhật route /api/performance-mode và /api/adas/check-and-repair-all vào FastAPI app
         if live_fastapi_apps:
             from starlette.routing import Route
             from starlette.responses import JSONResponse
@@ -1784,13 +1790,31 @@ def _auto_patch_live_instances_on_reload():
                     return JSONResponse({"success": True, **info})
                 return JSONResponse({"success": True, **main_pipeline.get_performance_mode_info()})
 
-            def _dynamic_check_and_repair_all_handler(request):
+            async def _dynamic_check_and_repair_all_handler(request):
                 try:
-                    if main_adas is not None and hasattr(main_adas, "check_and_repair_all_projects"):
-                        res = main_adas.check_and_repair_all_projects()
-                        return JSONResponse({"success": True, **res})
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        body = {}
+                    if not isinstance(body, dict):
+                        body = {}
+                    action = str(body.get("action") or "").strip().lower()
+                    folder_path = str(body.get("folder_path") or "").strip() or None
+
+                    if main_adas is not None:
+                        if action == "start" and hasattr(main_adas, "start_check_and_repair_async"):
+                            res = main_adas.start_check_and_repair_async(custom_folder=folder_path)
+                            return JSONResponse({"success": True, **res})
+                        if action == "status" and hasattr(main_adas, "get_check_and_repair_status"):
+                            res = main_adas.get_check_and_repair_status()
+                            return JSONResponse({"success": True, **res})
+                        if hasattr(main_adas, "check_and_repair_all_projects"):
+                            from starlette.concurrency import run_in_threadpool
+                            res = await run_in_threadpool(main_adas.check_and_repair_all_projects, folder_path)
+                            return JSONResponse({"success": True, **res})
+
                     from backend.voice_service import check_and_repair_all_projects_sync
-                    p_dir = getattr(main_adas, "projects_dir", None) or (Path(__file__).resolve().parent.parent / "projects")
+                    p_dir = Path(folder_path) if folder_path else (getattr(main_adas, "projects_dir", None) or (Path(__file__).resolve().parent.parent / "projects"))
                     res = check_and_repair_all_projects_sync(p_dir)
                     return JSONResponse({"success": True, **res})
                 except Exception as e:
@@ -1810,15 +1834,16 @@ def _auto_patch_live_instances_on_reload():
                                     methods=["GET", "POST"],
                                 ),
                             )
-                        if "/api/adas/check-and-repair-all" not in existing_paths:
-                            routes_list.insert(
-                                0,
-                                Route(
-                                    "/api/adas/check-and-repair-all",
-                                    endpoint=_dynamic_check_and_repair_all_handler,
-                                    methods=["POST"],
-                                ),
-                            )
+                        # Luôn cập nhật route /api/adas/check-and-repair-all lên bản mới nhất ở đầu danh sách
+                        routes_list[:] = [r for r in routes_list if getattr(r, "path", "") != "/api/adas/check-and-repair-all"]
+                        routes_list.insert(
+                            0,
+                            Route(
+                                "/api/adas/check-and-repair-all",
+                                endpoint=_dynamic_check_and_repair_all_handler,
+                                methods=["POST"],
+                            ),
+                        )
                 except Exception:
                     pass
     except Exception:

@@ -2906,10 +2906,10 @@ Capacity: PASS`;
     async function handleCheckAndRepairAllProjects(btnEl) {
       if (!btnEl) return;
       if (!confirm(
-        "🛡️ BẠN CÓ MUỐN QUÉT & DỌN SẠCH TOÀN BỘ KỊCH BẢN + VIDEO LỖI (PHƯƠNG ÁN 1)?\n\n" +
+        "🛡️ BẠN CÓ MUỐN QUÉT & DỌN SẠCH TOÀN BỘ KỊCH BẢN + VIDEO LỖI (PHƯƠNG ÁN 1 — 2 GIAI ĐOẠN SIÊU TỐC)?\n\n" +
         "Hệ thống sẽ thực hiện tự động:\n" +
-        "1️⃣ Quét toàn bộ kịch bản (.txt) và phụ đề (.srt) trong kho để xóa sạch các dòng [LOCKED_TITLE], PART A/B/C, STEP 3 bị rò rỉ.\n" +
-        "2️⃣ Với các dự án ĐÃ TẠO VIDEO (.mp4) hoặc VOICE (.wav) bị đọc nhầm câu tiêu đề: Tự động cắt bỏ chính xác giây đọc nhầm bằng FFmpeg Stream Copy (Phương án 1 — chỉ mất vài giây/video, không cần render lại từ đầu).\n" +
+        "1️⃣ GIAI ĐOẠN 1 (1–2 giây): Quét toàn bộ kịch bản (.txt) và phụ đề (.srt) trong kho để xóa sạch 100% các dòng [LOCKED_TITLE], PART A/B/C, STEP 3 bị rò rỉ.\n" +
+        "2️⃣ GIAI ĐOẠN 2 (4–8 giây/video): Chỉ với các dự án ĐÃ TẠO VIDEO (.mp4) hoặc VOICE (.wav) bị đọc nhầm câu tiêu đề -> Tự động cắt bỏ chính xác giây đọc nhầm bằng FFmpeg Stream Copy & Python WAV Slicer (hiển thị trực tiếp từng video 1/N, 2/N đang cắt).\n" +
         "3️⃣ Xuất báo cáo chi tiết tại BAO_CAO_CHECK_VA_DON_TOAN_BO.txt.\n\n" +
         "Bấm OK để bắt đầu quét và dọn sạch ngay!"
       )) {
@@ -2923,59 +2923,116 @@ Capacity: PASS`;
       allRepairBtns.forEach((b) => {
         origHtmlMap.set(b, b.innerHTML);
         b.disabled = true;
-        b.innerText = "⏳ Đang quét & dọn lỗi...";
+        b.innerText = "⚡ Bước 1/2: Đang dọn Kịch bản...";
       });
 
       appendInstantLogToUI(
-        "🛡️ [CHECK TOÀN BỘ - PHƯƠNG ÁN 1] Đang quét toàn bộ kịch bản (.txt/.srt) và cắt dọn đoạn đọc nhầm [LOCKED_TITLE] trong file Voice (.wav) & Video (.mp4)...",
+        "🛡️ [CHECK TOÀN BỘ - 2 GIAI ĐOẠN SIÊU TỐC] Bắt đầu Giai đoạn 1: Quét & dọn sạch toàn bộ Kịch bản (.txt/.srt)...",
         "SYSTEM",
         "INFO"
       );
 
+      const customOut = (outputDirInput && outputDirInput.value) ? outputDirInput.value.trim() : "";
+
+      const showCompletionSummary = (data) => {
+        if (Array.isArray(data.ideas)) {
+          renderSavedIdeasList(data.ideas);
+        }
+        const totalProj = data.total_projects || data.total_scanned || 0;
+        const totalLines = data.total_leaked_lines_removed || data.total_lines_removed || 0;
+        const repairedScriptStr = (data.repaired_script_ids && data.repaired_script_ids.length > 0)
+          ? data.repaired_script_ids.join(", ")
+          : "Không có (Đã sạch 100%)";
+        const repairedVideoStr = (data.repaired_video_ids && data.repaired_video_ids.length > 0)
+          ? data.repaired_video_ids.join(", ")
+          : "Không có video nào bị dính";
+        const repairedVoiceStr = (data.repaired_voice_ids && data.repaired_voice_ids.length > 0)
+          ? data.repaired_voice_ids.join(", ")
+          : "Không có file voice nào bị dính";
+
+        appendInstantLogToUI(
+          `✅ [CHECK TOÀN BỘ HOÀN TẤT] Đã quét ${totalProj} dự án (${data.elapsed_sec || 0}s) | ` +
+          `Sửa kịch bản: ${data.scripts_repaired_count || 0} mã (${totalLines} dòng) | ` +
+          `Dọn phụ đề SRT: ${data.srts_repaired_count || 0} mã | ` +
+          `Cắt dọn Voice WAV: ${data.voices_repaired_count || 0} mã | ` +
+          `Cắt dọn Video MP4: ${data.videos_repaired_count || 0} video.`,
+          "SYSTEM",
+          "INFO"
+        );
+
+        alert(
+          `🎉 HOÀN TẤT CHECK & DỌN SẠCH TOÀN BỘ (PHƯƠNG ÁN 1)!\n\n` +
+          `• Tổng số dự án đã kiểm tra: ${totalProj} dự án (Tổng thời gian: ${data.elapsed_sec || 0}s | Dọn KB: ${data.phase1_script_sec || 0}s)\n` +
+          `• Số kịch bản (.txt) đã lọc sạch [LOCKED_TITLE]: ${data.scripts_repaired_count || 0} kịch bản (${totalLines} dòng lỗi)\n` +
+          `• Số phụ đề (.srt) đã dọn & dịch khớp thời gian: ${data.srts_repaired_count || 0} file\n` +
+          `• Số file Voice (.wav) đã cắt bỏ đoạn đọc nhầm: ${data.voices_repaired_count || 0} file\n` +
+          `• Số Video (.mp4) đã cắt bỏ đoạn đọc nhầm: ${data.videos_repaired_count || 0} video\n\n` +
+          `📌 Mã kịch bản đã sửa: ${repairedScriptStr}\n` +
+          `📌 Mã Voice đã dọn: ${repairedVoiceStr}\n` +
+          `📌 Mã Video MP4 đã dọn: ${repairedVideoStr}\n\n` +
+          `📄 Báo cáo chi tiết đã lưu tại:\n${data.report_path || "BAO_CAO_CHECK_VA_DON_TOAN_BO.txt"}`
+        );
+      };
+
       try {
-        const res = await fetch("/api/adas/check-and-repair-all", {
+        const startRes = await fetch("/api/adas/check-and-repair-all", {
           method: "POST",
-          headers: { "Content-Type": "application/json" }
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "start", folder_path: customOut || "" })
         });
-        const data = await res.json().catch(() => ({}));
-        if (res.ok && data.success) {
-          if (Array.isArray(data.ideas)) {
-            renderSavedIdeasList(data.ideas);
+        const startData = await startRes.json().catch(() => ({}));
+        if (!startRes.ok || !startData.success) {
+          alert("❌ Lỗi khi khởi chạy Check & Dọn Toàn Bộ: " + (startData.detail || startData.error || "Không xác định"));
+          return;
+        }
+
+        // Nếu server trả về kết quả đồng bộ ngay lập tức (fallback)
+        if (!startData.async_started && (startData.total_scanned !== undefined || startData.total_projects !== undefined)) {
+          showCompletionSummary(startData);
+          return;
+        }
+
+        // Vòng lặp theo dõi tiến độ thời gian thực mỗi 0.7 giây (không bao giờ bị treo HTTP)
+        let seenLogCount = 0;
+        while (true) {
+          await new Promise((r) => setTimeout(r, 700));
+          const stRes = await fetch("/api/adas/check-and-repair-all", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "status" })
+          });
+          if (!stRes.ok) continue;
+          const stData = await stRes.json().catch(() => ({}));
+          if (!stData || !stData.success) continue;
+
+          const logsArr = Array.isArray(stData.logs) ? stData.logs : [];
+          while (seenLogCount < logsArr.length) {
+            appendInstantLogToUI(logsArr[seenLogCount], "SCRIPT", "INFO");
+            seenLogCount++;
           }
-          const repairedScriptStr = (data.repaired_script_ids && data.repaired_script_ids.length > 0)
-            ? data.repaired_script_ids.join(", ")
-            : "Không có (Đã sạch 100%)";
-          const repairedVideoStr = (data.repaired_video_ids && data.repaired_video_ids.length > 0)
-            ? data.repaired_video_ids.join(", ")
-            : "Không có video nào bị dính";
-          const repairedVoiceStr = (data.repaired_voice_ids && data.repaired_voice_ids.length > 0)
-            ? data.repaired_voice_ids.join(", ")
-            : "Không có file voice nào bị dính";
 
-          appendInstantLogToUI(
-            `✅ [CHECK TOÀN BỘ HOÀN TẤT] Đã quét ${data.total_projects || 0} dự án (${data.elapsed_sec || 0}s) | ` +
-            `Sửa kịch bản: ${data.scripts_repaired_count || 0} mã (${data.total_leaked_lines_removed || 0} dòng) | ` +
-            `Dọn phụ đề SRT: ${data.srts_repaired_count || 0} mã | ` +
-            `Cắt dọn Voice WAV: ${data.voices_repaired_count || 0} mã | ` +
-            `Cắt dọn Video MP4: ${data.videos_repaired_count || 0} video.`,
-            "SYSTEM",
-            "INFO"
-          );
+          const pct = Math.round(Number(stData.progress || 0));
+          const rawMsg = String(stData.status_text || "Đang xử lý...");
+          let shortBtnTxt = `⏳ ${pct}% • Đang dọn lỗi...`;
+          const mStep1 = rawMsg.match(/Đang quét\s+(\d+\/\d+)/i);
+          const mStep2 = rawMsg.match(/Video\s+(\d+\/\d+\s*•\s*[A-Za-z0-9_]+)/i);
+          if (mStep2) {
+            shortBtnTxt = `✂️ ${pct}% • Video ${mStep2[1]}`;
+          } else if (mStep1) {
+            shortBtnTxt = `⚡ ${pct}% • Quét KB ${mStep1[1]}`;
+          }
+          allRepairBtns.forEach((b) => {
+            b.innerText = shortBtnTxt;
+          });
 
-          alert(
-            `🎉 HOÀN TẤT CHECK & DỌN SẠCH TOÀN BỘ (PHƯƠNG ÁN 1)!\n\n` +
-            `• Tổng số dự án đã kiểm tra: ${data.total_projects || 0} dự án (Thời gian: ${data.elapsed_sec || 0}s)\n` +
-            `• Số kịch bản (.txt) đã lọc sạch [LOCKED_TITLE]: ${data.scripts_repaired_count || 0} kịch bản (${data.total_leaked_lines_removed || 0} dòng lỗi)\n` +
-            `• Số phụ đề (.srt) đã dọn & dịch khớp thời gian: ${data.srts_repaired_count || 0} file\n` +
-            `• Số file Voice (.wav) đã cắt bỏ đoạn đọc nhầm: ${data.voices_repaired_count || 0} file\n` +
-            `• Số Video (.mp4) đã cắt bỏ đoạn đọc nhầm: ${data.videos_repaired_count || 0} video\n\n` +
-            `📌 Mã kịch bản đã sửa: ${repairedScriptStr}\n` +
-            `📌 Mã Voice đã dọn: ${repairedVoiceStr}\n` +
-            `📌 Mã Video MP4 đã dọn: ${repairedVideoStr}\n\n` +
-            `📄 Báo cáo chi tiết đã lưu tại:\n${data.report_path || "BAO_CAO_CHECK_VA_DON_TOAN_BO.txt"}`
-          );
-        } else {
-          alert("❌ Lỗi khi Check & Dọn Toàn Bộ: " + (data.detail || data.error || "Không xác định"));
+          if (stData.completed || !stData.running) {
+            if (stData.error) {
+              alert("❌ Lỗi khi Check & Dọn Toàn Bộ: " + stData.error);
+            } else if (stData.result) {
+              showCompletionSummary(stData.result);
+            }
+            break;
+          }
         }
       } catch (err) {
         alert("❌ Lỗi kết nối khi Check & Dọn Toàn Bộ: " + err.message);

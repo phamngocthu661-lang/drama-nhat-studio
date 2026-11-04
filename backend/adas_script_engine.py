@@ -1448,6 +1448,8 @@ class ADASScriptEngine:
           và gắn trạng thái `PARTIAL_SCRIPT` (`⚠️ Thiếu Part B, C`) để người dùng bấm chạy viết tiếp ngay phần còn thiếu!
         """
         now_sync = time.time()
+        if getattr(self, "is_checking_repairing", False):
+            return
         if not force_restore_deleted and (now_sync - getattr(self, "_last_disk_sync_ts", 0.0) < 6.0):
             return
         with self.ideas_io_lock:
@@ -1771,24 +1773,58 @@ class ADASScriptEngine:
             "ideas": after_list,
         }
 
-    def check_and_repair_all_projects(self) -> Dict[str, Any]:
+    def _resolve_target_projects_dir(self, custom_folder: Optional[str] = None) -> Path:
+        if custom_folder and str(custom_folder).strip():
+            cand = Path(str(custom_folder).strip())
+            if cand.exists() and cand.is_dir():
+                if (cand / "projects").exists() and (cand / "projects").is_dir():
+                    return cand / "projects"
+                return cand
+        return self.projects_dir
+
+    def check_and_repair_all_projects(self, custom_folder: Optional[str] = None) -> Dict[str, Any]:
         """
-        Nút "🛡️ Check Toàn Bộ":
-        1. Quét toàn bộ thư mục `projects/` để kiểm tra lại hết tất cả các kịch bản đã tạo -> nếu dính `[LOCKED_TITLE]` / Metadata thì xóa & sửa lại ngay.
-        2. Nếu dự án đã tạo Video MP4 / Voice -> tự động cắt bỏ trực tiếp các đoạn giây đọc `[LOCKED_TITLE]` khỏi file `.mp4`, `master_voice.wav` và `subtitles.srt` (Phương án 1).
-        3. Đồng bộ lại danh sách Kho Dự Án và trả về kết quả chi tiết.
+        Nút "🛡️ Check Toàn Bộ" (2 Giai đoạn siêu tốc):
+        1. GIAI ĐOẠN 1 (1–2s): Quét toàn bộ thư mục `projects/` để xóa sạch `[LOCKED_TITLE]` / Metadata trong tất cả kịch bản `.txt`.
+        2. GIAI ĐOẠN 2 (4–8s/video): Tự động cắt bỏ trực tiếp các đoạn giây đọc `[LOCKED_TITLE]` khỏi file `.mp4`, `master_voice.wav` và `subtitles.srt`.
+        3. Đồng bộ lại danh sách Kho Dự Án (chỉ làm mới đúng các mã vừa sửa, không chạy lại ffprobe toàn bộ kho).
         """
         from .voice_service import check_and_repair_all_projects_sync
+
+        target_dir = self._resolve_target_projects_dir(custom_folder)
+        self.is_checking_repairing = True
+        if not hasattr(self, "_check_repair_state") or not isinstance(getattr(self, "_check_repair_state", None), dict):
+            self._check_repair_state = {
+                "running": False,
+                "completed": False,
+                "progress": 0.0,
+                "status_text": "",
+                "logs": [],
+                "result": None,
+                "error": "",
+            }
+
+        self._check_repair_state.update({
+            "running": True,
+            "completed": False,
+            "progress": 2.0,
+            "status_text": f"🛡️ Đang quét kịch bản tại [{target_dir}]...",
+            "logs": [],
+            "result": None,
+            "error": "",
+        })
 
         self._emit(
             status="running",
             current_step="🛡️ Đang Check Toàn Bộ Kịch Bản & Video MP4...",
             progress=2.0,
-            message=f"🛡️ Đang quét toàn bộ thư mục [{self.projects_dir}] để dọn sạch [LOCKED_TITLE] trong Kịch bản & Video MP4...",
+            message=f"🛡️ Đang quét toàn bộ thư mục [{target_dir}] để dọn sạch [LOCKED_TITLE] trong Kịch bản & Video MP4...",
         )
-        log_info("SCRIPT", f"🛡️ Bắt đầu chạy Check Toàn Bộ Kịch Bản & Video tại [{self.projects_dir}]...")
+        log_info("SCRIPT", f"🛡️ Bắt đầu chạy Check Toàn Bộ Kịch Bản & Video tại [{target_dir}]...")
 
         def _prog_cb(pct: float, msg: str):
+            self._check_repair_state["progress"] = pct
+            self._check_repair_state["status_text"] = msg
             self._emit(
                 status="running",
                 current_step="🛡️ Check Toàn Bộ (Dọn Kịch Bản & Video Lỗi)",
@@ -1796,17 +1832,35 @@ class ADASScriptEngine:
                 message=msg,
             )
 
-        summary = check_and_repair_all_projects_sync(self.projects_dir, progress_cb=_prog_cb)
-        if hasattr(self, "_proj_dir_mtime_cache"):
-            self._proj_dir_mtime_cache.clear()
-        if hasattr(self, "_mp4_valid_cache"):
-            self._mp4_valid_cache.clear()
-        self._last_disk_sync_ts = 0.0
-        self._sync_projects_disk_state(force_restore_deleted=False)
+        def _log_cb(msg: str):
+            self._check_repair_state["logs"].append(msg)
+            log_info("SCRIPT", msg)
+
+        try:
+            summary = check_and_repair_all_projects_sync(target_dir, progress_cb=_prog_cb, log_cb=_log_cb)
+            touched_ids = set((summary.get("repaired_script_ids") or []) + (summary.get("repaired_video_ids") or []))
+            if hasattr(self, "_proj_dir_mtime_cache") and isinstance(self._proj_dir_mtime_cache, dict):
+                for tid in touched_ids:
+                    self._proj_dir_mtime_cache.pop(tid, None)
+            if hasattr(self, "_mp4_valid_cache") and isinstance(self._mp4_valid_cache, dict):
+                for vid in (summary.get("repaired_video_ids") or []):
+                    mp4_p = target_dir / vid / "renders" / f"{vid}_master.mp4"
+                    if mp4_p.exists():
+                        try:
+                            st_v = mp4_p.stat()
+                            self._mp4_valid_cache[vid] = (st_v.st_mtime_ns, st_v.st_size, True, "ok")
+                        except Exception:
+                            self._mp4_valid_cache.pop(vid, None)
+        finally:
+            self.is_checking_repairing = False
+
+        if touched_ids:
+            self._last_disk_sync_ts = 0.0
+            self._sync_projects_disk_state(force_restore_deleted=False)
         ideas_after = self.load_saved_ideas()
 
         done_msg = (
-            f"✅ Check Toàn Bộ hoàn tất ({summary['total_scanned']} dự án): "
+            f"✅ Check Toàn Bộ hoàn tất ({summary['total_scanned']} dự án trong {summary['elapsed_sec']}s): "
             f"Đã sửa sạch {summary['scripts_repaired_count']} Kịch bản, "
             f"cắt bỏ đoạn lỗi trong {summary['videos_repaired_count']} Video MP4 "
             f"(Tổng {summary['total_lines_removed']} dòng/khung [LOCKED_TITLE] đã xóa)!"
@@ -1818,10 +1872,82 @@ class ADASScriptEngine:
             message=done_msg,
         )
         log_info("SCRIPT", done_msg)
-        return {
+        final_res = {
             **summary,
             "ideas": ideas_after,
             "message": done_msg,
+        }
+        self._check_repair_state["running"] = False
+        self._check_repair_state["completed"] = True
+        self._check_repair_state["progress"] = 100.0
+        self._check_repair_state["status_text"] = done_msg
+        self._check_repair_state["result"] = final_res
+        return final_res
+
+    def start_check_and_repair_async(self, custom_folder: Optional[str] = None) -> Dict[str, Any]:
+        """Khởi chạy Check Toàn Bộ trong luồng ngầm để giao diện nhận tiến độ thời gian thực từng giây mà không bao giờ bị treo HTTP."""
+        st = getattr(self, "_check_repair_state", None)
+        if isinstance(st, dict) and st.get("running"):
+            return {
+                "async_started": True,
+                "running": True,
+                "completed": False,
+                "progress": st.get("progress", 5.0),
+                "status_text": st.get("status_text", "⏳ Đang quét & dọn lỗi..."),
+                "logs": list(st.get("logs", [])),
+            }
+
+        self._check_repair_state = {
+            "running": True,
+            "completed": False,
+            "progress": 1.0,
+            "status_text": "⚡ Đang khởi động Giai đoạn 1: Quét & dọn sạch toàn bộ Kịch bản (.txt)...",
+            "logs": [],
+            "result": None,
+            "error": "",
+        }
+
+        def _bg_worker():
+            try:
+                self.check_and_repair_all_projects(custom_folder=custom_folder)
+            except Exception as e:
+                self.is_checking_repairing = False
+                self._check_repair_state["running"] = False
+                self._check_repair_state["completed"] = True
+                self._check_repair_state["error"] = str(e)
+                self._check_repair_state["status_text"] = f"❌ Lỗi khi Check Toàn Bộ: {e}"
+
+        t = threading.Thread(target=_bg_worker, daemon=True)
+        t.start()
+        return {
+            "async_started": True,
+            "running": True,
+            "completed": False,
+            "progress": 1.0,
+            "status_text": self._check_repair_state["status_text"],
+            "logs": [],
+        }
+
+    def get_check_and_repair_status(self) -> Dict[str, Any]:
+        st = getattr(self, "_check_repair_state", None)
+        if not isinstance(st, dict):
+            return {
+                "running": False,
+                "completed": False,
+                "progress": 0.0,
+                "status_text": "",
+                "logs": [],
+                "result": None,
+                "error": "",
+            }
+        return {
+            "running": bool(st.get("running")),
+            "completed": bool(st.get("completed")),
+            "progress": float(st.get("progress", 0.0)),
+            "status_text": str(st.get("status_text", "")),
+            "logs": list(st.get("logs", [])),
+            "result": st.get("result"),
+            "error": str(st.get("error", "")),
         }
 
     def import_external_projects_folder(self, source_dir: str) -> Dict[str, Any]:

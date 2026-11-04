@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 107,
-  "released_at": "2026-11-04 18:28:00",
+  "build_number": 108,
+  "released_at": "2026-11-04 19:22:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Thêm nút '🛡️ CHECK TOÀN BỘ' (Phương án 1): Quét toàn bộ kịch bản (.txt/.srt) để xóa sạch [LOCKED_TITLE]/Metadata rò rỉ VÀ tự động cắt bỏ chính xác các đoạn Voice (.wav) & Video (.mp4) đã đọc nhầm câu tiêu đề bằng FFmpeg Stream Copy siêu tốc (chỉ vài giây/video, không cần render lại từ đầu). 2. Nâng cấp Agent Kiểm Tra Kịch Bản (CLEAN_TTS_SCRIPT_GATE) chặn rò rỉ ngay từ gốc."
+  "changelog": "1. Nâng cấp nút '🛡️ CHECK TOÀN BỘ' lên Kiến trúc 2 Giai đoạn Siêu Tốc & Bất đồng bộ (Async Live Progress): Giai đoạn 1 quét và dọn sạch 100% kịch bản (.txt) toàn bộ kho chỉ trong 1-2 giây; Giai đoạn 2 cắt đoạn đọc nhầm [LOCKED_TITLE] trong Video (.mp4) & Voice (.wav) bằng 1-Pass Input Seeking & Python WAV Slicer (chỉ 3-7 giây/video 2 tiếng), hiển thị trực tiếp tiến độ từng video 1/N trên nút bấm và Nhật ký hệ thống, không bao giờ bị treo HTTP."
 }
