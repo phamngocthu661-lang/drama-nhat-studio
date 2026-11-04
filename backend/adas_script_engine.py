@@ -1044,6 +1044,8 @@ class ADASScriptEngine:
             f"📂 Đã cập nhật đường dẫn lưu trữ: Folder Project=[{self.projects_dir}] | Nơi Chứa Video Cuối=[{self.final_video_dir}] | SSD Render=[{self.ssd_staging_dir} ({'BẬT' if self.use_ssd_staging else 'TẮT'})]",
         )
         res = self.get_storage_paths()
+        if isinstance(restore_res, dict):
+            res.update(restore_res)
         res["restore_summary"] = restore_res
         return res
 
