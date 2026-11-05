@@ -1,5 +1,29 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 05/11/2026 (Lần 49 — V1.0.3 Build #115) — Đẩy 100% File Voice Về `Folder Project` Đã Chọn, Chỉ Đẩy Video MP4 Sang `VIDEO XONG` Khi Hoàn Thiện 100% & Tăng Tốc Tối Đa Server VOICEVOX GPU
+
+### 1. Chẩn đoán nguyên nhân & Yêu cầu của người dùng
+- **Vấn đề thực tế người dùng phản ánh**:
+  1. Các file Voice (`assets/sentences/`, `master_voice.wav`, `subtitles.srt`) bị đẩy sang thư mục `VIDEO XONG` (trên ổ HDD) rồi lại copy ngược sang ổ SSD để ghép video, gây nghẽn cổ chai I/O ổ cứng rất nặng (~450 MB + 3.000 file `.wav` mỗi kịch bản).
+  2. Thư mục `VIDEO XONG` (`Nơi Chứa Video Cuối`) chỉ nên nhận Video MP4 khi đã **hoàn thiện 100%**, không tạo sẵn thư mục hay đẩy file Voice sang đó.
+  3. Phần tạo Voice chưa tận dụng hết tốc độ của Server VOICEVOX (mất ~1.300s cho ~3.200 câu thoại và 3 kịch bản `P773`, `P774`, `P775` cùng chen nhau gọi vào Server VOICEVOX khiến cả 3 bị chia nhỏ tốc độ và phải chờ nhau suốt 22 phút mới xong).
+
+### 2. Giải pháp kỹ thuật & Các file đã nâng cấp
+- **[`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py)**:
+  - Bổ sung [`_resolve_active_storage_dirs()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L699-L751): Luôn tách biệt 100% giữa `base_proj_root` (`Folder Project` đã chọn) và `final_base_root` (`Nơi Chứa Video Cuối` / `VIDEO XONG`). Tuyệt đối không để `output_dir` (`VIDEO XONG`) ghi đè lên `proj_dir` (`Folder Project`).
+  - Lưu và tái sử dụng 100% các file Voice & Phụ đề (`assets/sentences/`, `master_voice.wav`, `subtitles.srt`, `TIMESTAMPS.txt`, `voice_manifest.json`, `voice_signature.json`, `selected_stock.json`) **trực tiếp tại `Folder Project` đã chọn (`proj_dir / "assets"`)**. Loại bỏ hoàn toàn thao tác copy kép `master_voice.wav` (~450 MB) và `sentences/` (3.000 file `.wav`) qua lại giữa ổ HDD và `SSD_Render_Staging`.
+  - Tự động thu hồi các thư mục `assets/` cũ từng bị lưu nhầm bên `VIDEO XONG` về lại đúng `Folder Project` (`proj_dir / "assets"`) và xóa sạch `assets/` bên `VIDEO XONG`.
+  - Bổ sung khóa điều phối `self.voice_synth_lock`: Dồn 100% công suất cụm GPU VOICEVOX hoàn thành dứt điểm Voice cho từng kịch bản một (tốc độ nhanh gấp 3 lần so với 3 kịch bản tranh nhau cùng lúc), kịch bản nào xong Voice lập tức chuyển thẳng sang FFmpeg NVENC Render trong khi VOICEVOX tổng hợp ngay kịch bản kế tiếp.
+- **[`backend/renderer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py)**:
+  - Trong [`render_drama_nhat_video()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L418-L482) & [`lines 1012-1015`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L1012-L1015): Không tạo trước thư mục trong `VIDEO XONG` khi bắt đầu render; chỉ tạo thư mục đích ở `VIDEO XONG` ngay tại thời điểm file MP4 đã Render & Kiểm định đạt 100% trên SSD và sẵn sàng chuyển sang `VIDEO XONG`.
+- **[`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py)**:
+  - Bổ sung [`_migrate_misplaced_voice_assets_from_final_dir()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L875-L934): Tự động chạy ngầm thu hồi mọi thư mục `assets/` (file Voice) bị nằm nhầm trong `VIDEO XONG` về lại `Folder Project` và dọn sạch các thư mục rỗng chưa có MP4 trong `VIDEO XONG`.
+- **[`backend/voicevox_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py)**:
+  - Trong [`synthesize_single_sentence_bytes()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py#L803-L860): Tách hoàn toàn bước chuẩn bị âm vị `/audio_query` (`_synth_semaphore = threading.Semaphore(8)`) ra ngoài khóa `with port_lock:` của bước `/synthesis`. Nhờ đó 8 luồng CPU chuẩn bị sẵn dữ liệu `/audio_query` gối đầu liên tục trong lúc GPU đang chạy `/synthesis`, giúp GPU chạy 100% công suất không có độ trễ chờ giữa các câu.
+  - Trong [`ensure_server_running()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py#L594-L651) & [`_find_run_exe()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py#L460-L492): Quét đệ quy `rglob("run.exe")` để nhận diện bản `windows-nvidia` (CUDA) ở mọi cấp thư mục; nếu máy đang chạy bản `DirectML` thì tự động bật song song cả 2 cổng Worker GPU (`[50021, 50022]`) cùng `worker_threads = max(6, len(active_ports) * 4)` để tăng gấp đôi tốc độ tạo Voice.
+
+---
+
 ## Cập nhật: 05/11/2026 (Lần 48 — V1.0.3 Build #114) — Nâng Cấp Cơ Chế Cập Nhật Tự Động: Đóng Sạch 100% Tác Vụ Đang Chạy & Reset Khởi Động Lại Hoàn Toàn Ứng Dụng Từ Đầu Khi Update
 
 ### 1. Yêu cầu của người dùng

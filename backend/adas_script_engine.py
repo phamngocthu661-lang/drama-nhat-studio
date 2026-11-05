@@ -872,6 +872,69 @@ class ADASScriptEngine:
                     return sub_projects.resolve()
         return cand
 
+    def _migrate_misplaced_voice_assets_from_final_dir(self):
+        """
+        Đảm bảo thư mục Nơi Chứa Video Cuối (`final_video_dir` / `VIDEO XONG`) CHỈ chứa các dự án đã hoàn thiện Video MP4,
+        và toàn bộ file Voice (`assets/`) luôn nằm tại Folder Project đã chọn (`projects_dir`).
+        """
+        try:
+            f_dir = getattr(self, "final_video_dir", None)
+            p_dir = getattr(self, "projects_dir", None)
+            if not f_dir or not p_dir:
+                return
+            f_root = Path(f_dir).resolve()
+            p_root = Path(p_dir).resolve()
+            if f_root == p_root or not f_root.exists():
+                return
+
+            ignore_names = {"renders", "assets", "sentences", "stook", "ssd_render_staging", "__pycache__"}
+            for sub in list(f_root.iterdir()):
+                if not sub.is_dir() or sub.name.lower() in ignore_names or sub.name.startswith(".") or sub.name.startswith("_"):
+                    continue
+                mid = sub.name.strip()
+                target_proj = p_root / mid
+                misplaced_assets = sub / "assets"
+                if misplaced_assets.exists() and misplaced_assets.is_dir():
+                    try:
+                        dest_assets = target_proj / "assets"
+                        dest_assets.mkdir(parents=True, exist_ok=True)
+                        for item in list(misplaced_assets.iterdir()):
+                            dest_it = dest_assets / item.name
+                            if item.is_dir():
+                                shutil.copytree(item, dest_it, dirs_exist_ok=True)
+                            elif not dest_it.exists() or item.stat().st_size > dest_it.stat().st_size:
+                                shutil.copy2(item, dest_it)
+                        shutil.rmtree(misplaced_assets, ignore_errors=True)
+                    except Exception:
+                        pass
+
+                # Chuyển các file kịch bản / thông tin dự án về Folder Project nếu bên Folder Project chưa có
+                for fn in ("script_clean.txt", "script.txt", "idea_info.json", "00_TIEU_DE_VA_SEO_YOUTUBE.txt", "step2_title_thumbnail.txt", "part_a.txt", "part_b.txt", "part_c.txt"):
+                    src_f = sub / fn
+                    if src_f.exists():
+                        try:
+                            target_proj.mkdir(parents=True, exist_ok=True)
+                            dst_f = target_proj / fn
+                            if not dst_f.exists() or src_f.stat().st_size > dst_f.stat().st_size:
+                                shutil.copy2(src_f, dst_f)
+                        except Exception:
+                            pass
+
+                # Nếu trong thư mục con ở VIDEO XONG chưa có file Video MP4 hoàn thiện thì xóa thư mục rỗng ở VIDEO XONG
+                mp4_in_renders = sub / "renders" / f"{mid}_master.mp4"
+                mp4_direct = sub / f"{mid}_master.mp4"
+                has_finished_mp4 = (
+                    (mp4_in_renders.exists() and mp4_in_renders.stat().st_size > 1_000_000)
+                    or (mp4_direct.exists() and mp4_direct.stat().st_size > 1_000_000)
+                )
+                if not has_finished_mp4 and target_proj.exists():
+                    try:
+                        shutil.rmtree(sub, ignore_errors=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
     def _sync_storage_paths_to_pipeline(self):
         if self.video_pipeline is not None:
             try:
@@ -882,6 +945,25 @@ class ADASScriptEngine:
                 self.video_pipeline.use_ssd_staging = self.use_ssd_staging
             except Exception:
                 pass
+        try:
+            for root_sp in (self.root_dir / "storage_paths.json", self.root_dir / "app" / "storage_paths.json"):
+                if root_sp.parent.exists():
+                    root_sp.write_text(
+                        json.dumps(
+                            {
+                                "projects_dir": str(self.projects_dir),
+                                "final_video_dir": str(self.final_video_dir),
+                                "ssd_staging_dir": str(self.ssd_staging_dir),
+                                "use_ssd_staging": bool(self.use_ssd_staging),
+                            },
+                            ensure_ascii=False,
+                            indent=2,
+                        ),
+                        encoding="utf-8",
+                    )
+        except Exception:
+            pass
+        threading.Thread(target=self._migrate_misplaced_voice_assets_from_final_dir, daemon=True).start()
 
     def _load_storage_paths_config(self):
         """

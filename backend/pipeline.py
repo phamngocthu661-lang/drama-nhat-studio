@@ -222,6 +222,7 @@ class ProductionPipeline:
         # Trạng thái hiện tại & Hàng đợi động đa luồng (Dynamic Multi-Worker Queue)
         self.lock = threading.Lock()
         self.stock_alloc_lock = threading.Lock()
+        self.voice_synth_lock = threading.Lock()
         self.is_running = False
         self.should_stop = False
         self.pending_jobs: List[Dict[str, Any]] = []
@@ -271,6 +272,8 @@ class ProductionPipeline:
                 self.active_job_map = {}
             if "paused_for_perf_downscale" not in self.__dict__:
                 self.paused_for_perf_downscale = set()
+            if "voice_synth_lock" not in self.__dict__:
+                self.voice_synth_lock = threading.Lock()
 
             env_mode = os.environ.get("STUDIO_PERF_MODE", "").strip().lower()
             if env_mode in ("full_100", "work_70"):
@@ -693,6 +696,60 @@ class ProductionPipeline:
         thread.start()
         return True
 
+    def _resolve_active_storage_dirs(self, save_base: Optional[Path] = None) -> tuple[Path, Path]:
+        """
+        Luôn phân tách rõ ràng:
+        1. `base_proj_root` (`Folder Project` đã chọn): Nơi lưu Kịch bản + toàn bộ file Voice & Phụ đề (`assets/`).
+        2. `final_base_root` (`Nơi Chứa Video Cuối` / `VIDEO XONG`): Chỉ nhận Video MP4 khi đã Render hoàn thiện 100%.
+        """
+        proj_root: Optional[Path] = None
+        final_root: Optional[Path] = None
+
+        adas_ref = getattr(self, "adas_engine", None)
+        if adas_ref is not None:
+            if getattr(adas_ref, "projects_dir", None):
+                proj_root = Path(adas_ref.projects_dir)
+            if getattr(adas_ref, "final_video_dir", None):
+                final_root = Path(adas_ref.final_video_dir)
+            if getattr(adas_ref, "ssd_staging_dir", None):
+                self.ssd_staging_dir = Path(adas_ref.ssd_staging_dir)
+            if hasattr(adas_ref, "use_ssd_staging"):
+                self.use_ssd_staging = bool(adas_ref.use_ssd_staging)
+
+        for cfg_cand in (
+            self.root_dir / "storage_paths.json",
+            self.root_dir / "app" / "storage_paths.json",
+            self.root_dir / "config.json",
+        ):
+            if cfg_cand.exists():
+                try:
+                    raw_cfg = json.loads(cfg_cand.read_text(encoding="utf-8"))
+                    if not proj_root and raw_cfg.get("projects_dir"):
+                        proj_root = Path(str(raw_cfg["projects_dir"]).strip())
+                    if not final_root and raw_cfg.get("final_video_dir"):
+                        final_root = Path(str(raw_cfg["final_video_dir"]).strip())
+                except Exception:
+                    pass
+
+        if not proj_root:
+            curr_p = getattr(self, "projects_dir", None)
+            if curr_p and (not save_base or Path(curr_p) != Path(save_base)):
+                proj_root = Path(curr_p)
+            else:
+                proj_root = self.default_projects_dir
+
+        if not final_root:
+            if save_base:
+                final_root = Path(save_base)
+            elif getattr(self, "final_video_dir", None):
+                final_root = Path(self.final_video_dir)
+            else:
+                final_root = proj_root
+
+        self.projects_dir = proj_root
+        self.final_video_dir = final_root
+        return proj_root, final_root
+
     def _synthesize_project_voice(
         self,
         proj_name: str,
@@ -825,12 +882,8 @@ class ProductionPipeline:
                 proj_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in proj_name).strip("_")
                 script_text = (job.get("script_text") or "").strip()
 
-                base_proj_root = Path(getattr(self, "projects_dir", None) or save_base)
+                base_proj_root, final_base_root = self._resolve_active_storage_dirs(save_base)
                 proj_dir = base_proj_root / proj_name
-                if not proj_dir.exists() and (save_base / proj_name).exists():
-                    proj_dir = save_base / proj_name
-
-                final_base_root = Path(getattr(self, "final_video_dir", None) or base_proj_root)
                 final_proj_dir = final_base_root / proj_name
                 final_renders_dir = final_proj_dir / "renders"
 
@@ -924,7 +977,7 @@ class ProductionPipeline:
 
                     log_info(
                         f"🎬 [LUỒNG #{job_num}] Bắt đầu xử lý '{proj_name}' ({len(script_text):,} chữ) với giọng [{preset_id} • {speed_val}x] "
-                        f"| SSD Staging={'BẬT' if use_ssd else 'TẮT'} -> Đích MP4: {final_renders_dir}",
+                        f"| Voice tại Folder Project: {proj_dir / 'assets'} -> Đích MP4 khi xong: {final_renders_dir}",
                         category="RENDER",
                         project_id=proj_name,
                     )
@@ -939,16 +992,38 @@ class ProductionPipeline:
                     assets_dir.mkdir(parents=True, exist_ok=True)
                     renders_dir = proj_dir / "renders"
                     renders_dir.mkdir(parents=True, exist_ok=True)
-                    final_renders_dir.mkdir(parents=True, exist_ok=True)
-                    if use_ssd:
-                        try:
-                            ssd_assets_dir.mkdir(parents=True, exist_ok=True)
-                        except Exception:
-                            use_ssd = False
                     (proj_dir / "script.txt").write_text(script_text, encoding="utf-8")
 
+                    # Nếu trước đó có file Voice bị lưu nhầm ở Nơi Chứa Video Cuối (VIDEO XONG) hoặc SSD Staging cũ,
+                    # tự động thu hồi 100% về đúng Folder Project (proj_dir / 'assets') và dọn sạch thư mục thừa ở VIDEO XONG!
+                    for legacy_assets in (
+                        (final_proj_dir / "assets") if final_proj_dir.resolve() != proj_dir.resolve() else None,
+                        ssd_assets_dir if ssd_assets_dir.resolve() != assets_dir.resolve() else None,
+                    ):
+                        if legacy_assets and legacy_assets.exists():
+                            try:
+                                for item in legacy_assets.iterdir():
+                                    dest_item = assets_dir / item.name
+                                    if item.is_dir():
+                                        shutil.copytree(item, dest_item, dirs_exist_ok=True)
+                                    elif not dest_item.exists() or item.stat().st_size > dest_item.stat().st_size:
+                                        shutil.copy2(item, dest_item)
+                                shutil.rmtree(legacy_assets, ignore_errors=True)
+                            except Exception:
+                                pass
+
+                    if final_proj_dir.resolve() != proj_dir.resolve() and final_proj_dir.exists():
+                        if not (final_renders_dir / f"{proj_name}_master.mp4").exists():
+                            try:
+                                if final_renders_dir.exists() and not any(final_renders_dir.iterdir()):
+                                    final_renders_dir.rmdir()
+                                if final_proj_dir.exists() and not any(final_proj_dir.iterdir()):
+                                    final_proj_dir.rmdir()
+                            except Exception:
+                                pass
+
                     # ==========================================================
-                    # GIAI ĐOẠN 1: TẠO VOICE GPU & SUBTITLES (TRÊN Ổ SSD STAGING NẾU BẬT)
+                    # GIAI ĐOẠN 1: TẠO VOICE GPU & SUBTITLES TRỰC TIẾP TẠI FOLDER PROJECT (assets_dir)
                     # ==========================================================
                     existing_master_wav = assets_dir / "master_voice.wav"
                     existing_srt = assets_dir / "subtitles.srt"
@@ -1025,28 +1100,14 @@ class ProductionPipeline:
                     if can_reuse_voice:
                         dur_sec = reuse_wav_dur
                         log_info(
-                            f"♻️ Khôi phục Voice [{preset_id} • {speed_val}x] có sẵn ({dur_sec/60:.1f} phút) cho '{proj_name}'.",
+                            f"♻️ Khôi phục Voice [{preset_id} • {speed_val}x] có sẵn ({dur_sec/60:.1f} phút) trực tiếp từ Folder Project cho '{proj_name}'.",
                             category="VOICE",
                             project_id=proj_name,
                         )
-                        active_wav_path = existing_master_wav
-                        active_srt_path = existing_srt
-                        active_ts_path = existing_ts
-                        if use_ssd and ssd_assets_dir.resolve() != assets_dir.resolve():
-                            try:
-                                ssd_wav = ssd_assets_dir / "master_voice.wav"
-                                ssd_srt = ssd_assets_dir / "subtitles.srt"
-                                if not ssd_wav.exists() or ssd_wav.stat().st_size != existing_master_wav.stat().st_size:
-                                    shutil.copy2(existing_master_wav, ssd_wav)
-                                shutil.copy2(existing_srt, ssd_srt)
-                                active_wav_path = ssd_wav
-                                active_srt_path = ssd_srt
-                            except Exception:
-                                pass
                         voice_res = {
-                            "master_voice": str(active_wav_path),
-                            "subtitles_srt": str(active_srt_path),
-                            "timestamps_txt": str(active_ts_path),
+                            "master_voice": str(existing_master_wav),
+                            "subtitles_srt": str(existing_srt),
+                            "timestamps_txt": str(existing_ts),
                             "total_duration": dur_sec,
                         }
                         with self.lock:
@@ -1093,39 +1154,29 @@ class ProductionPipeline:
                         if proj_name in getattr(self, "paused_for_perf_downscale", set()):
                             raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
-                        work_voice_dir = ssd_assets_dir if (use_ssd and ssd_assets_dir.resolve() != assets_dir.resolve()) else assets_dir
-                        if work_voice_dir != assets_dir and (assets_dir / "sentences").exists() and not (work_voice_dir / "sentences").exists():
-                            try:
-                                shutil.copytree(assets_dir / "sentences", work_voice_dir / "sentences", dirs_exist_ok=True)
-                            except Exception:
-                                pass
-
-                        with self.lock:
-                            self.active_voice_jobs += 1
-                        try:
-                            voice_res = self._synthesize_project_voice(
-                                proj_name=proj_name,
-                                script_text=script_text,
-                                assets_dir=work_voice_dir,
-                                v_cfg=v_cfg,
-                                voice_cb=voice_cb,
-                            )
-                        finally:
+                        # Dồn 100% công suất Server VOICEVOX GPU hoàn thành xong Voice cho từng kịch bản tại Folder Project (assets_dir)
+                        # để kịch bản đó lập tức chuyển sang Render Video FFmpeg mà không bị 3-4 kịch bản chia nhỏ tốc độ tạo Voice!
+                        with self.voice_synth_lock:
+                            if self.should_stop:
+                                raise InterruptedError("Đã dừng tiến trình Render theo yêu cầu")
+                            if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                                raise InterruptedError("PERF_DOWNSCALE_YIELD")
                             with self.lock:
-                                self.active_voice_jobs = max(0, self.active_voice_jobs - 1)
-
-                        # Đồng bộ bản master_voice.wav, subtitles.srt, TIMESTAMPS.txt, voice_manifest.json về thư mục dự án gốc
-                        if work_voice_dir != assets_dir:
-                            for sync_fn in ("master_voice.wav", "subtitles.srt", "TIMESTAMPS.txt", "voice_manifest.json", "voice_signature.json"):
-                                src_f = work_voice_dir / sync_fn
-                                if src_f.exists():
-                                    try:
-                                        shutil.copy2(src_f, assets_dir / sync_fn)
-                                    except Exception:
-                                        pass
+                                self.active_voice_jobs += 1
+                            try:
+                                voice_res = self._synthesize_project_voice(
+                                    proj_name=proj_name,
+                                    script_text=script_text,
+                                    assets_dir=assets_dir,
+                                    v_cfg=v_cfg,
+                                    voice_cb=voice_cb,
+                                )
+                            finally:
+                                with self.lock:
+                                    self.active_voice_jobs = max(0, self.active_voice_jobs - 1)
 
                         log_info(
-                            f"✅ Hoàn tất tạo Voice GPU [{preset_id} • {speed_val}x] & Phụ đề cho '{proj_name}' (Thời lượng: {voice_res.get('total_duration', 0)/60:.2f} phút).",
+                            f"✅ Hoàn tất tạo Voice GPU [{preset_id} • {speed_val}x] & Phụ đề tại Folder Project '{assets_dir}' cho '{proj_name}' (Thời lượng: {voice_res.get('total_duration', 0)/60:.2f} phút).",
                             category="VOICE",
                             project_id=proj_name,
                         )
@@ -1330,22 +1381,14 @@ class ProductionPipeline:
                                     category="RENDER",
                                     project_id=proj_name,
                                 )
-                                work_voice_retry = ssd_assets_dir if (use_ssd and ssd_assets_dir.resolve() != assets_dir.resolve()) else assets_dir
-                                voice_res = self._synthesize_project_voice(
-                                    proj_name=proj_name,
-                                    script_text=script_text,
-                                    assets_dir=work_voice_retry,
-                                    v_cfg=v_cfg,
-                                    voice_cb=voice_cb,
-                                )
-                                if work_voice_retry != assets_dir:
-                                    for sync_fn in ("master_voice.wav", "subtitles.srt", "TIMESTAMPS.txt", "voice_manifest.json", "voice_signature.json"):
-                                        src_f = work_voice_retry / sync_fn
-                                        if src_f.exists():
-                                            try:
-                                                shutil.copy2(src_f, assets_dir / sync_fn)
-                                            except Exception:
-                                                pass
+                                with self.voice_synth_lock:
+                                    voice_res = self._synthesize_project_voice(
+                                        proj_name=proj_name,
+                                        script_text=script_text,
+                                        assets_dir=assets_dir,
+                                        v_cfg=v_cfg,
+                                        voice_cb=voice_cb,
+                                    )
 
                             # Kiểm tra lại lần cuối ngay trước giây bấm máy FFmpeg: Nếu file Stock bị xóa/di chuyển trong lúc chờ GPU,
                             # tự động cấp phát ngay 1 file Stock khác đang tồn tại thực tế (hoặc tải bù ngay lập tức)!

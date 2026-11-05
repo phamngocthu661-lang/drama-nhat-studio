@@ -426,7 +426,7 @@ class VoicevoxStandaloneService:
     _warmed_speakers: Dict[int, Set[int]] = {}
     _gpu_mode_active: bool = False
     _active_exe_path: str = ""
-    _synth_semaphore = threading.Semaphore(3)
+    _synth_semaphore = threading.Semaphore(8)
     _port_synth_locks: Dict[int, threading.Lock] = {
         50021: threading.Lock(),
         50022: threading.Lock(),
@@ -439,8 +439,8 @@ class VoicevoxStandaloneService:
         self.engine_base_dir = self.root_dir / "VOICEVOX_ENGINE"
         self.voices_dir = self.root_dir / "assets" / "voices"
         self.port = 50021
-        # Sử dụng 1 cổng GPU duy nhất (50021) để tránh 2 tiến trình run.exe tranh giành Shader & tràn 6GB VRAM
-        self.worker_ports: List[int] = [50021]
+        # Hỗ trợ tự động: 1 cổng (50021) khi chạy NVIDIA CUDA hoặc 2 cổng song song (50021, 50022) khi chạy DirectML Cluster
+        self.worker_ports: List[int] = [50021, 50022]
         self.base_url = f"http://127.0.0.1:{self.port}"
         self._http_local = threading.local()
 
@@ -448,7 +448,7 @@ class VoicevoxStandaloneService:
         sess = getattr(self._http_local, "session", None)
         if sess is None:
             sess = requests.Session()
-            adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=16, max_retries=2)
+            adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=32, max_retries=2)
             sess.mount("http://", adapter)
             self._http_local.session = sess
         return sess
@@ -467,16 +467,20 @@ class VoicevoxStandaloneService:
             if nc.exists():
                 return nc
 
-        # Tự động quét thêm nếu giải nén lồng 1 cấp thư mục con trong windows-nvidia
-        for nv_dir in (
-            self.engine_base_dir / "windows-nvidia",
-            self.root_dir.parent / "VOICEVOX_ENGINE" / "windows-nvidia",
-            Path(r"D:\Drama_Nhat_Studio\VOICEVOX_ENGINE\windows-nvidia"),
+        # Tự động quét sâu (rglob) nếu người dùng giải nén bản windows-nvidia vào thư mục con bất kỳ
+        for nv_root in (
+            self.engine_base_dir,
+            self.root_dir.parent / "VOICEVOX_ENGINE",
+            Path(r"D:\Drama_Nhat_Studio\VOICEVOX_ENGINE"),
         ):
-            if nv_dir.exists() and nv_dir.is_dir():
-                for sub_run in nv_dir.glob("*/run.exe"):
-                    if sub_run.exists():
-                        return sub_run
+            if nv_root.exists() and nv_root.is_dir():
+                try:
+                    for sub_run in nv_root.rglob("run.exe"):
+                        p_low = str(sub_run).lower()
+                        if ("nvidia" in p_low or "cuda" in p_low) and sub_run.exists():
+                            return sub_run
+                except Exception:
+                    pass
 
         # 2. DỰ PHÒNG: Bản DirectML (windows-directml/run.exe)
         candidates = [
@@ -588,15 +592,21 @@ class VoicevoxStandaloneService:
                 pass
 
     def ensure_server_running(self, multi_worker: bool = False) -> bool:
-        target_ports = [self.port]
         run_exe = self._find_run_exe()
         if not run_exe:
             log_error("VOICE", f"Không tìm thấy bộ chạy VOICEVOX (run.exe) tại {self.engine_base_dir}.")
             return False
 
         exe_str = str(run_exe.resolve())
-        is_nvidia_cuda = "windows-nvidia" in exe_str.lower()
+        is_nvidia_cuda = ("nvidia" in exe_str.lower()) or ("cuda" in exe_str.lower())
         backend_label = "NVIDIA CUDA/cuDNN" if is_nvidia_cuda else "DirectML GPU"
+
+        # Nếu chạy bản NVIDIA CUDA: 1 cổng 50021 đạt tốc độ tối đa mà không tốn nhân đôi VRAM.
+        # Nếu máy đang chạy bản DirectML: bật song song 2 cổng [50021, 50022] khi multi_worker=True để tăng gấp đôi thông lượng tổng hợp!
+        if is_nvidia_cuda:
+            target_ports = [self.port]
+        else:
+            target_ports = list(self.worker_ports) if multi_worker else [self.port]
 
         # Nếu trước đó đang chạy bản DirectML cũ mà nay đã có bản windows-nvidia trên ổ cứng, tự động chuyển ngay sang bản NVIDIA CUDA!
         if (
@@ -607,8 +617,7 @@ class VoicevoxStandaloneService:
             log_info("VOICE", f"🚀 Phát hiện bản nâng cấp VOICEVOX {backend_label} ({run_exe}) -> Đang chuyển đổi từ DirectML sang CUDA...")
             VoicevoxStandaloneService.shutdown_all_workers()
 
-        # Tự động tắt cổng phụ 50022 (nếu còn sót từ bản cũ) để giải phóng ~2GB VRAM và chống tranh chấp Shader trên GPU!
-        if 50022 in VoicevoxStandaloneService._procs:
+        if is_nvidia_cuda and 50022 in VoicevoxStandaloneService._procs:
             try:
                 VoicevoxStandaloneService._procs.pop(50022).terminate()
             except Exception:
@@ -810,6 +819,8 @@ class VoicevoxStandaloneService:
         last_err = None
         for attempt in range(3):
             try:
+                # Tách riêng bước /audio_query (CPU Tokenize + Pitch Accent) chạy song song trước trên 8 luồng
+                # để GPU /synthesis luôn có sẵn dữ liệu nối đuôi 100% thời gian mà không phải chờ đợi!
                 with VoicevoxStandaloneService._synth_semaphore:
                     q_resp = sess.post(
                         f"{base_u}/audio_query",
@@ -819,23 +830,23 @@ class VoicevoxStandaloneService:
                     q_resp.raise_for_status()
                     query_data = q_resp.json()
 
-                    query_data["speedScale"] = float(speed_scale)
-                    query_data["pitchScale"] = float(pitch_scale)
-                    query_data["intonationScale"] = float(intonation_scale)
-                    query_data["pauseLengthScale"] = float(pause_length_scale)
-                    query_data["volumeScale"] = float(volume_scale)
-                    query_data["outputSamplingRate"] = 24000
-                    query_data["outputStereo"] = False
+                query_data["speedScale"] = float(speed_scale)
+                query_data["pitchScale"] = float(pitch_scale)
+                query_data["intonationScale"] = float(intonation_scale)
+                query_data["pauseLengthScale"] = float(pause_length_scale)
+                query_data["volumeScale"] = float(volume_scale)
+                query_data["outputSamplingRate"] = 24000
+                query_data["outputStereo"] = False
 
-                    with port_lock:
-                        s_resp = sess.post(
-                            f"{base_u}/synthesis",
-                            params={"speaker": int(speaker_id)},
-                            json=query_data,
-                            timeout=60,
-                        )
-                    s_resp.raise_for_status()
-                    return s_resp.content
+                with port_lock:
+                    s_resp = sess.post(
+                        f"{base_u}/synthesis",
+                        params={"speaker": int(speaker_id)},
+                        json=query_data,
+                        timeout=60,
+                    )
+                s_resp.raise_for_status()
+                return s_resp.content
             except Exception as e:
                 last_err = e
                 time.sleep(0.35)
@@ -843,6 +854,7 @@ class VoicevoxStandaloneService:
                 if not self.is_port_alive(target_port, timeout=0.8):
                     target_port = self.port
                 base_u = f"http://127.0.0.1:{target_port}"
+                port_lock = VoicevoxStandaloneService._port_synth_locks.setdefault(target_port, threading.Lock())
 
         raise RuntimeError(f"Lỗi tổng hợp VOICEVOX GPU sau 3 lần thử: {last_err}")
 
@@ -966,7 +978,7 @@ class VoicevoxStandaloneService:
             done_count = total_sentences - len(todo_items)
             prog_lock = threading.Lock()
             last_cb_ts = 0.0
-            worker_threads = max(2, len(active_ports) * 2)
+            worker_threads = max(6, len(active_ports) * 4)
 
             if done_count > 0 and progress_callback:
                 init_v_pct = round((done_count / max(1, total_sentences)) * 92.0, 1)

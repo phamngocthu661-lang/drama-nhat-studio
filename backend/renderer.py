@@ -417,7 +417,6 @@ def render_drama_nhat_video(
     """
     start_time = time.time()
     out_dir = os.path.dirname(os.path.abspath(output_path))
-    os.makedirs(out_dir, exist_ok=True)
 
     # Phân tích độ phân giải (width x height)
     try:
@@ -475,7 +474,10 @@ def render_drama_nhat_video(
             active_ssd_root.mkdir(parents=True, exist_ok=True)
             work_parent_dir = active_ssd_root
         except Exception:
+            os.makedirs(out_dir, exist_ok=True)
             work_parent_dir = Path(out_dir)
+    else:
+        os.makedirs(out_dir, exist_ok=True)
 
     temp_output_path = str(work_parent_dir / f"_{base_stem}_rendering_tmp.mp4")
     resume_dir = work_parent_dir / f"_{base_stem}_resume_cache"
@@ -1006,6 +1008,9 @@ def render_drama_nhat_video(
             f"Video MP4 bị ngắt giữa chừng hoặc chưa đủ thời lượng "
             f"(Đạt {rendered_dur:.1f}s / Yêu cầu {dur:.1f}s) — Tự động hủy file lỗi để Render lại!"
         )
+
+    # Chỉ khởi tạo thư mục ở Nơi Chứa Video Cuối (out_dir) khi Video MP4 đã Render & Kiểm định hoàn tất 100%
+    os.makedirs(out_dir, exist_ok=True)
 
     # Di chuyển an toàn file MP4 hoàn chỉnh từ ổ SSD đệm sang thư mục đích (hỗ trợ khác ổ đĩa C: -> D:/E: HDD)
     try:
