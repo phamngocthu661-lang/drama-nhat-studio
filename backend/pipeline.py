@@ -1136,7 +1136,7 @@ class ProductionPipeline:
                         raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
                     # ==========================================================
-                    # GIAI ĐOẠN 2: CẤP PHÁT VIDEO STOCK (KHÔI PHỤC STOCK CŨ NẾU ĐANG RENDER DỞ)
+                    # GIAI ĐOẠN 2: CẤP PHÁT VIDEO STOCK (KHÔI PHỤC STOCK CŨ NẾU ĐANG RENDER DỞ & CÒN TỒN TẠI TRÊN Ổ CỨNG)
                     # ==========================================================
                     saved_stock_json = assets_dir / "selected_stock.json"
                     with self.stock_alloc_lock:
@@ -1146,13 +1146,26 @@ class ProductionPipeline:
                         if saved_stock_json.exists() and stock_selection == "auto_unique":
                             try:
                                 prev_st = json.loads(saved_stock_json.read_text(encoding="utf-8"))
-                                if isinstance(prev_st, dict) and prev_st.get("abs_path") and os.path.exists(prev_st["abs_path"]):
+                                prev_abs = str(prev_st.get("abs_path") or "").strip() if isinstance(prev_st, dict) else ""
+                                prev_id = str(prev_st.get("id") or "").strip() if isinstance(prev_st, dict) else ""
+                                if (
+                                    prev_abs
+                                    and os.path.exists(prev_abs)
+                                    and os.path.getsize(prev_abs) > 100_000
+                                    and prev_abs not in allocated_stock_ids
+                                    and prev_id not in allocated_stock_ids
+                                ):
                                     chosen_stock = prev_st
                                     log_info(
                                         f"♻️ Khôi phục đúng Stock Video cũ '{chosen_stock.get('name')}' để Render nối tiếp cho '{proj_name}'.",
                                         category="STOCK",
                                         project_id=proj_name,
                                     )
+                                else:
+                                    try:
+                                        saved_stock_json.unlink()
+                                    except Exception:
+                                        pass
                             except Exception:
                                 chosen_stock = None
 
@@ -1163,6 +1176,8 @@ class ProductionPipeline:
                                 stocks = self.stock_manager.get_all_stocks()["items"]
                                 for s in stocks:
                                     if s["id"] == stock_selection or s["abs_path"] == stock_selection or s["rel_path"] == stock_selection:
+                                        if not s.get("abs_path") or not os.path.exists(s["abs_path"]):
+                                            continue
                                         use1_key = f"{s['id']}::use1"
                                         use2_key = f"{s['id']}::use2"
                                         curr_uses = s.get("usage_count", 0)
@@ -1212,6 +1227,8 @@ class ProductionPipeline:
 
                         slot_key = chosen_stock.get("slot_key", f"{chosen_stock['id']}::use{chosen_stock.get('use_number', 1)}")
                         allocated_stock_ids.add(slot_key)
+                        allocated_stock_ids.add(str(chosen_stock.get("id", "")))
+                        allocated_stock_ids.add(str(chosen_stock.get("abs_path", "")))
                         try:
                             saved_stock_json.write_text(json.dumps(chosen_stock, ensure_ascii=False, indent=2), encoding="utf-8")
                         except Exception:
@@ -1329,6 +1346,38 @@ class ProductionPipeline:
                                                 shutil.copy2(src_f, assets_dir / sync_fn)
                                             except Exception:
                                                 pass
+
+                            # Kiểm tra lại lần cuối ngay trước giây bấm máy FFmpeg: Nếu file Stock bị xóa/di chuyển trong lúc chờ GPU,
+                            # tự động cấp phát ngay 1 file Stock khác đang tồn tại thực tế (hoặc tải bù ngay lập tức)!
+                            if not stock_file or not os.path.exists(stock_file) or os.path.getsize(stock_file) < 100_000:
+                                with self.stock_alloc_lock:
+                                    log_warn(
+                                        f"⚠️ [{proj_name}] File Stock '{stock_file}' không còn trên ổ cứng -> Đang tự động cấp phát cuộn Stock mới...",
+                                        category="STOCK",
+                                        project_id=proj_name,
+                                    )
+                                    self.stock_manager.scan_and_update_inventory()
+                                    re_stock = self.stock_manager.get_best_available_stock(exclude_ids=allocated_stock_ids)
+                                    if not re_stock:
+                                        self.stock_manager.ensure_minimum_stock_hours(
+                                            target_hours=max(1.5, min(target_stock_hours, 3.0)),
+                                            slice_minutes=30,
+                                        )
+                                        re_stock = self.stock_manager.get_best_available_stock(exclude_ids=allocated_stock_ids)
+                                    if re_stock and re_stock.get("abs_path") and os.path.exists(re_stock["abs_path"]):
+                                        chosen_stock = re_stock
+                                        stock_file = chosen_stock["abs_path"]
+                                        flip_horizontal = chosen_stock.get("flip_horizontal", False)
+                                        zoom_factor = chosen_stock.get("zoom_factor", 1.0)
+                                        transform_label = chosen_stock.get("transform_label", "Lần 1/2 (Bản Gốc 100%)")
+                                        s_key = chosen_stock.get("slot_key", f"{chosen_stock['id']}::use{chosen_stock.get('use_number', 1)}")
+                                        allocated_stock_ids.add(s_key)
+                                        allocated_stock_ids.add(str(chosen_stock.get("id", "")))
+                                        allocated_stock_ids.add(str(stock_file))
+                                        try:
+                                            saved_stock_json.write_text(json.dumps(chosen_stock, ensure_ascii=False, indent=2), encoding="utf-8")
+                                        except Exception:
+                                            pass
 
                             log_info(
                                 f"🔥 Bắt đầu FFmpeg GPU Render 5 lớp ({'SSD Staging -> ' if use_ssd else ''}{final_video}) (Lần {sync_attempt})...",

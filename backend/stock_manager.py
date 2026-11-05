@@ -1022,11 +1022,56 @@ class StockManager:
 
     def get_all_stocks(self) -> Dict[str, Any]:
         data = self.load_inventory()
-        items = list(data.get("items", {}).values())
+        raw_items_dict = data.get("items", {})
+        valid_items_dict: Dict[str, Any] = {}
+        removed_missing = False
+
+        for k, x in list(raw_items_dict.items()):
+            abs_p = str(x.get("abs_path") or "").strip()
+            if abs_p and os.path.exists(abs_p):
+                try:
+                    if os.path.getsize(abs_p) > 100_000:
+                        valid_items_dict[k] = x
+                    else:
+                        removed_missing = True
+                except Exception:
+                    removed_missing = True
+            else:
+                removed_missing = True
+
+        # Nếu trong stock_inventory.json có chứa các đường dẫn file Stock đã bị xóa trên ổ cứng (như D:\stock\...),
+        # tự động cập nhật lại stock_inventory.json và quét lại thư mục STOOK thực tế!
+        if removed_missing:
+            try:
+                data = self.scan_and_update_inventory()
+                items = [
+                    x for x in data.get("items", {}).values()
+                    if x.get("abs_path") and os.path.exists(x["abs_path"])
+                ]
+            except Exception:
+                items = list(valid_items_dict.values())
+        else:
+            items = list(valid_items_dict.values())
+            if not items and self.stook_dir.exists():
+                try:
+                    data = self.scan_and_update_inventory()
+                    items = [
+                        x for x in data.get("items", {}).values()
+                        if x.get("abs_path") and os.path.exists(x["abs_path"])
+                    ]
+                except Exception:
+                    items = []
+
         # Ưu tiên: chưa dùng (usage_count == 0) -> dùng 1 lần (usage_count == 1) -> đã khóa (usage_count >= 2)
         items.sort(key=lambda x: (x.get("usage_count", 0), x["rel_path"]))
 
-        available = [x for x in items if x.get("usage_count", 0) < self.MAX_STOCK_USAGES and x.get("status") == "available"]
+        available = [
+            x for x in items
+            if x.get("usage_count", 0) < self.MAX_STOCK_USAGES
+            and x.get("status") == "available"
+            and x.get("abs_path")
+            and os.path.exists(x["abs_path"])
+        ]
         available_uses_count = sum(max(0, self.MAX_STOCK_USAGES - x.get("usage_count", 0)) for x in available)
         available_raw_seconds = sum(float(x.get("duration", 0.0)) for x in available)
         available_raw_hours = round(available_raw_seconds / 3600.0, 2)
@@ -1064,13 +1109,16 @@ class StockManager:
 
     def get_best_available_stock(self, exclude_ids: Optional[set] = None) -> Optional[Dict[str, Any]]:
         """
-        Lấy 1 lượt video stock tối ưu nhất:
+        Lấy 1 lượt video stock tối ưu nhất (bắt buộc file phải đang tồn tại thực tế trên ổ cứng > 100KB):
         - Ưu tiên 1 (Lần dùng 1/2): Video chưa dùng (usage_count == 0) -> Bản Gốc 100%
         - Ưu tiên 2 (Lần dùng 2/2): Video đã dùng 1 lần -> Tự động Lật ngang (hflip) + Zoom 110%
         - Sau 2 lần dùng: Khóa vĩnh viễn tuyệt đối không dùng lại.
         """
         stocks = self.get_all_stocks()
-        items = stocks["items"]
+        items = [
+            x for x in stocks["items"]
+            if x.get("abs_path") and os.path.exists(x["abs_path"]) and os.path.getsize(x["abs_path"]) > 100_000
+        ]
         if not items:
             return None
 
@@ -1080,7 +1128,7 @@ class StockManager:
         pass1_candidates = [
             x for x in items
             if x.get("usage_count", 0) == 0 and x.get("status") == "available"
-            and f"{x['id']}::use1" not in ex and x["id"] not in ex
+            and f"{x['id']}::use1" not in ex and x["id"] not in ex and x.get("abs_path") not in ex
         ]
         if pass1_candidates:
             long_cands = [x for x in pass1_candidates if x["duration"] >= 300]
@@ -1096,7 +1144,7 @@ class StockManager:
         pass2_candidates = [
             x for x in items
             if x.get("usage_count", 0) < self.MAX_STOCK_USAGES and x.get("status") == "available"
-            and f"{x['id']}::use2" not in ex and x["id"] not in ex
+            and f"{x['id']}::use2" not in ex and x["id"] not in ex and x.get("abs_path") not in ex
         ]
         if pass2_candidates:
             long_cands = [x for x in pass2_candidates if x["duration"] >= 300]

@@ -529,6 +529,40 @@ def render_drama_nhat_video(
         except Exception:
             pass
 
+    def _resolve_fallback_stock_file(missing_path: str) -> str:
+        """Tự động tìm hoặc tải bù ngay 1 file Stock hợp lệ nếu file Stock chỉ định bị mất/xóa trên ổ cứng."""
+        try:
+            # 1. Tìm nhanh trong cùng thư mục hoặc thư mục cha của file stock bị thiếu
+            if missing_path:
+                mp = Path(missing_path)
+                for search_root in (mp.parent, mp.parent.parent):
+                    if search_root and search_root.exists() and search_root.is_dir():
+                        for cand_mp4 in sorted(search_root.rglob("*.mp4")):
+                            if cand_mp4.is_file() and not cand_mp4.name.startswith("_") and cand_mp4.stat().st_size > 1_000_000:
+                                return str(cand_mp4)
+            # 2. Gọi StockManager để quét kho thực tế hoặc tải bù tự động
+            from backend.stock_manager import StockManager
+            root_d = Path(__file__).resolve().parent.parent
+            if root_d.name.lower() == "app":
+                root_d = root_d.parent
+            sm = StockManager(root_d)
+            sm.scan_and_update_inventory()
+            best = sm.get_best_available_stock()
+            if not best:
+                sm.ensure_minimum_stock_hours(target_hours=1.5, slice_minutes=30)
+                best = sm.get_best_available_stock()
+            if best and best.get("abs_path") and os.path.exists(best["abs_path"]):
+                return str(best["abs_path"])
+        except Exception as e_fb:
+            print(f"[Renderer] Lưu ý khi tự động tìm Stock thay thế: {e_fb}")
+        return missing_path
+
+    if not stock_video_path or not os.path.exists(stock_video_path) or os.path.getsize(stock_video_path) < 100_000:
+        old_missing = stock_video_path
+        stock_video_path = _resolve_fallback_stock_file(stock_video_path)
+        current_meta["stock_video_path"] = stock_video_path
+        print(f"♻️ [STOCK AUTO-HEAL] File Stock '{old_missing}' không tồn tại -> Đã tự động thay bằng '{stock_video_path}'!")
+
     try:
         meta_file.write_text(json.dumps(current_meta, ensure_ascii=False, indent=2), encoding="utf-8")
     except Exception:
@@ -891,12 +925,21 @@ def render_drama_nhat_video(
             if rc == 0:
                 break
 
+            err_detail = "\n".join(log_tail[-8:])
+            if enc_try == 0 and (not os.path.exists(stock_video_path) or "No such file or directory" in err_detail):
+                new_stock_p = _resolve_fallback_stock_file(stock_video_path)
+                if new_stock_p and os.path.exists(new_stock_p):
+                    print(f"♻️ [STOCK AUTO-HEAL RETRY] Phát hiện file Stock '{stock_video_path}' vừa bị xóa -> Tự động đổi sang '{new_stock_p}' và chạy tiếp bằng GPU!")
+                    base_inputs_cmd[:] = [new_stock_p if x == stock_video_path else x for x in base_inputs_cmd]
+                    stock_video_path = new_stock_p
+                    cpu_codec_args = v_codec_args
+                    continue
+
             # Nếu lần thử đầu bằng NVENC bị lỗi ngay lập tức (VD: giới hạn số luồng NVENC trên card GTX/RTX phổ thông), tự động chuyển luồng này sang CPU superfast!
             if enc_try == 0 and use_nvenc and max_seg_sec_reached < 3.0:
                 print(f"⚠️ [NVENC FALLBACK] Luồng NVENC bận hoặc vượt giới hạn phiên song song (mã {rc}), tự động chuyển sang CPU Multi-Thread ({cpu_threads} threads)...")
                 continue
 
-            err_detail = "\n".join(log_tail[-8:])
             raise RuntimeError(f"FFmpeg render tạm dừng/lỗi (mã {rc}) — Đã lưu Checkpoint để chạy tiếp: {err_detail}")
 
         final_clean_seg = str(resume_dir / f"seg_clean_{next_seg_idx:04d}.ts")

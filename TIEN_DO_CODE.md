@@ -1,5 +1,30 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 05/11/2026 (Lần 47 — V1.0.3 Build #113) — Sửa Triệt Để Lỗi FFmpeg `Error opening input file D:\stock\...\stock_PXPB_...mp4: No such file or directory` (Mã `4294967294`) Khi Render Hàng Loạt Đa Luồng
+
+### 1. Chẩn đoán nguyên nhân trên ảnh chụp màn hình lỗi (`P552: FFmpeg render tạm dừng/lỗi (mã 4294967294)`)
+- Trên ảnh chụp màn hình của người dùng, 50 video bị dừng ở bước FFmpeg với thông báo:
+  ```
+  [in#0 @ 000001878b5500c0] Error opening input: No such file or directory
+  Error opening input file D:\stock\PEXELS_PIXABAY_1793517099\stock_PXPB_1793517099_part29.mp4.
+  Error opening input files: No such file or directory
+  ```
+- **3 nguyên nhân gốc rễ gây ra hiện tượng mất file Stock khi vào FFmpeg**:
+  1. **Danh mục `stock_inventory.json` lưu đường dẫn cũ đã bị xóa trên ổ đĩa**: Trước đây hàm [`StockManager.get_all_stocks()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/stock_manager.py#L1023-L1065) đọc trực tiếp từ `stock_inventory.json` mà không kiểm tra `os.path.exists(abs_path)` trên từng file. Khi file `stock_PXPB_1793517099_part29.mp4` trong `D:\stock\...` đã bị xóa ở lần chạy trước hoặc dọn ổ đĩa, `stock_inventory.json` vẫn cấp đường dẫn ma này cho 50 kịch bản.
+  2. **File `selected_stock.json` lưu trong từng thư mục dự án (`P552`) trỏ tới file Stock cũ đã bị xóa hoặc trùng với luồng khác**: Ở [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1142-L1168), khi chạy lại kịch bản cũ, hệ thống đọc `selected_stock.json` nhưng không kiểm tra xem file đó có đang bị luồng khác dùng (`allocated_stock_ids`) hay đã bị luồng chạy xong trước đó gọi `delete_used_stock_file()` xóa mất hay chưa.
+  3. **Khoảng trễ chờ khe GPU (`waiting_gpu`)**: Khi chạy đa luồng (3–5 luồng), Luồng B lấy đường dẫn Stock ở đầu Giai đoạn 2 rồi xếp hàng chờ khe GPU (`waiting_gpu`); trong lúc chờ, Luồng A chạy xong trước và xóa file Stock đó đi, dẫn tới khi Luồng B bước vào [`render_drama_nhat_video()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L532-L570) thì file không còn tồn tại.
+
+### 2. Giải pháp kỹ thuật 3 lớp bảo vệ tự phục hồi (Self-Healing Stock Guard)
+- **Lớp 1 — [`backend/stock_manager.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/stock_manager.py#L1023-L1165)**:
+  - Nâng cấp [`get_all_stocks()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/stock_manager.py#L1023-L1065) và [`get_best_available_stock()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/stock_manager.py#L1067-L1165): Tự động kiểm tra `os.path.exists(x["abs_path"]) and os.path.getsize(x["abs_path"]) > 100_000` trên mọi file. Nếu phát hiện bất kỳ đường dẫn ma nào trong `stock_inventory.json` không còn trên ổ đĩa, hệ thống lập tức quét lại thư mục `D:\stock` (`scan_and_sync()`), dọn sạch đường dẫn ma và chỉ trả về file `.mp4` thực sự tồn tại trên ổ cứng.
+- **Lớp 2 — [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1138-L1390)**:
+  - Khi đọc `selected_stock.json` hoặc cấp mới Stock, hệ thống khóa đồng thời cả `slot_key`, `id`, và `abs_path` vào `allocated_stock_ids` để **không bao giờ có 2 luồng chạy song song dùng chung 1 file vật lý `.mp4`**.
+  - Bổ sung chốt kiểm tra ngay trước lệnh gọi [`_renderer_mod.render_drama_nhat_video()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1318-L1354) (sau vòng lặp `waiting_gpu`): Nếu file Stock bị xóa trong lúc chờ khe GPU, tự động cấp ngay một file Stock hợp lệ khác (hoặc tự tải bù Pixabay/Pexels) và cập nhật lại `selected_stock.json` trước khi mở FFmpeg.
+- **Lớp 3 — [`backend/renderer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L532-L570) & [`lines 928-945`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L928-L945)**:
+  - Bổ sung hàm [`_resolve_fallback_stock_file()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/renderer.py#L535-L561) ngay đầu `render_drama_nhat_video()` và ngay trong vòng lặp `for enc_try in range(2):`. Nếu FFmpeg báo `No such file or directory` với file Stock đầu vào, bộ Render tự động đổi sang file Stock hợp lệ có sẵn trong kho và chạy lại lệnh FFmpeg ngay lập tức mà không làm đứt tiến trình.
+
+---
+
 ## Cập nhật: 05/11/2026 (Lần 46 — V1.0.3 Build #112) — Nâng Cấp `VoicevoxStandaloneService` Tự Động Ưu Tiên Bản NVIDIA CUDA/cuDNN (`windows-nvidia/run.exe`), Chạy 1 Worker GPU Chuyên Biệt (`50021`) Triệt Tiêu Tranh Chấp Shader/VRAM Trên Card 6GB (RTX 2060) & Tích Hợp `onnxruntime-gpu`
 
 ### 1. Yêu cầu của người dùng
