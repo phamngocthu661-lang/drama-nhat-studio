@@ -347,9 +347,25 @@ def _close_stale_desktop_ui_windows():
             "($_.CommandLine -like '*DesktopUI_Profile_V*' -or $_.CommandLine -like '*--app=http://127.0.0.1:8899*') "
             "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
         )
-        subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=4)
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps_cmd], capture_output=True, timeout=4, creationflags=0x08000000)
+        time.sleep(0.6)
     except Exception:
         pass
+
+
+def _is_desktop_ui_window_alive() -> bool:
+    """Kiểm tra xem còn bất kỳ tiến trình cửa sổ Desktop UI (Chrome/Edge App) nào đang mở hay không."""
+    try:
+        ps_check = (
+            "$p = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { "
+            "$_.Name -in @('chrome.exe','msedge.exe') -and "
+            "($_.CommandLine -like '*DesktopUI_Profile_V*' -or $_.CommandLine -like '*--app=http://127.0.0.1:8899*') "
+            "}; if ($p) { Write-Output 'ALIVE' }"
+        )
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", ps_check], capture_output=True, text=True, timeout=4, creationflags=0x08000000)
+        return "ALIVE" in (r.stdout or "")
+    except Exception:
+        return True
 
 
 def open_desktop_ui_window(url: str):
@@ -546,19 +562,35 @@ def main():
 
     try:
         ui_start_ts = time.time()
+        reopen_attempted = False
         while True:
-            time.sleep(1.0)
+            time.sleep(1.5)
             if ui_proc is not None and ui_proc.poll() is not None:
                 elapsed_ui = time.time() - ui_start_ts
                 rc = ui_proc.returncode
                 ui_proc = None
-                if elapsed_ui < 2.0 and rc != 0:
-                    _write_startup_log(f"Cửa sổ App đóng sớm (rc={rc}), tự động mở dự phòng bằng trình duyệt mặc định...", is_error=False)
-                    webbrowser.open(url)
-                elif elapsed_ui >= 2.0:
-                    # Người dùng đã bấm nút X đóng cửa sổ ứng dụng -> Tắt sạch toàn bộ hệ thống & Server Voice!
-                    shutdown_all_studio_processes()
-                    os._exit(0)
+
+                # Nếu tiến trình launcher của Chrome thoát sớm (< 10s sau khi bật) do profile cũ vừa đóng xong
+                # hoặc do Chrome chuyển tiếp cửa sổ sang tiến trình nền:
+                if elapsed_ui < 10.0:
+                    time.sleep(1.0)
+                    if _is_desktop_ui_window_alive():
+                        _write_startup_log("Cửa sổ App Native đã chuyển tiếp sang tiến trình Chrome chính và đang hiển thị bình thường.", is_error=False)
+                        continue
+                    if not reopen_attempted:
+                        reopen_attempted = True
+                        _write_startup_log(f"Tiến trình cửa sổ đầu tiên đóng sớm ({elapsed_ui:.1f}s, rc={rc}), đang tự động mở lại cửa sổ App...", is_error=False)
+                        time.sleep(1.0)
+                        ui_start_ts = time.time()
+                        ui_proc = open_desktop_ui_window(url)
+                        if ui_proc is None and not _is_desktop_ui_window_alive():
+                            webbrowser.open(f"{url}/?v={int(time.time())}")
+                        continue
+                else:
+                    if not _is_desktop_ui_window_alive():
+                        # Người dùng đã bấm nút X đóng cửa sổ ứng dụng -> Tắt sạch toàn bộ hệ thống & Server Voice!
+                        shutdown_all_studio_processes()
+                        os._exit(0)
     except KeyboardInterrupt:
         print("\nĐã đóng Drama Nhật Studio.")
         shutdown_all_studio_processes()

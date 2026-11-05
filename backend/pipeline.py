@@ -1901,6 +1901,11 @@ def _auto_patch_live_instances_on_reload():
             importlib.reload(_sc_mod)
         except Exception:
             pass
+        try:
+            import backend.updater_service as _upd_mod
+            importlib.reload(_upd_mod)
+        except Exception:
+            pass
 
         live_pipelines: List[Any] = []
         live_balancers: List[Any] = []

@@ -1,5 +1,33 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 05/11/2026 (Lần 50 — V1.0.3 Build #116) — Sửa Triệt Để Lỗi Sau Khi Update & Reset Không Tự Động Mở Lại Ứng Dụng
+
+### 1. Chẩn đoán nguyên nhân vì sao Update & Reset xong ứng dụng không tự mở lại
+Qua kiểm tra [`backend/updater_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py), [`main.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/main.py) và `logs/server_startup.log`, phát hiện **2 nguyên nhân trực tiếp** khiến tiến trình khởi động lại bị ngắt:
+1. **Cờ `/T` trong `taskkill` tự hủy chính tiến trình khởi động lại (`_ota_restart_helper.py`)**:
+   - Trong [`_schedule_full_application_reset()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py#L380-L401), tiến trình `_ota_restart_helper.py` được tạo ra bởi tiến trình Server cũ (`old_pid`, vốn là tiến trình con của `Drama_Nhat_Studio.exe`).
+   - Khi `_ota_restart_helper.py` chạy lệnh `taskkill /F /PID <old_pid> /T` và `taskkill /F /IM Drama_Nhat_Studio.exe /T`, tham số `/T` (*Terminate child process tree*) của Windows đã **tắt luôn cả tiến trình con `_ota_restart_helper.py`** ngay ở bước 1–2 trước khi kịp chạy tới bước 5 (`subprocess.Popen([sys.executable, main_py])`).
+2. **Vòng lặp canh cửa sổ trong [`main.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/main.py#L548-L561) tưởng nhầm người dùng đóng app khi Chrome chuyển tiếp cửa sổ**:
+   - Trong `logs/server_startup.log` ghi nhận:
+     ```
+     [14:03:41] [STARTUP] Đang mở cửa sổ App Native bằng: chrome.exe -> http://127.0.0.1:8899
+     [14:03:43] [STARTUP] 🛑 Đang tắt toàn bộ tiến trình Drama Nhật Studio & Server Voice (run.exe)...
+     ```
+   - Khi `chrome.exe --user-data-dir=DesktopUI_Profile_V6 --app=...` vừa được gọi ngay sau khi cửa sổ Chrome cũ đóng (~2.1s), tiến trình launcher của Chrome chuyển tiếp yêu cầu mở cửa sổ cho tiến trình nền Chrome rồi tự thoát với mã `0` sau ~2.1 giây. Vòng lặp trong `main.py` thấy `ui_proc.poll() is not None` và `elapsed_ui >= 2.0` nên tưởng nhầm người dùng vừa bấm nút `[X]` đóng cửa sổ và gọi `shutdown_all_studio_processes(); os._exit(0)`, làm tắt luôn Server vừa mới bật lên!
+
+### 2. Giải pháp kỹ thuật đã khắc phục
+- **[`backend/updater_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py) ([`_schedule_full_application_reset()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py#L357-L570))**:
+  1. **Tách hoàn toàn tiến trình `_ota_restart_helper.py` khỏi cây tiến trình cũ**: Khởi chạy qua WMI `Win32_Process.Create` (thuộc về `WmiPrvSE.exe` của Windows, độc lập 100% với `old_pid` và `Drama_Nhat_Studio.exe`) kèm cơ chế Popen `CREATE_BREAKAWAY_FROM_JOB` và khóa chống chạy trùng `_ota_restart.lock`.
+  2. **Bỏ cờ `/T` khi tắt `old_pid` và `Drama_Nhat_Studio.exe`**: Chỉ dùng `/T` cho các tiến trình tác vụ con (`run.exe`, `ffmpeg.exe`, `ffprobe.exe`, `yt-dlp.exe`), còn `old_pid` và `Drama_Nhat_Studio.exe` tắt trực tiếp không có `/T` để tuyệt đối không bao giờ chạm vào tiến trình helper.
+  3. **Bảo hiểm kép mở lại cả Server lẫn Cửa sổ UI**: Sau khi gọi `main.py`, `_ota_restart_helper.py` tự động canh cổng `8899` lên `200 OK` (nếu sau 9s chưa lên sẽ kích hoạt lại lần 2), sau đó kiểm tra nếu cửa sổ Chrome/Edge App chưa hiện trên màn hình thì trực tiếp mở cửa sổ App Native `http://127.0.0.1:8899` cho người dùng.
+- **[`main.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/main.py) ([`_is_desktop_ui_window_alive()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/main.py#L356-L368) & [`main()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/main.py#L563-L596))**:
+  - Bổ sung hàm `_is_desktop_ui_window_alive()` kiểm tra thực tế xem có tiến trình cửa sổ `chrome.exe`/`msedge.exe` nào mang `DesktopUI_Profile_V*` hoặc `--app=http://127.0.0.1:8899` đang mở hay không.
+  - Trong 10 giây đầu sau khi bật, nếu launcher `ui_proc` thoát sớm mà chưa có cửa sổ UI thì tự động gọi mở lại cửa sổ UI; chỉ khi `elapsed_ui >= 10.0s` và xác nhận không còn bất kỳ cửa sổ `DesktopUI_Profile_V*` nào đang mở thì mới tắt Server.
+- **[`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1904-L1908)**:
+  - Tự động nạp nóng (`importlib.reload`) luôn `backend.updater_service` ngay trong `_auto_patch_live_instances_on_reload()` để các máy đang ở Build `#114`/`#115` khi bấm Update sẽ áp dụng ngay lập tức bộ khởi động lại mới của Build `#116`.
+
+---
+
 ## Cập nhật: 05/11/2026 (Lần 49 — V1.0.3 Build #115) — Đẩy 100% File Voice Về `Folder Project` Đã Chọn, Chỉ Đẩy Video MP4 Sang `VIDEO XONG` Khi Hoàn Thiện 100% & Tăng Tốc Tối Đa Server VOICEVOX GPU
 
 ### 1. Chẩn đoán nguyên nhân & Yêu cầu của người dùng

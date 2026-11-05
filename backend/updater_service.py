@@ -356,54 +356,95 @@ def _stop_all_tasks_and_subprocesses(adas_engine: Any = None, pipeline: Any = No
 
 def _schedule_full_application_reset(root_dir: Path):
     """
-    Khởi chạy tiến trình phụ độc lập (_ota_restart_helper.py) để:
+    Khởi chạy tiến trình phụ độc lập (_ota_restart_helper.py) tách biệt hoàn toàn khỏi cây tiến trình cũ:
     1. Chờ 1.2s cho Server trả xong phản hồi HTTP về giao diện.
-    2. Tắt hoàn toàn tiến trình Server Python hiện tại (PID cũ & cổng 8899) và đóng toàn bộ tác vụ con (run.exe, ffmpeg.exe, yt-dlp.exe).
-    3. Đóng cửa sổ giao diện Desktop App cũ (--app=http://127.0.0.1:8899) và khởi động lại ứng dụng hoàn toàn mới từ đầu (main.py).
+    2. Tắt tiến trình Server cũ (PID cũ & cổng 8899) và Drama_Nhat_Studio.exe KHÔNG dùng cờ /T (để không bao giờ tự tắt chính _ota_restart_helper.py).
+    3. Đóng sạch toàn bộ tác vụ con (run.exe, ffmpeg.exe, ffprobe.exe, yt-dlp.exe) và cửa sổ Desktop UI cũ.
+    4. Khởi động lại main.py và tự động kiểm tra đảm bảo cả Server cổng 8899 lẫn cửa sổ giao diện Desktop App đều mở lên 100%.
     """
     import subprocess
     try:
         logs_dir = root_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
         helper_path = logs_dir / "_ota_restart_helper.py"
+        lock_path = logs_dir / "_ota_restart.lock"
+        try:
+            if lock_path.exists():
+                lock_path.unlink()
+        except Exception:
+            pass
+
         helper_code = '''import os
 import sys
 import time
 import socket
 import subprocess
+import urllib.request
 
 old_pid = int(sys.argv[1]) if len(sys.argv) > 1 else 0
 root_dir = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
+my_pid = os.getpid()
 
-time.sleep(1.2)
+logs_dir = os.path.join(root_dir, "logs")
+os.makedirs(logs_dir, exist_ok=True)
+log_file = os.path.join(logs_dir, "ota_restart.log")
+lock_file = os.path.join(logs_dir, "_ota_restart.lock")
 
-# 1. Tắt hoàn toàn tiến trình Server cũ và cổng 8899
-if old_pid > 0:
+def wlog(msg):
     try:
-        subprocess.run(["taskkill", "/F", "/PID", str(old_pid), "/T"], capture_output=True, timeout=4, creationflags=0x08000000)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(log_file, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] [PID={my_pid}] {msg}\\n")
     except Exception:
         pass
 
+# Đảm bảo chỉ 1 tiến trình helper duy nhất chạy nếu được kích hoạt song song qua cả WMI và Popen
 try:
-    ps_kill_port = (
-        "Get-NetTCPConnection -LocalPort 8899 -State Listen -ErrorAction SilentlyContinue | "
-        "ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
-    )
-    subprocess.run(["powershell", "-NoProfile", "-Command", ps_kill_port], capture_output=True, timeout=4, creationflags=0x08000000)
+    if os.path.exists(lock_file):
+        age = time.time() - os.path.getmtime(lock_file)
+        if age < 15.0:
+            sys.exit(0)
+    with open(lock_file, "w", encoding="utf-8") as lf:
+        lf.write(str(my_pid))
 except Exception:
     pass
 
-# 2. Đóng sạch toàn bộ tiến trình tác vụ con (Voice Engine run.exe, FFmpeg, ffprobe, yt-dlp, Launcher)
-for img in ("run.exe", "ffmpeg.exe", "ffprobe.exe", "yt-dlp.exe", "Drama_Nhat_Studio.exe"):
+wlog(f"Bắt đầu quy trình Full Reset ứng dụng (old_pid={old_pid}, root_dir={root_dir})")
+time.sleep(1.2)
+
+# 1. Đóng sạch toàn bộ tiến trình tác vụ con (Voice Engine run.exe, FFmpeg, ffprobe, yt-dlp)
+for img in ("run.exe", "ffmpeg.exe", "ffprobe.exe", "yt-dlp.exe"):
     try:
         subprocess.run(["taskkill", "/F", "/IM", img, "/T"], capture_output=True, timeout=3, creationflags=0x08000000)
     except Exception:
         pass
 
-# 3. Đóng cửa sổ Desktop UI cũ để main.py mới mở lại cửa sổ mới hoàn toàn
+# 2. Tắt Launcher Drama_Nhat_Studio.exe và tiến trình Server cũ (KHÔNG dùng /T để không bao giờ tự giết tiến trình helper!)
+try:
+    subprocess.run(["taskkill", "/F", "/IM", "Drama_Nhat_Studio.exe"], capture_output=True, timeout=3, creationflags=0x08000000)
+except Exception:
+    pass
+
+if old_pid > 0 and old_pid != my_pid:
+    try:
+        subprocess.run(["taskkill", "/F", "/PID", str(old_pid)], capture_output=True, timeout=4, creationflags=0x08000000)
+    except Exception:
+        pass
+
+try:
+    ps_kill_port = (
+        f"Get-NetTCPConnection -LocalPort 8899 -State Listen -ErrorAction SilentlyContinue | "
+        f"Where-Object {{ $_.OwningProcess -ne {my_pid} }} | "
+        f"ForEach-Object {{ Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }}"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps_kill_port], capture_output=True, timeout=4, creationflags=0x08000000)
+except Exception:
+    pass
+
+# 3. Đóng cửa sổ Desktop UI cũ và chờ giải phóng khóa Profile Chrome
 try:
     ps_close_ui = (
-        "Get-CimInstance Win32_Process | Where-Object { "
+        "Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { "
         "$_.Name -in @('chrome.exe','msedge.exe') -and "
         "($_.CommandLine -like '*DesktopUI_Profile_V*' -or $_.CommandLine -like '*--app=http://127.0.0.1:8899*') "
         "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
@@ -413,32 +454,146 @@ except Exception:
     pass
 
 # 4. Đợi cổng 8899 được giải phóng hoàn toàn
-for _ in range(20):
+for _ in range(25):
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         if s.connect_ex(("127.0.0.1", 8899)) != 0:
             break
     time.sleep(0.25)
 
+time.sleep(0.8)
+
 # 5. Khởi động lại ứng dụng hoàn toàn mới từ main.py
 env = os.environ.copy()
 env["DRAMA_PYTHON_SWITCHED"] = "1"
 main_py = os.path.join(root_dir, "main.py")
-subprocess.Popen(
-    [sys.executable, main_py],
-    cwd=root_dir,
-    env=env,
-    creationflags=0x08000000 | 0x00000200,
-)
+wlog(f"Đang khởi chạy lại main.py bằng {sys.executable}...")
+
+def spawn_main():
+    try:
+        return subprocess.Popen(
+            [sys.executable, main_py],
+            cwd=root_dir,
+            env=env,
+            creationflags=0x08000000 | 0x00000200,
+        )
+    except Exception as e:
+        wlog(f"Lỗi khi gọi Popen main.py: {e}")
+        return None
+
+spawn_main()
+
+# 6. Kiểm tra đảm bảo Server cổng 8899 đã sống dậy và cửa sổ giao diện Desktop đã mở trên màn hình
+server_up = False
+for i in range(50):
+    time.sleep(0.5)
+    if i == 18 and not server_up:
+        wlog("Sau 9s cổng 8899 chưa lên, đang kích hoạt lại main.py lần 2...")
+        spawn_main()
+    try:
+        proxy_handler = urllib.request.ProxyHandler({})
+        opener = urllib.request.build_opener(proxy_handler)
+        with opener.open("http://127.0.0.1:8899/api/status", timeout=1.2) as resp:
+            if resp.status == 200:
+                server_up = True
+                break
+    except Exception:
+        pass
+
+wlog(f"Trạng thái Server 8899 sau khi khởi động lại: server_up={server_up}")
+
+if server_up:
+    time.sleep(2.5)
+    try:
+        ps_check_ui = (
+            "$p = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { "
+            "$_.Name -in @('chrome.exe','msedge.exe') -and "
+            "($_.CommandLine -like '*DesktopUI_Profile_V*' -or $_.CommandLine -like '*--app=http://127.0.0.1:8899*') "
+            "}; if ($p) { Write-Output 'UI_OPEN' }"
+        )
+        r_ui = subprocess.run(["powershell", "-NoProfile", "-Command", ps_check_ui], capture_output=True, text=True, timeout=4, creationflags=0x08000000)
+        if "UI_OPEN" not in (r_ui.stdout or ""):
+            wlog("Phát hiện cửa sổ UI chưa hiển thị -> Đang chủ động mở cửa sổ App Native...")
+            local_app = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+            ui_profile_dir = os.path.join(local_app, "Drama_Nhat_Studio", "DesktopUI_Profile_V6")
+            os.makedirs(ui_profile_dir, exist_ok=True)
+            url_open = f"http://127.0.0.1:8899/?v={int(time.time())}"
+            browser_exe = ""
+            for cand_b in (
+                os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"), "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"), "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(local_app, "Google", "Chrome", "Application", "chrome.exe"),
+                os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\\Program Files (x86)"), "Microsoft", "Edge", "Application", "msedge.exe"),
+                os.path.join(os.environ.get("ProgramFiles", r"C:\\Program Files"), "Microsoft", "Edge", "Application", "msedge.exe"),
+            ):
+                if os.path.isfile(cand_b):
+                    browser_exe = cand_b
+                    break
+            if browser_exe:
+                subprocess.Popen(
+                    [
+                        browser_exe,
+                        f"--app={url_open}",
+                        f"--user-data-dir={ui_profile_dir}",
+                        "--window-size=1480,920",
+                        "--window-position=60,30",
+                        "--disk-cache-size=1",
+                        "--media-cache-size=1",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "--disable-features=Translate,CalculateNativeWinOcclusion",
+                        "--disable-gpu-sandbox",
+                        "--proxy-bypass-list=<-loopback>",
+                    ],
+                    cwd=root_dir,
+                )
+            else:
+                os.startfile(url_open)
+    except Exception as ui_err:
+        wlog(f"Lưu ý khi kiểm tra/mở lại cửa sổ UI: {ui_err}")
+
+wlog("Hoàn tất 100% quy trình Reset & mở lại ứng dụng!")
 '''
         helper_path.write_text(helper_code, encoding="utf-8")
         env = os.environ.copy()
         env["DRAMA_PYTHON_SWITCHED"] = "1"
-        subprocess.Popen(
-            [sys.executable, str(helper_path), str(os.getpid()), str(root_dir)],
-            cwd=str(root_dir),
-            env=env,
-            creationflags=0x08000000 | 0x00000200,
-        )
+        curr_pid = os.getpid()
+
+        # Cách 1: Khởi chạy qua WMI Win32_Process.Create để tiến trình helper thuộc về WmiPrvSE.exe (tách khỏi 100% cây tiến trình và Job Object cũ)
+        spawned_wmi = False
+        if os.name == "nt":
+            try:
+                cmd_line = f'"{sys.executable}" "{helper_path}" {curr_pid} "{root_dir}"'
+                ps_wmi = (
+                    f"Invoke-CimMethod -ClassName Win32_Process -MethodName Create "
+                    f"-Arguments @{{ CommandLine = '{cmd_line.replace(chr(39), chr(39)+chr(39))}'; CurrentDirectory = '{str(root_dir).replace(chr(39), chr(39)+chr(39))}' }} | Out-Null"
+                )
+                r_wmi = subprocess.run(
+                    ["powershell", "-NoProfile", "-Command", ps_wmi],
+                    capture_output=True,
+                    timeout=3,
+                    creationflags=0x08000000,
+                )
+                if r_wmi.returncode == 0:
+                    spawned_wmi = True
+            except Exception:
+                spawned_wmi = False
+
+        # Cách 2: Dự phòng Popen tách Job/Group (có file lock _ota_restart.lock chống chạy trùng)
+        for flags in (
+            0x08000000 | 0x00000200 | 0x01000000,  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB
+            0x08000000 | 0x00000200,               # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
+        ):
+            try:
+                subprocess.Popen(
+                    [sys.executable, str(helper_path), str(curr_pid), str(root_dir)],
+                    cwd=str(root_dir),
+                    env=env,
+                    creationflags=flags,
+                    close_fds=True,
+                )
+                break
+            except Exception:
+                continue
 
         def _force_self_exit():
             time.sleep(1.5)
