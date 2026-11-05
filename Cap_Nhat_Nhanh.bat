@@ -14,11 +14,15 @@ echo.
 set "SRC_DIR=%~dp0"
 if "%SRC_DIR:~-1%"=="\" set "SRC_DIR=%SRC_DIR:~0,-1%"
 
-:: 1. Tắt tiến trình cũ (Drama_Nhat_Studio.exe, cổng 8899 và VOICEVOX run.exe) để nạp giao diện & code mới 100%
-echo [1/4] Đang làm mới tiến trình Studio ^& Voice Engine ngầm...
-taskkill /F /IM Drama_Nhat_Studio.exe >nul 2>&1
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8899" ^| findstr "LISTENING"') do taskkill /F /PID %%a >nul 2>&1
-taskkill /F /IM run.exe >nul 2>&1
+:: 1. Tắt hoàn toàn tiến trình cũ (Drama_Nhat_Studio.exe, cổng 8899, FFmpeg, VOICEVOX run.exe, yt-dlp và cửa sổ App cũ) để Reset 100%
+echo [1/4] Đang đóng toàn bộ tác vụ đang chạy ^& Reset tiến trình ứng dụng...
+taskkill /F /IM Drama_Nhat_Studio.exe /T >nul 2>&1
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8899" ^| findstr "LISTENING"') do taskkill /F /PID %%a /T >nul 2>&1
+taskkill /F /IM run.exe /T >nul 2>&1
+taskkill /F /IM ffmpeg.exe /T >nul 2>&1
+taskkill /F /IM ffprobe.exe /T >nul 2>&1
+taskkill /F /IM yt-dlp.exe /T >nul 2>&1
+powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('chrome.exe','msedge.exe') -and ($_.CommandLine -like '*DesktopUI_Profile_V*' -or $_.CommandLine -like '*--app=http://127.0.0.1:8899*') } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>&1
 
 :: 2. Tự động nhận diện thư mục cài đặt chính
 set "TARGET_DIR=%SRC_DIR%"

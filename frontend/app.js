@@ -4175,7 +4175,7 @@ Capacity: PASS`;
 
     let closeSent = false;
     const sendCloseSignal = () => {
-      if (closeSent) return;
+      if (closeSent || window.__isRestartingForUpdate) return;
       closeSent = true;
       try {
         if (navigator.sendBeacon) {
@@ -4323,6 +4323,32 @@ Capacity: PASS`;
       }
     };
 
+    const showFullResetOverlay = (titleText, subText) => {
+      let ov = document.getElementById("ota-full-reset-overlay");
+      if (!ov) {
+        ov = document.createElement("div");
+        ov.id = "ota-full-reset-overlay";
+        ov.style.cssText = "position:fixed;inset:0;z-index:999999;background:rgba(8,12,16,0.94);backdrop-filter:blur(8px);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px;text-align:center;color:#e2f1e8;font-family:Inter,sans-serif;";
+        ov.innerHTML = `
+          <div style="max-width:560px;background:#111920;border:2px solid #00e676;border-radius:16px;padding:28px 32px;box-shadow:0 0 40px rgba(0,230,118,0.25);">
+            <div style="font-size:38px;margin-bottom:12px;">🔄</div>
+            <div id="ota-reset-title" style="font-size:18px;font-weight:800;color:#00e676;margin-bottom:10px;line-height:1.4;"></div>
+            <div id="ota-reset-sub" style="font-size:13px;color:#b0c4b8;line-height:1.6;"></div>
+          </div>
+        `;
+        document.body.appendChild(ov);
+      }
+      const tEl = document.getElementById("ota-reset-title");
+      const sEl = document.getElementById("ota-reset-sub");
+      if (tEl) tEl.innerText = titleText;
+      if (sEl) sEl.innerText = subText;
+    };
+
+    const removeFullResetOverlay = () => {
+      const ov = document.getElementById("ota-full-reset-overlay");
+      if (ov) ov.remove();
+    };
+
     const executeApplyUpdate = async () => {
       if (isApplyingUpdate) return;
       const targetVer = (latestUpdateInfo && latestUpdateInfo.latest_version) || "mới nhất";
@@ -4331,37 +4357,71 @@ Capacity: PASS`;
         ? `\n\n📋 Nội dung nâng cấp:\n${latestUpdateInfo.changelog}`
         : "";
 
-      if (!confirm(`🚀 Bạn có muốn tự động tải và cập nhật ứng dụng từ bản [${curVer}] lên bản [${targetVer}] ngay bây giờ không?${note}\n\n(Toàn bộ kịch bản, dự án, kho Stock và cấu hình của bạn được giữ nguyên 100%)`)) {
+      if (!confirm(`🚀 Bạn có muốn tự động tải bản cập nhật [${targetVer}], đóng toàn bộ tác vụ đang chạy và RESET khởi động lại ứng dụng hoàn toàn không?${note}\n\n(Toàn bộ kịch bản, Checkpoint đang render dở, kho Stock và cấu hình của bạn được giữ nguyên 100%)`)) {
         return;
       }
 
       isApplyingUpdate = true;
+      window.__isRestartingForUpdate = true;
       if (btnBannerApply) btnBannerApply.disabled = true;
       if (btnApplyHeader) btnApplyHeader.disabled = true;
       if (btnApplyNav) btnApplyNav.disabled = true;
-      if (textBannerApply) textBannerApply.innerText = "⏳ Đang tải & cập nhật...";
-      if (textApplyHeader) textApplyHeader.innerText = "⏳ Đang cập nhật...";
-      if (textApplyNav) textApplyNav.innerText = "⏳ ĐANG CẬP NHẬT...";
+      if (textBannerApply) textBannerApply.innerText = "⏳ Đang đóng tác vụ & cập nhật...";
+      if (textApplyHeader) textApplyHeader.innerText = "⏳ Đang Reset & cập nhật...";
+      if (textApplyNav) textApplyNav.innerText = "⏳ ĐANG RESET & CẬP NHẬT...";
+
+      showFullResetOverlay(
+        `Đang đóng toàn bộ tác vụ & tải bản cập nhật ${targetVer}...`,
+        "Hệ thống đang dừng sạch các tiến trình FFmpeg, Voice Engine (run.exe), AI và tải mã nguồn mới nhất từ GitHub. Vui lòng đợi trong giây lát..."
+      );
 
       try {
-        const res = await fetch("/api/update/apply", { method: "POST" });
+        const res = await fetch("/api/update/apply?restart=true", { method: "POST" });
         let data = null;
         if (res.status === 404) {
-          // Trường hợp tiến trình Server cũ trên máy Admin đã có sẵn file mới trên ổ cứng
-          data = { success: true, old_version: curVer, new_version: targetVer };
+          data = { success: true, restarting: false, old_version: curVer, new_version: targetVer };
         } else {
           data = await res.json();
         }
         if ((res.status !== 404 && !res.ok) || !data || !data.success) {
+          window.__isRestartingForUpdate = false;
+          removeFullResetOverlay();
           alert(`❌ Cập nhật thất bại: ${(data && data.error) || "Lỗi không xác định"}`);
           return;
         }
+        const buildTag = data.build_number ? ` (Build #${data.build_number})` : "";
         if (textBannerApply) textBannerApply.innerText = `✅ Đã lên ${data.new_version}!`;
         if (textApplyHeader) textApplyHeader.innerText = `✅ Đã lên ${data.new_version}!`;
         if (textApplyNav) textApplyNav.innerText = `✅ ĐÃ LÊN ${data.new_version}!`;
-        alert(`🎉 Đã cập nhật thành công từ ${data.old_version} lên ${data.new_version}!\n\nGiao diện sẽ tự động làm mới ngay bây giờ.`);
-        window.location.href = "/?v=" + Date.now();
+
+        showFullResetOverlay(
+          `✅ Đã nâng cấp lên ${data.new_version}${buildTag}! Đang Reset khởi động lại ứng dụng...`,
+          "Toàn bộ tác vụ cũ đã được đóng sạch. Ứng dụng đang tắt tiến trình cũ và tự động bật lại cửa sổ mới hoàn toàn trong vài giây..."
+        );
+
+        // Chờ tiến trình Server cũ tắt hẳn (2.2s), sau đó kiểm tra tới khi Server mới bật lên thì nạp lại trang
+        setTimeout(() => {
+          let attempts = 0;
+          const pollTimer = setInterval(async () => {
+            attempts += 1;
+            try {
+              const ping = await fetch("/api/update/status?_t=" + Date.now(), { cache: "no-store" });
+              if (ping.ok) {
+                clearInterval(pollTimer);
+                window.location.replace("/?v=" + Date.now());
+              }
+            } catch (err) {
+              // Server đang trong quá trình khởi động lại
+            }
+            if (attempts > 35) {
+              clearInterval(pollTimer);
+              window.location.replace("/?v=" + Date.now());
+            }
+          }, 800);
+        }, 2200);
       } catch (e) {
+        window.__isRestartingForUpdate = false;
+        removeFullResetOverlay();
         alert("❌ Lỗi khi tải bản cập nhật: " + e.message);
       } finally {
         isApplyingUpdate = false;

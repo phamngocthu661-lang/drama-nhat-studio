@@ -1221,9 +1221,14 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
         return check_for_github_update(base_dir, force_refresh=bool(force))
 
     @app.post("/api/update/apply")
-    def api_apply_github_update():
+    def api_apply_github_update(restart: bool = True):
         from backend.updater_service import apply_github_update
-        return apply_github_update(base_dir, adas_engine=adas_engine, pipeline=pipeline)
+        return apply_github_update(
+            base_dir,
+            adas_engine=adas_engine,
+            pipeline=pipeline,
+            restart_app=bool(restart),
+        )
 
     @app.websocket("/ws")
     async def websocket_endpoint(websocket: WebSocket):

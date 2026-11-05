@@ -1,5 +1,27 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 05/11/2026 (Lần 48 — V1.0.3 Build #114) — Nâng Cấp Cơ Chế Cập Nhật Tự Động: Đóng Sạch 100% Tác Vụ Đang Chạy & Reset Khởi Động Lại Hoàn Toàn Ứng Dụng Từ Đầu Khi Update
+
+### 1. Yêu cầu của người dùng
+- Sửa lại cơ chế cập nhật: Mỗi khi bấm Update thì **Reset hẳn ứng dụng 1 lần** và **đóng hết toàn bộ các tác vụ đang chạy** (thay vì chỉ nạp nóng `hot-reload` / load lại trang web) để bản cập nhật được áp dụng chuẩn xác 100%, không còn tiến trình cũ treo ngầm.
+
+### 2. Giải pháp kỹ thuật & Các file đã nâng cấp
+- **[`backend/updater_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py)**:
+  - Bổ sung [`_stop_all_tasks_and_subprocesses()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py#L316-L355): Ngay khi bắt đầu cập nhật, hệ thống tự động gọi `pipeline.stop()`, `adas_engine.stop()`, `VoicevoxStandaloneService.shutdown_all_workers()` và đóng sạch toàn bộ các tiến trình con (`ffmpeg.exe`, `ffprobe.exe`, `run.exe`, `yt-dlp.exe`) bằng `taskkill /F /IM ... /T`. Mọi video đang render dở đều được giữ nguyên Checkpoint `.ts` / `.wav` an toàn.
+  - Bổ sung [`_schedule_full_application_reset()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/updater_service.py#L358-L443): Sau khi chép xong toàn bộ file mới từ GitHub, khởi chạy tiến trình độc lập `logs/_ota_restart_helper.py` để:
+    1. Chờ `1.2s` cho Server trả xong phản hồi HTTP về giao diện.
+    2. Tắt hoàn toàn tiến trình Server Python hiện tại (`PID` cũ & cổng `8899`) và mọi tiến trình con còn sót (`run.exe`, `ffmpeg.exe`, `ffprobe.exe`, `yt-dlp.exe`, `Drama_Nhat_Studio.exe`).
+    3. Đóng cửa sổ giao diện Desktop App cũ (`DesktopUI_Profile_V*` / `--app=http://127.0.0.1:8899`).
+    4. Đợi cổng `8899` giải phóng hoàn toàn rồi **khởi động lại ứng dụng mới hoàn toàn từ đầu (`main.py`)**.
+- **[`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py#L1223-L1231)**:
+  - Cập nhật endpoint `POST /api/update/apply` mặc định bật `restart: bool = True` để kích hoạt cơ chế Reset toàn diện ứng dụng khi bấm nút Cập Nhật trên giao diện.
+- **[`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js#L4172-L4430)**:
+  - Nâng cấp [`executeApplyUpdate()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js#L4352-L4430) và bổ sung màn hình trạng thái [`showFullResetOverlay()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js#L4326-L4350): Hiển thị rõ tiến trình đóng toàn bộ tác vụ và Reset ứng dụng, khóa tín hiệu `window-closed` giả trong lúc khởi động lại, và tự động kiểm tra `/api/update/status` tới khi tiến trình Server mới khởi động xong để nạp lại giao diện sạch 100%.
+- **[`Cap_Nhat_Nhanh.bat`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/Cap_Nhat_Nhanh.bat#L17-L26)**:
+  - Đồng bộ đóng sạch `Drama_Nhat_Studio.exe`, cổng `8899`, `run.exe`, `ffmpeg.exe`, `ffprobe.exe`, `yt-dlp.exe` và cửa sổ Desktop UI cũ trước khi nâng cấp và bật lại ứng dụng mới.
+
+---
+
 ## Cập nhật: 05/11/2026 (Lần 47 — V1.0.3 Build #113) — Sửa Triệt Để Lỗi FFmpeg `Error opening input file D:\stock\...\stock_PXPB_...mp4: No such file or directory` (Mã `4294967294`) Khi Render Hàng Loạt Đa Luồng
 
 ### 1. Chẩn đoán nguyên nhân trên ảnh chụp màn hình lỗi (`P552: FFmpeg render tạm dừng/lỗi (mã 4294967294)`)

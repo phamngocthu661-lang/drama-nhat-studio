@@ -313,14 +313,152 @@ def _safe_copy_file(src_file: Path, dst_file: Path) -> bool:
         return False
 
 
+def _stop_all_tasks_and_subprocesses(adas_engine: Any = None, pipeline: Any = None):
+    """
+    Đóng sạch 100% mọi tác vụ đang chạy (Render FFmpeg, Tạo Voice VOICEVOX, Dây chuyền ADAS AI, tải Stock yt-dlp)
+    trước khi áp dụng bản cập nhật và Reset ứng dụng để không còn bất kỳ tiến trình cũ nào bị treo hoặc giữ khóa file.
+    """
+    import subprocess
+    log_info("UPDATER", "🛑 Đang đóng toàn bộ tác vụ đang chạy (Render FFmpeg, Voice Engine, ADAS AI) để cập nhật chuẩn xác...")
+
+    try:
+        if pipeline is not None and hasattr(pipeline, "stop"):
+            pipeline.stop()
+    except Exception as e:
+        log_warn("UPDATER", f"Lưu ý khi dừng Pipeline: {e}")
+
+    try:
+        if adas_engine is not None:
+            setattr(adas_engine, "live_auto_produce_video", False)
+            if hasattr(adas_engine, "stop"):
+                adas_engine.stop()
+    except Exception as e:
+        log_warn("UPDATER", f"Lưu ý khi dừng ADAS Engine: {e}")
+
+    try:
+        from backend.voicevox_service import VoicevoxStandaloneService
+        VoicevoxStandaloneService.shutdown_all_workers()
+    except Exception:
+        pass
+
+    if os.name == "nt":
+        for img in ("ffmpeg.exe", "ffprobe.exe", "run.exe", "yt-dlp.exe"):
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", img, "/T"],
+                    capture_output=True,
+                    timeout=3,
+                    creationflags=0x08000000,
+                )
+            except Exception:
+                pass
+
+
+def _schedule_full_application_reset(root_dir: Path):
+    """
+    Khởi chạy tiến trình phụ độc lập (_ota_restart_helper.py) để:
+    1. Chờ 1.2s cho Server trả xong phản hồi HTTP về giao diện.
+    2. Tắt hoàn toàn tiến trình Server Python hiện tại (PID cũ & cổng 8899) và đóng toàn bộ tác vụ con (run.exe, ffmpeg.exe, yt-dlp.exe).
+    3. Đóng cửa sổ giao diện Desktop App cũ (--app=http://127.0.0.1:8899) và khởi động lại ứng dụng hoàn toàn mới từ đầu (main.py).
+    """
+    import subprocess
+    try:
+        logs_dir = root_dir / "logs"
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        helper_path = logs_dir / "_ota_restart_helper.py"
+        helper_code = '''import os
+import sys
+import time
+import socket
+import subprocess
+
+old_pid = int(sys.argv[1]) if len(sys.argv) > 1 else 0
+root_dir = sys.argv[2] if len(sys.argv) > 2 else os.getcwd()
+
+time.sleep(1.2)
+
+# 1. Tắt hoàn toàn tiến trình Server cũ và cổng 8899
+if old_pid > 0:
+    try:
+        subprocess.run(["taskkill", "/F", "/PID", str(old_pid), "/T"], capture_output=True, timeout=4, creationflags=0x08000000)
+    except Exception:
+        pass
+
+try:
+    ps_kill_port = (
+        "Get-NetTCPConnection -LocalPort 8899 -State Listen -ErrorAction SilentlyContinue | "
+        "ForEach-Object { Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps_kill_port], capture_output=True, timeout=4, creationflags=0x08000000)
+except Exception:
+    pass
+
+# 2. Đóng sạch toàn bộ tiến trình tác vụ con (Voice Engine run.exe, FFmpeg, ffprobe, yt-dlp, Launcher)
+for img in ("run.exe", "ffmpeg.exe", "ffprobe.exe", "yt-dlp.exe", "Drama_Nhat_Studio.exe"):
+    try:
+        subprocess.run(["taskkill", "/F", "/IM", img, "/T"], capture_output=True, timeout=3, creationflags=0x08000000)
+    except Exception:
+        pass
+
+# 3. Đóng cửa sổ Desktop UI cũ để main.py mới mở lại cửa sổ mới hoàn toàn
+try:
+    ps_close_ui = (
+        "Get-CimInstance Win32_Process | Where-Object { "
+        "$_.Name -in @('chrome.exe','msedge.exe') -and "
+        "($_.CommandLine -like '*DesktopUI_Profile_V*' -or $_.CommandLine -like '*--app=http://127.0.0.1:8899*') "
+        "} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    )
+    subprocess.run(["powershell", "-NoProfile", "-Command", ps_close_ui], capture_output=True, timeout=4, creationflags=0x08000000)
+except Exception:
+    pass
+
+# 4. Đợi cổng 8899 được giải phóng hoàn toàn
+for _ in range(20):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        if s.connect_ex(("127.0.0.1", 8899)) != 0:
+            break
+    time.sleep(0.25)
+
+# 5. Khởi động lại ứng dụng hoàn toàn mới từ main.py
+env = os.environ.copy()
+env["DRAMA_PYTHON_SWITCHED"] = "1"
+main_py = os.path.join(root_dir, "main.py")
+subprocess.Popen(
+    [sys.executable, main_py],
+    cwd=root_dir,
+    env=env,
+    creationflags=0x08000000 | 0x00000200,
+)
+'''
+        helper_path.write_text(helper_code, encoding="utf-8")
+        env = os.environ.copy()
+        env["DRAMA_PYTHON_SWITCHED"] = "1"
+        subprocess.Popen(
+            [sys.executable, str(helper_path), str(os.getpid()), str(root_dir)],
+            cwd=str(root_dir),
+            env=env,
+            creationflags=0x08000000 | 0x00000200,
+        )
+
+        def _force_self_exit():
+            time.sleep(1.5)
+            os._exit(0)
+
+        threading.Thread(target=_force_self_exit, daemon=True).start()
+    except Exception as e:
+        log_warn("UPDATER", f"Lưu ý khi lên lịch khởi động lại ứng dụng: {e}")
+
+
 def apply_github_update(
     root_dir: Optional[Path] = None,
     adas_engine: Any = None,
     pipeline: Any = None,
+    restart_app: bool = True,
 ) -> Dict[str, Any]:
     """
-    Tải gói cập nhật mới nhất từ GitHub và tự động nâng cấp toàn bộ mã nguồn (backend, frontend, adas_skills, version.json...)
-    mà giữ nguyên 100% dữ liệu dự án, kho Stock, bản quyền và cấu hình của máy khách.
+    Tải gói cập nhật mới nhất từ GitHub, đóng toàn bộ tác vụ đang chạy, nâng cấp toàn bộ mã nguồn
+    (backend, frontend, adas_skills, version.json...) và Reset khởi động lại toàn bộ ứng dụng từ đầu.
+    Giữ nguyên 100% dữ liệu dự án, Checkpoint đang render dở, kho Stock, bản quyền và cấu hình của máy khách.
     """
     with _update_lock:
         try:
@@ -339,6 +477,9 @@ def apply_github_update(
             branch = local_info.get("branch") or DEFAULT_GITHUB_BRANCH
 
             log_info("UPDATER", f"🚀 Bắt đầu tải bản cập nhật mới nhất từ GitHub ({repo}@{branch})...")
+
+            if restart_app:
+                _stop_all_tasks_and_subprocesses(adas_engine=adas_engine, pipeline=pipeline)
 
             tmp_dir = root_dir / "_ota_update_tmp"
             if tmp_dir.exists():
@@ -468,21 +609,34 @@ def apply_github_update(
             new_version = new_info.get("version", DEFAULT_VERSION)
             changelog = new_info.get("changelog", "")
 
-            # Hot-reload các module backend đang chạy
+            # Hot-reload các module backend đang chạy (phòng hờ nếu gọi với restart_app=False)
             _hot_reload_backend_modules(adas_engine=adas_engine, pipeline=pipeline)
 
-            log_info(
-                "UPDATER",
-                f"🎉 Đã cập nhật ứng dụng thành công từ [{old_version}] lên [{new_version}] ({updated_files_count} file được nâng cấp)!",
-            )
+            if restart_app:
+                log_info(
+                    "UPDATER",
+                    f"🎉 Đã cập nhật [{old_version}] -> [{new_version}] ({updated_files_count} file). Đang đóng toàn bộ tác vụ và RESET khởi động lại ứng dụng hoàn toàn...",
+                )
+                _schedule_full_application_reset(root_dir)
+            else:
+                log_info(
+                    "UPDATER",
+                    f"🎉 Đã cập nhật ứng dụng thành công từ [{old_version}] lên [{new_version}] ({updated_files_count} file được nâng cấp)!",
+                )
+
             return {
                 "success": True,
+                "restarting": bool(restart_app),
                 "old_version": old_version,
                 "new_version": new_version,
                 "build_number": new_info.get("build_number", DEFAULT_BUILD_NUMBER),
                 "changelog": changelog,
                 "updated_files_count": updated_files_count,
-                "message": f"🎉 Đã cập nhật thành công lên phiên bản {new_version}!",
+                "message": (
+                    f"🎉 Đã cập nhật lên {new_version} (Build #{new_info.get('build_number', DEFAULT_BUILD_NUMBER)})! Đang đóng toàn bộ tác vụ và Reset ứng dụng..."
+                    if restart_app
+                    else f"🎉 Đã cập nhật thành công lên phiên bản {new_version}!"
+                ),
             }
         except Exception as fatal_err:
             err_msg = f"Lỗi khi áp dụng bản cập nhật: {fatal_err}"

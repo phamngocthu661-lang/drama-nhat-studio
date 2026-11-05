@@ -1,8 +1,8 @@
 {
   "version": "V1.0.3",
-  "build_number": 113,
-  "released_at": "2026-11-05 08:55:00",
+  "build_number": 114,
+  "released_at": "2026-11-05 09:10:00",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Sửa triệt để lỗi FFmpeg 'Error opening input file D:\\stock\\...\\stock_PXPB_...mp4: No such file or directory' (mã 4294967294): Tự động kiểm tra tồn tại file trên ổ cứng và tự làm mới kho Stock, khóa chống 2 luồng dùng chung 1 file Stock bị xóa giữa chừng, và tự động cấp lại Stock mới ngay trước/trong khi FFmpeg render.\n2. Nâng cấp VOICEVOX GPU tự động ưu tiên bản NVIDIA CUDA/cuDNN (windows-nvidia/run.exe) chạy 1 cổng chuyên biệt (50021) chống tranh chấp Shader/VRAM.\n3. Tích hợp Render Siêu Tốc Trên Ổ SSD (SSD Staging Render) + Bộ chọn Đường Dẫn Kép (Folder Project & Nơi Chứa Video Cuối)."
+  "changelog": "1. Nâng cấp cơ chế Cập Nhật (Full Application Reset): Mỗi khi bấm Cập Nhật sẽ tự động đóng sạch 100% các tác vụ đang chạy (FFmpeg, VOICEVOX run.exe, ADAS AI, yt-dlp), tắt hẳn tiến trình ứng dụng cũ và tự động khởi động lại ứng dụng mới hoàn toàn từ đầu.\n2. Sửa triệt để lỗi FFmpeg 'Error opening input file D:\\stock\\...\\stock_PXPB_...mp4: No such file or directory' (mã 4294967294) với 3 lớp bảo vệ tự phục hồi kho Stock.\n3. Nâng cấp VOICEVOX GPU tự động ưu tiên bản NVIDIA CUDA/cuDNN (windows-nvidia/run.exe) + Render Siêu Tốc Trên Ổ SSD (SSD Staging Render)."
 }
