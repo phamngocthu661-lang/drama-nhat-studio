@@ -4106,10 +4106,10 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 )
                 if not auto_produce_video and not defer_video_handoff:
                     self._emit(
-                        status="completed",
+                        status="running" if self.is_running else "completed",
                         current_ma_id=ma_id,
-                        current_step="✅ Hoàn tất Kịch bản + SEO + Thumbnail (Không Render)",
-                        progress=100.0,
+                        current_step=f"✅ Xong {ma_id} (Kịch bản + SEO + Thumbnail)",
+                        progress=98.0 if self.is_running else 100.0,
                         message=f"[{ma_id}] 🎉 Đã hoàn tất Kịch bản ({existing_pure_chars:,} chữ) + SEO + {len(thumb_files)}/1 Thumbnail (Chế độ Không Render Video)!",
                     )
 
@@ -4736,9 +4736,10 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
             if not video_triggered:
                 self._emit(
-                    status="completed",
-                    current_step="Hoàn tất Kịch bản & SEO",
-                    progress=100.0,
+                    status="running" if self.is_running else "completed",
+                    current_ma_id=ma_id,
+                    current_step=f"✅ Hoàn tất {ma_id} — Đang chờ các luồng còn lại..." if self.is_running else "Hoàn tất Kịch bản & SEO",
+                    progress=98.0 if self.is_running else 100.0,
                     message=f"[{ma_id}] 🎉 Hoàn tất Kịch bản ({total_pure:,} chữ) + SEO Pack + {len(thumbnail_paths)}/1 Thumbnail tại {renders_dir}!",
                 )
             completed_ok = True
