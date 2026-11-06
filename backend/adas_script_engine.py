@@ -2139,6 +2139,9 @@ class ADASScriptEngine:
                             it["current_step"] = err_step
                             changed = True
                             item_changed = True
+                        elif curr_st == "RUNNING" and self.is_running and not (has_seo and has_thumb):
+                            # Dự án vừa ghép xong 3 Part kịch bản (Step 4) nhưng vẫn đang chạy tiếp Step 5 (Kiểm toán) / Step 6 (SEO) / Step 7 (Thumbnail) trên ChatGPT -> Giữ nguyên trạng thái RUNNING!
+                            pass
                         elif curr_st in ("", "SAVED_READY", "CHƯA_CHẠY_STEP2", "ERROR", "RUNNING", "PARTIAL_SCRIPT", "COMPLETED_HANDOFF", "VIDEO_QUEUED"):
                             it["status"] = "SCRIPT_DONE"
                             it["current_step"] = f"📝 Đã xong Kịch bản ({effective_chars:,} chữ) — Sẵn sàng Render MP4"
