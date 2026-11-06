@@ -1,7 +1,7 @@
 {
   "version": "V1.0.4",
   "build_number": 117,
-  "released_at": "2026-11-06 22:40:10",
+  "released_at": "2026-11-06 22:41:42",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
   "changelog": "1. Tự động tạm dừng 30 phút khi tài khoản (nick) bị Limit và đẩy ngay kịch bản sang nick khác để làm lại từ đầu (STEP 2); sau 30 phút tự động mở khóa nick bị Limit để chạy tiếp. 2. Chốt chặn 100% kịch bản phải có Thumbnail: kiểm tra lại sau khi xong kịch bản và cuối lô, nếu thiếu hoặc lỗi tự động chuyển qua nick khác để tạo lại cho tới khi đủ Thumbnail."

@@ -48,6 +48,8 @@ PROTECTED_CUSTOMER_PATHS = {
     "used_stock_links.json",
     "youtube_cookies.txt",
     "python_path.txt",
+    "config.json",
+    "storage_paths.json",
     ".git",
 }
 

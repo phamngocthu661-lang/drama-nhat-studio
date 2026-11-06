@@ -35,6 +35,11 @@ youtube_cookies.txt
 app/youtube_cookies.txt
 python_path.txt
 app/python_path.txt
+config.json
+app/config.json
+storage_paths.json
+app/storage_paths.json
+BAO_CAO_CHECK_VA_DON_TOAN_BO.txt
 
 # Bytecode & môi trường ảo
 __pycache__/
