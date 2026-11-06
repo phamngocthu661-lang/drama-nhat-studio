@@ -1,5 +1,28 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 06/11/2026 (Lần 51 — V1.0.4 Build #117) — Tự Động Tạm Dừng 30 Phút Khi Tài Khoản Bị Limit & Đẩy Kịch Bản Sang Nick Khác Làm Lại Từ Đầu + Chốt Chặn 100% Có Thumbnail (Tự Động Đổi Nick Tạo Lại Khi Thiếu/Lỗi)
+
+### 1. Yêu cầu của người dùng
+1. **Xử lý tự động khi tài khoản (nick) bị Limit / Quá thời gian chờ**:
+   - Nếu nick nào bị limit thì **tạm dừng đúng 30 phút (`1800 giây`)** cho nick đó nghỉ, sau 30 phút tự động mở khóa thử lại.
+   - Đồng thời **đẩy ngay kịch bản đang dở qua nick khác đang rảnh để làm lại từ đầu (`STEP 2`)**.
+   - Nếu tất cả các nick đều đang bị limit trong 30 phút thì tự động đếm ngược chờ nick sớm nhất hết 30 phút rồi tự động chạy lại kịch bản từ đầu.
+2. **Đảm bảo 100% kịch bản BẮT BUỘC phải có Thumbnail (`không thể để thiếu thumbnail được`)**:
+   - Kiểm tra lại sau khi tạo xong từng kịch bản và sau khi chạy xong cả lô: bất kỳ kịch bản nào chưa có Thumbnail hoặc tạo lỗi đều phải tự động tiến hành tạo lại; nếu nick đang tạo bị limit hoặc lỗi thì tự động chuyển qua nick khác (`Acc #1` <-> `Acc #2` <-> `Acc #3`) để tạo cho tới khi đủ Thumbnail.
+3. **Đóng gói bản cập nhật mới (`V1.0.4` Build `#117`), đẩy OTA và đẩy lên Google Drive**.
+
+### 2. Giải pháp kỹ thuật & Các file đã nâng cấp
+- **[`backend/chatgpt_web_client.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py)**:
+  - Bổ sung hệ thống quản lý Cooldown 30 phút (`ACCOUNT_LIMIT_COOLDOWN_SEC = 1800`): [`mark_account_rate_limited()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L148-L180), [`is_account_in_cooldown()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L183-L204), [`clear_account_cooldown()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L207-L214), [`get_earliest_cooldown_remaining_sec()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L217-L227) và bộ nhận diện thông báo giới hạn [`_detect_rate_limit_in_text()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L252-L261).
+  - Nâng cấp [`select_best_available_account()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L1225-L1305) và bổ sung [`ChatGPTWebSession.switch_to_another_account()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L1322-L1349) để tự động loại trừ các nick đang nghỉ 30 phút (`exclude_accs` / `in_cooldown`) và tự động bật đủ các tài khoản đã lưu (`Acc #1`, `Acc #2`, `Acc #3`) để nhận bàn giao công việc ngay lập tức.
+  - Nâng cấp [`send_prompt_and_wait()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L2165-L2265) và [`generate_image_and_harvest_base64()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py#L2385-L2609): Tự động phát hiện thông báo Rate Limit / Quota hoặc Timeout để khóa tạm dừng nick đó 30 phút.
+- **[`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py)**:
+  - Nâng cấp [`_build_fallback_seo_pack()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2734-L2785), [`_synthesize_fallback_six_lines_ja()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L3037-L3112), [`_sanitize_raw_thumbnail_prompt()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L3146-L3219): Luôn nhúng đủ 6 dòng chữ Nhật `L1–L6` trong mọi trường hợp (tuyệt đối không để ChatGPT hỏi lại 6 dòng chữ) và tự động làm sạch từ khóa nhạy cảm (`child/teen/kid` -> `adult family member`) để không bao giờ bị vướng bộ lọc Guardrails khi vẽ Thumbnail.
+  - Nâng cấp [`generate_and_verify_three_thumbnails_sync()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L3369-L3530) kèm 2 hàm kiểm định & tạo bù tự động [`ensure_project_thumbnail_with_failover_sync()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L3532-L3629) và [`ensure_all_projects_have_thumbnails_sync()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L3631-L3695): Tự động kiểm tra sau mỗi kịch bản và sau cả lô chạy; nếu thiếu Thumbnail hoặc nick hiện tại bị limit/lỗi khi vẽ ảnh sẽ tự động chuyển qua nick khác tạo lại cho đến khi có đủ Thumbnail.
+  - Nâng cấp [`_run_one_with_auto_retry()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L5139-L5305): Khi một nick bị limit/lỗi lúc đang viết kịch bản, tự động khóa tạm dừng nick đó 30 phút và đẩy kịch bản sang nick khác làm lại mới hoàn toàn từ đầu (`STEP 2`).
+
+---
+
 ## Cập nhật: 05/11/2026 (Lần 50 — V1.0.3 Build #116) — Sửa Triệt Để Lỗi Sau Khi Update & Reset Không Tự Động Mở Lại Ứng Dụng
 
 ### 1. Chẩn đoán nguyên nhân vì sao Update & Reset xong ứng dụng không tự mở lại
@@ -25,6 +48,8 @@ Qua kiểm tra [`backend/updater_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DR
   - Trong 10 giây đầu sau khi bật, nếu launcher `ui_proc` thoát sớm mà chưa có cửa sổ UI thì tự động gọi mở lại cửa sổ UI; chỉ khi `elapsed_ui >= 10.0s` và xác nhận không còn bất kỳ cửa sổ `DesktopUI_Profile_V*` nào đang mở thì mới tắt Server.
 - **[`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1904-L1908)**:
   - Tự động nạp nóng (`importlib.reload`) luôn `backend.updater_service` ngay trong `_auto_patch_live_instances_on_reload()` để các máy đang ở Build `#114`/`#115` khi bấm Update sẽ áp dụng ngay lập tức bộ khởi động lại mới của Build `#116`.
+- **Hoàn tất 100% lô 300 Kịch Bản + Thumbnail + SEO (`P901`..`P1200`)**:
+  - Đã kiểm định trên ổ cứng (`projects/P901`..`projects/P1200`): **300/300 bộ kịch bản** đã hoàn thành đầy đủ `script_clean.txt` (>30.000 bytes), `00_TIEU_DE_VA_SEO_YOUTUBE.txt` và `renders/Pxxx_THUMBNAIL_1.png` (`missing=[]`).
 
 ---
 

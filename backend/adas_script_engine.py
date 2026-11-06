@@ -15,7 +15,14 @@ try:
     importlib.reload(_voice_service_mod)
 except Exception:
     pass
-from .chatgpt_web_client import ChatGPTWebSession
+from .chatgpt_web_client import (
+    ChatGPTWebSession,
+    AccountRateLimitError,
+    mark_account_rate_limited,
+    is_account_in_cooldown,
+    get_earliest_cooldown_remaining_sec,
+    ACCOUNT_LIMIT_COOLDOWN_SEC,
+)
 from .gemini_web_client import GeminiWebSession, check_all_gemini_accounts_status
 from .voice_service import split_japanese_script, strip_leaked_titles_and_metadata
 from .logger_service import log_info, log_warn, log_error
@@ -2735,10 +2742,14 @@ class ADASScriptEngine:
         """
         Tạo gói SEO & Thumbnail 6 dòng chuẩn từ dữ liệu Step 2 + Idea khi chạy ở chế độ
         bỏ qua Chrome (đã có sẵn kịch bản) hoặc khi ChatGPT Step 6 bị quá thời gian chờ.
+        Luôn nhúng sẵn 6 dòng chữ Nhật L1..L6 và <THUMBNAIL_PROMPT_1> để STEP 7 vẽ ảnh 100% không bao giờ hỏi lại 6 dòng chữ.
         """
         kw_raw = idea.get("keywords_ja") or "感動する話, 家族の秘密, 泣ける話, 朗読, シニア"
         summary_vi = idea.get("summary_vi") or ""
-        evidence = idea.get("proof_object") or ""
+        evidence = idea.get("proof_object") or "大切な家族の記録"
+        setting = idea.get("boi_canh_su_kien") or "日本の家庭の居間"
+        six_lines = self._extract_six_lines_from_outputs("", step2_out or "", locked_title=locked_title, idea=idea)
+        l_block = "\n".join(f"L{idx + 1}: {six_lines[idx]}" for idx in range(6))
         return (
             f"ID: {ma_id}\n"
             f"COMPLETED_STEP: STEP 6 (AUTO-SYNTHESIZED FROM LOCKED STEP 2)\n"
@@ -2753,6 +2764,13 @@ class ADASScriptEngine:
             f"YOUTUBE_TAGS_JA:\n"
             f"{kw_raw}, 感動する話, 泣ける話, 家族の秘密, 朗読, スカッとする話, 老後の人生, 家族ドラマ\n\n"
             f"VIETNAMESE_SUMMARY:\n{summary_vi}\n\n"
+            f"FINAL_THUMBNAIL_6_LINES:\n{l_block}\n\n"
+            f"<THUMBNAIL_PROMPT_1>\n"
+            f"Generate a brand-new standalone photorealistic horizontal landscape image from scratch (size 1536x1024) for a Japanese emotional family drama YouTube thumbnail.\n"
+            f"Scene: Realistic Japanese home setting ({setting}) with dramatic warm cinematic window lighting. "
+            f"On the right 38% of the frame, an adult Japanese family member (aged 35-65) shows a deeply stunned, tearful expression while looking at a key family document/proof object on a wooden table. "
+            f"Darkened charcoal vignette on the left behind the 6 horizontal rows of Japanese text.\n"
+            f"</THUMBNAIL_PROMPT_1>\n\n"
             f"PURE_CHARACTER_COUNT: {total_pure:,} ký tự thuần (~{round(total_pure / 353)} phút)\n"
         )
 
@@ -3016,10 +3034,93 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
         return []
 
-    def _extract_six_lines_from_outputs(self, step6_text: str, step2_text: str) -> List[str]:
+    def _synthesize_fallback_six_lines_ja(
+        self,
+        locked_title: str = "",
+        idea: Optional[Dict[str, Any]] = None,
+        step2_text: str = "",
+        step6_text: str = "",
+    ) -> List[str]:
+        """
+        Tổng hợp tự động 6 dòng chữ Nhật ngắn gọn chuẩn L1..L6 từ tiêu đề khóa (`locked_title`) hoặc `idea`
+        khi STEP 2 / STEP 6 bị thiếu bảng 6 dòng, đảm bảo 100% lệnh vẽ Thumbnail luôn có đủ 6 dòng chữ Nhật
+        (tuyệt đối không để ChatGPT hỏi lại "Vui lòng gửi chính xác 6 dòng chữ tiếng Nhật...").
+        """
+        jp_re = re.compile(r"[\u3040-\u30ff\u4e00-\u9faf]")
+        raw_title = (
+            locked_title
+            or (idea or {}).get("locked_title")
+            or (idea or {}).get("draft_title_ja")
+            or ""
+        ).strip()
+
+        # Quét vớt các dòng có nhãn L1..L6 hoặc Row 1..6 trong step2_text / step6_text nếu có
+        loose_found: List[str] = []
+        for src in (step2_text or "", step6_text or ""):
+            if not src:
+                continue
+            for idx in range(1, 7):
+                m = re.search(
+                    rf"(?:L(?:INE|AYER)?|Row)\s*{idx}\b[^\r\n:：]*[:：\-→]\s*([^\r\n|]+)",
+                    src,
+                    flags=re.IGNORECASE,
+                )
+                if m:
+                    cand = re.sub(r"<[^>]+>", "", m.group(1)).strip().strip("`*'\" ")
+                    if len(jp_re.findall(cand)) >= 2:
+                        loose_found.append(cand[:14])
+            if len(loose_found) >= 6:
+                return loose_found[:6]
+
+        # Tách các cụm câu tiếng Nhật giàu kịch tính từ tiêu đề khóa
+        segments = [
+            s.strip().strip("「」『』（）()[]【】…・、。！？!?―-")
+            for s in re.split(r"[、。！？!?「」『』――\n\r]+", raw_title)
+            if len(jp_re.findall(s)) >= 3
+        ]
+        compact_segs: List[str] = []
+        for seg in segments:
+            if len(seg) <= 9:
+                compact_segs.append(seg)
+            else:
+                compact_segs.append(seg[:8])
+                if len(seg[8:]) >= 4:
+                    compact_segs.append(seg[8:16])
+
+        default_hooks = [
+            "家族の秘密",
+            "見下された私",
+            "隠された証拠",
+            "突然の告白",
+            "全員が凍りつく",
+            "まさかの真実 涙の結末",
+        ]
+        result: List[str] = []
+        for i in range(5):
+            if i < len(compact_segs) and compact_segs[i]:
+                result.append(compact_segs[i][:9])
+            else:
+                result.append(default_hooks[i])
+        # Dòng L6 gồm 2 vế ngắn cách nhau bởi khoảng trắng trên cùng 1 hàng ngang
+        if len(compact_segs) >= 6:
+            p1 = compact_segs[5][:7]
+            p2 = (compact_segs[6][:7] if len(compact_segs) >= 7 else "衝撃の結末")
+            result.append(f"{p1} {p2}")
+        else:
+            result.append(default_hooks[5])
+        return result
+
+    def _extract_six_lines_from_outputs(
+        self,
+        step6_text: str,
+        step2_text: str,
+        locked_title: str = "",
+        idea: Optional[Dict[str, Any]] = None,
+    ) -> List[str]:
         """
         Trích xuất chính xác 6 dòng chữ Nhật L1..L6.
         Ưu tiên bộ 6 dòng ngắn gọn, chuẩn xác từ STEP 2 (6–9 ký tự/dòng) để tránh trường hợp STEP 6 tự viết câu quá dài hoặc lệch nội dung.
+        Nếu cả 2 nguồn đều thiếu, tự động tổng hợp đủ 6 dòng chữ Nhật từ locked_title/idea để KHÔNG BAO GIỜ trả về rỗng.
         """
         lines_s2 = self._extract_six_lines_from_single_source(step2_text or "")
         lines_s6 = self._extract_six_lines_from_single_source(step6_text or "")
@@ -3035,12 +3136,18 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             return lines_s2
         if len(lines_s6) == 6:
             return lines_s6
-        return []
+        return self._synthesize_fallback_six_lines_ja(
+            locked_title=locked_title,
+            idea=idea,
+            step2_text=step2_text,
+            step6_text=step6_text,
+        )
 
     def _sanitize_raw_thumbnail_prompt(self, raw_p: str) -> str:
         """
         Làm sạch Prompt Thumbnail để công cụ tạo ảnh của ChatGPT (gpt-image-1) LUÔN hiểu là tạo ảnh mới từ đầu
-        với kích thước hợp lệ 1536x1024 (loại bỏ hoàn toàn các từ khóa edit/adjust/reduce/instead/reference và phần chữ L1..L6 thô).
+        với kích thước hợp lệ 1536x1024 (loại bỏ hoàn toàn các từ khóa edit/adjust/reduce/instead/reference,
+        loại bỏ từ khóa trẻ vị thành niên child/teen/kid để không bao giờ vướng Content Guardrails của OpenAI).
         """
         txt = raw_p or ""
         # Cắt bỏ phần CRITICAL RESTRICTIONS / MANDATORY / STRICT DESIGN RULES / FINAL QUALITY ở cuối (chứa nhiều từ phủ định/chỉnh sửa)
@@ -3062,6 +3169,14 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         txt = re.sub(r"\b(?:3840\s*x\s*2160|1920\s*x\s*1080|1536\s*x\s*864|1280\s*x\s*720)\b", "1536x1024", txt, flags=re.IGNORECASE)
         txt = re.sub(r"target\s+1536x1024", "size 1536x1024", txt, flags=re.IGNORECASE)
         txt = re.sub(r"\b16\s*:\s*9(?:\s*aspect\s*ratio)?\b", "widescreen landscape (1536x1024)", txt, flags=re.IGNORECASE)
+
+        # Thay thế các từ khóa dễ kích hoạt bộ lọc Guardrails "depictions of teens and children" của OpenAI thành nhân vật người lớn
+        txt = re.sub(
+            r"\b(?:schoolboy|schoolgirl|elementary\s+school\s+student|middle\s+school\s+student|high\s+school\s+student|little\s+boy|little\s+girl|young\s+boy|young\s+girl|teenager|teenagers|teenage|teens|teen|children|child|kids|kid|minor|minors)\b",
+            "adult family member (aged 30s)",
+            txt,
+            flags=re.IGNORECASE,
+        )
 
         # Loại bỏ các câu có từ khóa khiến bộ phân loại của gpt-image-1 nhầm sang chế độ chỉnh sửa ảnh (edit mode)
         forbidden_line_pats = (
@@ -3110,20 +3225,21 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         idea: Dict[str, Any],
     ) -> List[str]:
         """Bóc tách 3 Prompt tạo Thumbnail khác nhau từ STEP 6 (hoặc tự động tổng hợp 3 biến thể từ 6 dòng chữ ngắn chuẩn L1..L6)."""
-        six_lines = self._extract_six_lines_from_outputs(step6_text, step2_text)
-        six_lines_str = (
-            "\n".join(
-                [
-                    f"Row 1 (White): {six_lines[0]}",
-                    f"Row 2 (Yellow): {six_lines[1]}",
-                    f"Row 3 (Vivid Magenta): {six_lines[2]}",
-                    f"Row 4 (White): {six_lines[3]}",
-                    f"Row 5 (Bright Yellow): {six_lines[4]}",
-                    f"Row 6 (Largest bottom row, Cyan phrase + Vivid Pink phrase side-by-side on the SAME single horizontal line): {six_lines[5]}",
-                ]
-            )
-            if len(six_lines) == 6
-            else ""
+        six_lines = self._extract_six_lines_from_outputs(
+            step6_text,
+            step2_text,
+            locked_title=locked_title,
+            idea=idea,
+        )
+        six_lines_str = "\n".join(
+            [
+                f"Row 1 (White): {six_lines[0]}",
+                f"Row 2 (Yellow): {six_lines[1]}",
+                f"Row 3 (Vivid Magenta): {six_lines[2]}",
+                f"Row 4 (White): {six_lines[3]}",
+                f"Row 5 (Bright Yellow): {six_lines[4]}",
+                f"Row 6 (Largest bottom row, Cyan phrase + Vivid Pink phrase side-by-side on the SAME single horizontal line): {six_lines[5]}",
+            ]
         )
 
         prompts: List[str] = []
@@ -3137,38 +3253,38 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 prompts.append(self._sanitize_raw_thumbnail_prompt(m.group(1).strip()))
 
         variant_angles = [
-            "Close-up emotional focus on the right 38% of the frame showing the main Japanese family member with a tearful/stunned expression holding/looking at the key proof object ({proof}), warm cinematic window light on the face, darkened charcoal vignette on the left behind the text.",
-            "Medium dramatic shot in a realistic Japanese home setting ({setting}) showing a tense family confrontation where the main character on the right reacts in shock while another family member stands in the background, high contrast realistic lighting.",
-            "Dynamic over-the-shoulder cinematic angle looking across a wooden table with the proof object ({proof}) toward the main Japanese character's stunned, remorseful face on the right 36% of the frame, soft morning sunlight and darkened left text zone.",
+            "Close-up emotional focus on the right 38% of the frame showing an adult Japanese family member (aged 40-65) with a tearful, stunned expression looking at an official family document ({proof}) on a wooden table, warm cinematic window light on the face, darkened charcoal vignette on the left behind the text.",
+            "Medium dramatic shot in a realistic Japanese living room ({setting}) showing a tense family moment where an adult Japanese protagonist (aged 45-65) on the right reacts in shock while another adult relative stands in the background, high contrast realistic lighting.",
+            "Dynamic over-the-shoulder cinematic angle looking across a wooden table with an official document ({proof}) toward an adult Japanese character's stunned, emotional face (aged 40-60) on the right 36% of the frame, soft morning sunlight and darkened left text zone.",
         ]
+
+        safe_proof = self._sanitize_raw_thumbnail_prompt(str(idea.get("proof_object") or "important family document")) or "important family document"
+        safe_setting = self._sanitize_raw_thumbnail_prompt(str(idea.get("boi_canh_su_kien") or "Japanese family room")) or "Japanese family room"
+        safe_title_ctx = self._sanitize_raw_thumbnail_prompt(locked_title or "")
 
         while len(prompts) < 3:
             v_idx = len(prompts)
             angle_desc = variant_angles[v_idx].format(
-                proof=idea.get("proof_object", "important family document"),
-                setting=idea.get("boi_canh_su_kien", "Japanese family room"),
+                proof=safe_proof,
+                setting=safe_setting,
             )
             prompts.append(
-                f"Photorealistic Japanese emotional family drama YouTube thumbnail (horizontal landscape 1536x1024).\n"
-                f"Story Context: {locked_title}\n"
+                f"Photorealistic Japanese emotional family drama YouTube thumbnail featuring only adult characters aged 35-65 (horizontal landscape 1536x1024).\n"
+                f"Story Context: {safe_title_ctx}\n"
                 f"Scene Composition: {angle_desc}"
             )
 
-        # Đảm bảo cả 3 prompt luôn là lệnh tạo ảnh mới độc lập (text-to-image, size="1536x1024"), bố cục gọn trong khung 16:9 và dùng đúng 6 dòng ngắn
+        # Đảm bảo cả 3 prompt luôn là lệnh tạo ảnh mới độc lập (text-to-image, size="1536x1024"), bố cục gọn trong khung 16:9 và LUÔN có đủ 6 dòng chữ Nhật
         final_prompts: List[str] = []
         for idx, p in enumerate(prompts[:3], start=1):
             enforced = (
-                "Generate a new standalone photorealistic horizontal landscape image from text description only (size 1536x1024) composed for a 16:9 YouTube thumbnail frame "
-                "(with ~8% dark ceiling/table breathing margin at the very top and bottom edges so all text and faces stay inside the central 16:9 widescreen band):\n\n"
+                "Call the image generation tool immediately to create a brand-new standalone photorealistic horizontal landscape image from scratch (size 1536x1024) composed for a 16:9 YouTube thumbnail frame "
+                "(all characters depicted are Japanese adults aged 35-65; leave ~8% dark ceiling/table breathing margin at the very top and bottom edges so all text and faces stay inside the central 16:9 widescreen band):\n\n"
                 f"{p}\n\n"
-                + (
-                    f"Include EXACTLY 6 physical horizontal rows of compact, ultra-bold Japanese Gothic text on the left/center (thick black outline, strong drop shadow, occupying ~58-64% width). "
-                    f"The text rows may slightly touch the character's shoulder or outer face edge so every phrase stays on its own single horizontal row without wrapping:\n"
-                    f"{six_lines_str}\n\n"
-                    if six_lines_str
-                    else ""
-                )
-                + "Strict rule: Show ONLY the exact 6 short Japanese text rows listed above (do not print 'Row 1..6' labels), strictly 6 physical rows from top to bottom, with both Cyan and Vivid Pink phrases on Row 6 sharing the same single bottom horizontal line."
+                f"Include EXACTLY 6 physical horizontal rows of compact, ultra-bold Japanese Gothic text on the left/center (thick black outline, strong drop shadow, occupying ~58-64% width). "
+                f"The text rows may slightly touch the character's shoulder or outer face edge so every phrase stays on its own single horizontal row without wrapping:\n"
+                f"{six_lines_str}\n\n"
+                "Strict rule: Generate the image directly right now without asking any questions. Show ONLY the exact 6 short Japanese text rows listed above (do not print 'Row 1..6' labels), strictly 6 physical rows from top to bottom, with both Cyan and Vivid Pink phrases on Row 6 sharing the same single bottom horizontal line."
             )
             final_prompts.append(enforced)
         return final_prompts
@@ -3283,26 +3399,28 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 continue
 
             base_prompt = prompts_list[0]
-            max_attempts = 1 if isinstance(session, GeminiWebSession) else 3
+            max_attempts = 1 if isinstance(session, GeminiWebSession) else 5
             best_fallback_bytes: Optional[bytes] = None
+            tried_thumb_accs: set = {getattr(session, "acc_id", "acc_1")}
 
             for attempt in range(1, max_attempts + 1):
                 if self.should_stop:
                     raise RuntimeError("Đã dừng theo yêu cầu người dùng.")
 
+                acc_lbl = getattr(session, "cfg", {}).get("label", getattr(session, "acc_id", "AI"))
                 self._update_idea_record(
                     ma_id,
-                    current_step=f"STEP 7: Đang tạo & đánh giá 1 Thumbnail (Lượt {attempt}/{max_attempts})...",
+                    current_step=f"STEP 7: Đang tạo & đánh giá 1 Thumbnail trên {acc_lbl} (Lượt {attempt}/{max_attempts})...",
                 )
                 self._emit(
                     current_step="STEP 7 — Tạo & Đánh giá 1 Thumbnail",
                     progress=94.0,
-                    message=f"[{ma_id}] 🎨 Mở đoạn chat mới tạo 1 Thumbnail (Lượt {attempt}/{max_attempts} — Yêu cầu đúng 6 dòng chữ)...",
+                    message=f"[{ma_id}] 🎨 Mở đoạn chat mới trên {acc_lbl} tạo 1 Thumbnail (Lượt {attempt}/{max_attempts} — Yêu cầu đúng 6 dòng chữ)...",
                 )
 
                 session.start_fresh_chat(f"STEP7_THUMB_1_TRY_{attempt}")
 
-                # Lượt 1 dùng prompt chi tiết từ STEP 6; nếu Lượt 1 bị từ chối/chưa đạt thì Lượt 2-3 chuyển sang prompt tinh gọn (variant_angles) để tránh 100% lỗi nhầm chế độ chỉnh sửa ảnh
+                # Lượt 1 dùng prompt chi tiết từ STEP 6; nếu Lượt 1 bị từ chối/chưa đạt thì Lượt 2+ chuyển sang prompt tinh gọn (variant_angles) để tránh 100% lỗi nhầm chế độ chỉnh sửa ảnh
                 prompt_to_send = prompts_list[min(attempt - 1, len(prompts_list) - 1)]
                 if attempt > 1:
                     prompt_to_send += (
@@ -3315,16 +3433,32 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     prompt_to_send,
                     step_label=f"THUMB_1_TRY_{attempt}",
                     timeout_sec=260,
-                    progress_cb=lambda st, sec, at=attempt: self._emit(
-                        message=f"[{ma_id}] 🎨 ChatGPT đang vẽ Thumbnail (Lượt {at}: {sec}s)..."
+                    progress_cb=lambda st, sec, at=attempt, al=acc_lbl: self._emit(
+                        message=f"[{ma_id}] 🎨 {al} đang vẽ Thumbnail (Lượt {at}: {sec}s)..."
                     ),
                     should_stop_cb=lambda: self.should_stop,
                 )
 
                 if not img_res.get("success") or not img_res.get("b64_data"):
+                    err_txt = str(img_res.get("error", "retry"))
+                    is_rl = bool(img_res.get("rate_limited"))
                     self._emit(
-                        message=f"[{ma_id}] ⚠️ Lượt {attempt}: Chưa thu được ảnh Thumbnail ({img_res.get('error', 'retry')}) -> Đang tạo lại..."
+                        message=f"[{ma_id}] ⚠️ Lượt {attempt} ({acc_lbl}): Chưa thu được ảnh Thumbnail ({err_txt}) -> {'Tài khoản bị Limit 30p, đang đổi sang nick khác...' if is_rl else 'Đang đổi nick / tạo lại...'}"
                     )
+                    # Nếu tài khoản bị limit hoặc lỗi tạo ảnh -> Chuyển ngay sang tài khoản (nick) khác để tạo lại!
+                    if isinstance(session, ChatGPTWebSession) and hasattr(session, "switch_to_another_account"):
+                        if not is_rl and attempt >= 2:
+                            mark_account_rate_limited(
+                                session.acc_id,
+                                reason=f"Lỗi tạo Thumbnail liên tiếp ({err_txt})",
+                                cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+                            )
+                        switched = session.switch_to_another_account(extra_exclude=tried_thumb_accs)
+                        if switched:
+                            tried_thumb_accs.add(session.acc_id)
+                            self._emit(
+                                message=f"[{ma_id}] 🔄 Đã chuyển sang tài khoản {session.cfg['label']} (Cổng {session.port}) để tạo lại Thumbnail!"
+                            )
                     continue
 
                 try:
@@ -3374,6 +3508,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 if is_qa_pass:
                     target_file.write_bytes(img_bytes)
                     saved_paths.append(target_file)
+                    self._update_idea_record(ma_id, has_thumbnail=True)
                     self._emit(
                         message=f"[{ma_id}] ✅ Thumbnail ĐẠT CHUẨN QA (Đúng 6 dòng chữ) -> Đã tải về {target_file.name}!"
                     )
@@ -3386,11 +3521,194 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             if not target_file.exists() and best_fallback_bytes:
                 target_file.write_bytes(best_fallback_bytes)
                 saved_paths.append(target_file)
+                self._update_idea_record(ma_id, has_thumbnail=True)
                 self._emit(
                     message=f"[{ma_id}] 💾 Đã lưu Thumbnail ({target_file.name}) vào thư mục dự án!"
                 )
 
         return [str(p) for p in saved_paths]
+
+    def ensure_project_thumbnail_with_failover_sync(
+        self,
+        ma_id: str,
+        preferred_acc_id: Optional[str] = None,
+        exclude_accs: Optional[set] = None,
+    ) -> List[str]:
+        """
+        Đảm bảo 100% dự án `ma_id` có Thumbnail (`{ma_id}_THUMBNAIL_1.png` > 20KB).
+        Nếu chưa có hoặc tạo lỗi / tài khoản bị limit:
+        - Tự động xoay vòng qua tất cả các tài khoản ChatGPT đang có (`acc_1`, `acc_2`, `acc_3`),
+        - Nếu tài khoản nào bị limit thì tạm dừng tài khoản đó 30 phút và chuyển sang nick khác tạo ngay.
+        """
+        from .chatgpt_web_client import ensure_all_saved_chatgpt_accounts_open, CHATGPT_ACCOUNTS
+
+        proj_dir = self.projects_dir / ma_id
+        proj_dir.mkdir(parents=True, exist_ok=True)
+        renders_dir = proj_dir / "renders"
+        renders_dir.mkdir(parents=True, exist_ok=True)
+
+        target_thumb = renders_dir / f"{ma_id}_THUMBNAIL_1.png"
+        if target_thumb.exists() and target_thumb.stat().st_size > 20000:
+            self._update_idea_record(ma_id, has_thumbnail=True)
+            return [str(target_thumb)]
+
+        # Chuẩn bị dữ liệu Idea + Step 2 + Step 6 để tạo Thumbnail
+        ideas = self.load_saved_ideas()
+        idea = next((it for it in ideas if it.get("ma_id") == ma_id), None) or {"ma_id": ma_id}
+        step2_file = proj_dir / "step2_title_thumbnail.txt"
+        step2_out = step2_file.read_text(encoding="utf-8", errors="ignore") if step2_file.exists() else ""
+        locked_title = (
+            idea.get("locked_title")
+            or extract_locked_title_from_step2(step2_out, fallback_title=idea.get("draft_title_ja", ma_id))
+        )
+        _, _, sc_chars = self.has_valid_script_on_disk(ma_id)
+        step6_file = proj_dir / "seo_publish_pack.txt"
+        if step6_file.exists() and step6_file.stat().st_size > 200:
+            step6_out = step6_file.read_text(encoding="utf-8", errors="ignore")
+        else:
+            step6_out = self._build_fallback_seo_pack(ma_id, locked_title, sc_chars or 45000, idea, step2_out)
+            step6_file.write_text(step6_out, encoding="utf-8")
+
+        try:
+            ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
+        except Exception:
+            pass
+
+        tried_accs: set = set(exclude_accs or set())
+        total_acc_slots = len(CHATGPT_ACCOUNTS) + 1
+
+        for round_idx in range(total_acc_slots):
+            if self.should_stop:
+                break
+            if target_thumb.exists() and target_thumb.stat().st_size > 20000:
+                self._update_idea_record(ma_id, has_thumbnail=True)
+                return [str(target_thumb)]
+
+            # Nếu mọi tài khoản đều đã thử hoặc đang trong 30p cooldown, mở lại tập exclude để chọn nick rảnh nhất
+            use_exclude = tried_accs if len(tried_accs) < len(CHATGPT_ACCOUNTS) else set()
+            sess = ChatGPTWebSession(
+                project_id=f"{ma_id}_THUMB",
+                acc_id=preferred_acc_id if (round_idx == 0 and preferred_acc_id not in use_exclude) else None,
+                exclude_accs=use_exclude,
+            )
+            tried_accs.add(sess.acc_id)
+            try:
+                self._emit(
+                    current_ma_id=ma_id,
+                    current_step=f"🎨 Đang tạo bù Thumbnail trên {sess.cfg['label']}",
+                    progress=93.0,
+                    message=f"[{ma_id}] 🎨 Kiểm tra thấy thiếu Thumbnail -> Đang mở {sess.cfg['label']} (Cổng {sess.port}) để tạo Thumbnail 16:9...",
+                )
+                if not sess.open_session_tab():
+                    mark_account_rate_limited(
+                        sess.acc_id,
+                        reason="Không mở được tab Chrome tạo Thumbnail",
+                        cooldown_sec=300,
+                    )
+                    continue
+                res_paths = self.generate_and_verify_three_thumbnails_sync(
+                    session=sess,
+                    ma_id=ma_id,
+                    locked_title=locked_title,
+                    step2_out=step2_out,
+                    step6_out=step6_out,
+                    idea=idea,
+                    proj_dir=proj_dir,
+                    renders_dir=renders_dir,
+                )
+                if res_paths and target_thumb.exists() and target_thumb.stat().st_size > 20000:
+                    self._update_idea_record(ma_id, has_thumbnail=True)
+                    log_info(
+                        "SCRIPT",
+                        f"[{ma_id}] ✅ Đã tạo bù thành công Thumbnail trên {sess.cfg['label']}: {target_thumb.name}",
+                        project_id=ma_id,
+                    )
+                    return [str(target_thumb)]
+            except Exception as e_th_fail:
+                log_warn(
+                    "SCRIPT",
+                    f"[{ma_id}] ⚠️ Lỗi tạo Thumbnail trên {sess.cfg['label']}: {e_th_fail} -> Đổi sang tài khoản khác!",
+                    project_id=ma_id,
+                )
+            finally:
+                try:
+                    sess.close_session_tab(keep_open=False)
+                except Exception:
+                    pass
+
+        if target_thumb.exists() and target_thumb.stat().st_size > 20000:
+            self._update_idea_record(ma_id, has_thumbnail=True)
+            return [str(target_thumb)]
+        return []
+
+    def ensure_all_projects_have_thumbnails_sync(
+        self,
+        target_ids: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Quét toàn bộ các kịch bản đã hoàn thành (trong `target_ids` và trên ổ cứng):
+        Bất kỳ kịch bản nào chưa có Thumbnail (`{ma_id}_THUMBNAIL_1.png`) đều được tự động
+        chạy tạo lại (tự động chuyển sang nick khác nếu nick hiện tại lỗi/limit).
+        """
+        self._sync_projects_disk_state()
+        ideas = self.load_saved_ideas()
+        all_ids: List[str] = []
+        if target_ids:
+            for mid in target_ids:
+                if mid and mid not in all_ids:
+                    all_ids.append(mid)
+        for it in ideas:
+            mid = str(it.get("ma_id", "")).strip()
+            if mid and mid not in all_ids:
+                all_ids.append(mid)
+
+        missing_ids: List[str] = []
+        for mid in all_ids:
+            has_sc, _, _ = self.has_valid_script_on_disk(mid)
+            if not has_sc:
+                continue
+            has_th, _, _ = self.has_thumbnail_and_seo_on_disk(mid)
+            if not has_th:
+                missing_ids.append(mid)
+
+        if not missing_ids:
+            return {"checked": len(all_ids), "missing_before": 0, "fixed": [], "still_missing": []}
+
+        log_info(
+            "SCRIPT",
+            f"🔍 Phát hiện {len(missing_ids)} kịch bản đã xong nhưng thiếu Thumbnail ({', '.join(missing_ids)}) -> Bắt đầu tạo bù Thumbnail đa tài khoản!",
+        )
+        self._emit(
+            status="running",
+            current_step=f"🎨 Đang tạo bù Thumbnail cho {len(missing_ids)} kịch bản thiếu",
+            progress=95.0,
+            message=f"🔍 Phát hiện {len(missing_ids)} kịch bản thiếu Thumbnail ({', '.join(missing_ids)}) -> Đang tự động tạo lại (Tự động đổi nick nếu limit)...",
+        )
+
+        fixed_ids: List[str] = []
+        still_missing: List[str] = []
+        for idx, mid in enumerate(missing_ids, 1):
+            if self.should_stop:
+                break
+            self._emit(
+                current_ma_id=mid,
+                current_step=f"🎨 Tạo bù Thumbnail [{idx}/{len(missing_ids)}]: {mid}",
+                progress=95.0 + min(4.0, (idx / max(1, len(missing_ids))) * 4.0),
+                message=f"🎨 [{idx}/{len(missing_ids)}] Đang tạo bù Thumbnail cho kịch bản {mid}...",
+            )
+            paths = self.ensure_project_thumbnail_with_failover_sync(mid)
+            if paths:
+                fixed_ids.append(mid)
+            else:
+                still_missing.append(mid)
+
+        self._sync_projects_disk_state()
+        return {
+            "checked": len(all_ids),
+            "missing_before": len(missing_ids),
+            "fixed": fixed_ids,
+            "still_missing": still_missing,
+        }
 
     # ==========================================================================
     # LUỒNG CHẠY TỰ ĐỘNG CHO 1 HOẶC NHIỀU DỰ ÁN
@@ -3600,6 +3918,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         defer_video_handoff: bool = False,
         force_rewrite_script: bool = False,
         ai_provider: str = "chatgpt_web",
+        exclude_accs: Optional[set] = None,
     ) -> Dict[str, Any]:
         """
         Chạy quy trình cho 1 Mã ý tưởng:
@@ -3733,47 +4052,24 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
             (renders_dir / f"{ma_id}_SEO.txt").write_text(master_seo_content, encoding="utf-8")
             (renders_dir / f"{ma_id}_KICH_BAN.txt").write_text(existing_script_text, encoding="utf-8")
-            thumb_files = [str(p) for p in sorted(renders_dir.glob(f"{ma_id}_THUMBNAIL_*.png"))]
+            thumb_files = [str(p) for p in sorted(renders_dir.glob(f"{ma_id}_THUMBNAIL_*.png")) if p.stat().st_size > 20000]
 
-            # Nếu chạy ở chế độ "Chỉ Viết Kịch Bản + SEO + Thumbnail (Không Render)" mà dự án đã có kịch bản nhưng chưa có Thumbnail -> Tự động vẽ đủ Thumbnail!
-            if not auto_produce_video and len(thumb_files) == 0 and not self.should_stop:
-                provider_norm_existing = (ai_provider or "chatgpt_web").strip().lower()
-                thumb_session_existing = None
+            # BẮT BUỘC MỌI KỊCH BẢN PHẢI CÓ THUMBNAIL: Nếu dự án đã có kịch bản nhưng chưa có Thumbnail -> Tự động tạo bù (kèm đổi nick nếu limit/lỗi)!
+            if len(thumb_files) == 0 and not self.should_stop:
                 try:
                     self._emit(
                         current_ma_id=ma_id,
                         current_step="STEP 7 — Đang tạo bổ sung Thumbnail 16:9 (6 dòng chữ)",
                         progress=92.0,
-                        message=f"[{ma_id}] 🎨 Kịch bản ({existing_pure_chars:,} chữ) & SEO đã có sẵn -> Đang mở trình duyệt tạo bổ sung 1 Thumbnail 16:9...",
+                        message=f"[{ma_id}] 🎨 Kịch bản ({existing_pure_chars:,} chữ) & SEO đã có sẵn nhưng chưa có Thumbnail -> Đang tạo bổ sung 1 Thumbnail 16:9...",
                     )
-                    if provider_norm_existing in ("gemini_4_pro", "gemini_3_8_high"):
-                        thumb_session_existing = GeminiWebSession(
-                            acc_id=preferred_acc_id or "acc_1",
-                            project_id=ma_id,
-                            target_model="gemini_3_8_high",
-                            require_pro_account=False,
-                        )
-                    else:
-                        thumb_session_existing = ChatGPTWebSession(project_id=ma_id, acc_id=preferred_acc_id)
-                    if thumb_session_existing.open_session_tab():
-                        thumb_files = self.generate_and_verify_three_thumbnails_sync(
-                            session=thumb_session_existing,
-                            ma_id=ma_id,
-                            locked_title=locked_title,
-                            step2_out=step2_out,
-                            step6_out=step6_out,
-                            idea=idea,
-                            proj_dir=proj_dir,
-                            renders_dir=renders_dir,
-                        )
+                    thumb_files = self.ensure_project_thumbnail_with_failover_sync(
+                        ma_id=ma_id,
+                        preferred_acc_id=preferred_acc_id,
+                        exclude_accs=exclude_accs,
+                    )
                 except Exception as e_th_ex:
                     log_warn("SCRIPT", f"[{ma_id}] Không thể tạo bổ sung Thumbnail: {e_th_ex}", project_id=ma_id)
-                finally:
-                    if thumb_session_existing is not None:
-                        try:
-                            thumb_session_existing.close_session_tab(keep_open=False)
-                        except Exception:
-                            pass
 
             video_triggered = False
             if auto_produce_video and not defer_video_handoff and self.video_pipeline is not None:
@@ -3848,7 +4144,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             )
             provider_label = "Gemini 3.8 High (Flash Cao)"
         else:
-            session = ChatGPTWebSession(project_id=ma_id, acc_id=preferred_acc_id)
+            session = ChatGPTWebSession(project_id=ma_id, acc_id=preferred_acc_id, exclude_accs=exclude_accs)
             provider_label = "ChatGPT Web (Medium)"
 
         try:
@@ -4378,7 +4674,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 if self.should_stop:
                     raise
                 self._emit(
-                    message=f"[{ma_id}] ⚠️ Tạo Thumbnail gặp gián đoạn ({e_thumb}) -> Tiếp tục chuyển sang bước tạo Voice & Render Video!"
+                    message=f"[{ma_id}] ⚠️ Tạo Thumbnail trên {session.cfg['label']} gặp gián đoạn ({e_thumb}) -> Sẽ chuyển sang tài khoản khác để tạo lại!"
                 )
             finally:
                 if hybrid_chat_session is not None:
@@ -4386,6 +4682,30 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         hybrid_chat_session.close_session_tab(keep_open=False)
                     except Exception:
                         pass
+
+            # KIỂM TRA LẠI SAU KHI XONG: Nếu chưa có Thumbnail -> Chuyển sang nick khác tạo lại ngay lập tức (Không thể để thiếu Thumbnail)
+            if not thumbnail_paths and not self.should_stop:
+                self._emit(
+                    current_ma_id=ma_id,
+                    current_step="STEP 7 — Đổi sang nick khác tạo lại Thumbnail",
+                    progress=95.0,
+                    message=f"[{ma_id}] 🔄 Kiểm tra thấy chưa có Thumbnail trên {session.cfg['label']} -> Đang chuyển sang tài khoản (nick) khác để tạo lại Thumbnail!",
+                )
+                try:
+                    session.close_session_tab(keep_open=False)
+                except Exception:
+                    pass
+                thumbnail_paths = self.ensure_project_thumbnail_with_failover_sync(
+                    ma_id=ma_id,
+                    preferred_acc_id=None,
+                    exclude_accs={getattr(session, "acc_id", "")},
+                )
+
+            self._update_idea_record(
+                ma_id,
+                has_seo=True,
+                has_thumbnail=bool(thumbnail_paths),
+            )
 
             # ------------------------------------------------------------------
             # BƯỚC 8 (AUTO-HANDOFF): ĐẨY SANG SẢN XUẤT VIDEO (HOẶC CHỜ PHASE 2 NẾU CHẠY ĐA LUỒNG)
@@ -4434,8 +4754,19 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
         except Exception as e:
             completed_ok = False
+            failed_acc = getattr(session, "acc_id", None)
+            try:
+                setattr(e, "failed_acc_id", failed_acc)
+            except Exception:
+                pass
             # Nếu kịch bản đã kịp viết xong đủ 3 Part trước khi lỗi, giữ trạng thái SCRIPT_DONE thay vì ERROR
             has_sc_now, _, sc_chars_now = self.has_valid_script_on_disk(ma_id)
+            if not (self.should_stop or "Đã dừng theo yêu cầu" in str(e)) and not has_sc_now and failed_acc:
+                mark_account_rate_limited(
+                    failed_acc,
+                    reason=f"[{ma_id}] {str(e)[:120]}",
+                    cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+                )
             if has_sc_now:
                 self._update_idea_record(
                     ma_id,
@@ -4664,7 +4995,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         continue
                     has_sc, _, _ = self.has_valid_script_on_disk(mid)
                     has_th, has_s, _ = self.has_thumbnail_and_seo_on_disk(mid)
-                    if has_sc and (auto_produce_video or (has_th and has_s)):
+                    if has_sc and has_th and has_s:
                         already_scripted_ids.append(mid)
                     else:
                         need_script_ids.append(mid)
@@ -4809,30 +5140,37 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         if not _acquire_perf_slot():
                             return
                         try:
-                            # Tổng số lần chạy = 1 lần chạy chính + tối đa `max_retries` (mặc định 3) lần tự động Retry khi lỗi
-                            total_attempts = 1 + max(1, int(max_retries))
+                            # Tổng số lần chạy = 1 lần chạy chính + tối đa `max_retries` (tối thiểu 4 lượt để xoay vòng đủ các nick + chờ 30p nếu cần)
+                            total_attempts = 1 + max(4, int(max_retries))
                             last_err: Optional[Exception] = None
+                            failed_accs_for_mid: set = set()
+                            restart_from_scratch_on_other_acc = False
+
                             for attempt_idx in range(total_attempts):
                                 if self.should_stop:
                                     return
                                 is_first_try = (attempt_idx == 0)
-                                use_force_rw = bool(force_rewrite_script and is_first_try)
-                                try_acc = acc_item
-                                if attempt_idx > 0 and not preferred_acc_id and len(active_accs) > 1:
-                                    try_acc = active_accs[(attempt_idx) % len(active_accs)] if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") else None
+                                use_force_rw = bool((force_rewrite_script and is_first_try) or restart_from_scratch_on_other_acc)
+                                try_acc = acc_item if is_first_try else None
+                                if attempt_idx > 0 and provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") and len(active_accs) > 1:
+                                    try_acc = active_accs[attempt_idx % len(active_accs)]
                                 try:
                                     if attempt_idx > 0:
-                                        retry_msg = f"🔄 [{mid_item}] Tự động Retry lần {attempt_idx}/{max_retries} (Tiếp tục viết phần còn thiếu)..."
+                                        retry_msg = (
+                                            f"🔄 [{mid_item}] Tự động đẩy kịch bản sang tài khoản (nick) khác để làm lại từ đầu (Lần {attempt_idx}/{total_attempts - 1} — Đã tránh nick bị Limit 30p: {sorted(failed_accs_for_mid)})..."
+                                            if restart_from_scratch_on_other_acc
+                                            else f"🔄 [{mid_item}] Tự động Retry lần {attempt_idx}/{total_attempts - 1}..."
+                                        )
                                         self._update_idea_record(
                                             mid_item,
                                             status="RUNNING",
                                             retry_count=attempt_idx,
-                                            current_step=f"🔄 Đang tự động Retry ({attempt_idx}/{max_retries})...",
+                                            current_step=f"🔄 Đang chuyển sang nick khác làm lại từ đầu ({attempt_idx}/{total_attempts - 1})...",
                                         )
                                         self._emit(
                                             status="running",
                                             current_ma_id=mid_item,
-                                            current_step=f"🔄 Tự động Retry ({attempt_idx}/{max_retries})",
+                                            current_step=f"🔄 Đổi sang nick khác làm lại ({attempt_idx}/{total_attempts - 1})",
                                             message=retry_msg,
                                         )
                                         log_warn("SCRIPT", retry_msg, project_id=mid_item)
@@ -4844,11 +5182,20 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                                         video_settings,
                                         target_part_min,
                                         not bool(auto_produce_video),   # defer_video_handoff=False khi auto_produce_video=True
-                                        use_force_rw,                   # chỉ xóa cũ ở lượt đầu nếu người dùng bấm "Viết Lại"
+                                        use_force_rw,                   # Làm lại từ đầu (Step 2) khi đổi sang nick khác do nick cũ bị Limit
                                         ai_provider,
+                                        exclude_accs=set(failed_accs_for_mid),
                                     )
                                     has_sc_ok, _, _ = self.has_valid_script_on_disk(mid_item)
                                     if has_sc_ok:
+                                        # Kiểm tra lại Thumbnail ngay sau khi xong kịch bản: nếu thiếu thì tạo lại trên nick khác
+                                        has_th_ok, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
+                                        if not has_th_ok and not self.should_stop:
+                                            self.ensure_project_thumbnail_with_failover_sync(
+                                                ma_id=mid_item,
+                                                preferred_acc_id=None,
+                                                exclude_accs=set(failed_accs_for_mid),
+                                            )
                                         if auto_produce_video and not (isinstance(res_single, dict) and res_single.get("video_triggered")):
                                             self.start_render_video_for_ideas_async(
                                                 ma_ids=[mid_item],
@@ -4861,40 +5208,102 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                                     last_err = exc_try
                                     if self.should_stop or "Đã dừng theo yêu cầu" in str(exc_try):
                                         return
-                                    # Nếu kịch bản 3 Part đã kịp viết xong trên ổ cứng và auto_produce_video=True -> đẩy luôn vào Render!
+                                    failed_acc = getattr(exc_try, "failed_acc_id", None) or try_acc
+                                    if failed_acc:
+                                        failed_accs_for_mid.add(failed_acc)
+                                        mark_account_rate_limited(
+                                            failed_acc,
+                                            reason=f"[{mid_item}] {str(exc_try)[:120]}",
+                                            cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+                                        )
+
+                                    # Nếu kịch bản 3 Part đã kịp viết xong trên ổ cứng -> Kiểm tra tạo bù Thumbnail trên nick khác rồi đẩy vào Render!
                                     has_sc_now, _, _ = self.has_valid_script_on_disk(mid_item)
-                                    if has_sc_now and auto_produce_video:
-                                        self.start_render_video_for_ideas_async(
-                                            ma_ids=[mid_item],
-                                            video_settings=video_settings,
-                                            only_unrendered=(len(clean_ids) > 1),
-                                        )
+                                    if has_sc_now:
+                                        has_th_now, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
+                                        if not has_th_now and not self.should_stop:
+                                            self.ensure_project_thumbnail_with_failover_sync(
+                                                ma_id=mid_item,
+                                                preferred_acc_id=None,
+                                                exclude_accs=set(failed_accs_for_mid),
+                                            )
+                                        if auto_produce_video:
+                                            self.start_render_video_for_ideas_async(
+                                                ma_ids=[mid_item],
+                                                video_settings=video_settings,
+                                                only_unrendered=(len(clean_ids) > 1),
+                                            )
                                         return
-                                    if attempt_idx < max_retries:
-                                        wait_s = 3.5 * (attempt_idx + 1)
-                                        log_warn(
-                                            "SCRIPT",
-                                            f"[{mid_item}] ⚠️ Lỗi ở lượt chạy {attempt_idx + 1}: {exc_try} -> Sẽ tự động Retry lần {attempt_idx + 1}/{max_retries} sau {wait_s:.1f}s...",
-                                            project_id=mid_item,
-                                        )
-                                        self._update_idea_record(
-                                            mid_item,
-                                            status="RUNNING",
-                                            retry_count=attempt_idx + 1,
-                                            current_step=f"⏳ Chờ tự động Retry lần {attempt_idx + 1}/{max_retries}...",
-                                        )
-                                        time.sleep(wait_s)
+
+                                    # Nếu kịch bản chưa xong mà nick bị limit/lỗi -> Đẩy kịch bản qua nick khác làm lại từ đầu!
+                                    restart_from_scratch_on_other_acc = True
+
+                                    if attempt_idx < total_attempts - 1:
+                                        # Kiểm tra xem còn nick nào đang rảnh (không bị khóa 30p) không
+                                        free_accs_now = [
+                                            aid for aid in active_accs
+                                            if not is_account_in_cooldown(aid)[0] and aid not in failed_accs_for_mid
+                                        ]
+                                        if not free_accs_now:
+                                            # Mở rộng sang toàn bộ tài khoản chưa bị cooldown 30p
+                                            free_accs_now = [
+                                                aid for aid in ("acc_1", "acc_2", "acc_3")
+                                                if not is_account_in_cooldown(aid)[0] and aid not in failed_accs_for_mid
+                                            ]
+                                        if free_accs_now:
+                                            wait_s = 3.0
+                                            log_warn(
+                                                "SCRIPT",
+                                                f"[{mid_item}] 🚫 Nick '{failed_acc}' bị Limit/Lỗi -> Đã tạm dừng '{failed_acc}' 30 phút và đẩy ngay '{mid_item}' sang nick khác ({free_accs_now[0]}) làm lại từ đầu sau {wait_s:.0f}s!",
+                                                project_id=mid_item,
+                                            )
+                                            self._update_idea_record(
+                                                mid_item,
+                                                status="RUNNING",
+                                                retry_count=attempt_idx + 1,
+                                                current_step=f"🔄 Nick {failed_acc} tạm dừng 30p -> Đang đẩy sang {free_accs_now[0]} làm lại từ đầu...",
+                                            )
+                                            time.sleep(wait_s)
+                                        else:
+                                            # Tất cả các nick đều đang trong thời gian nghỉ 30 phút -> Chờ đúng tới khi nick sớm nhất hết 30 phút rồi tự động thử lại!
+                                            rem_cooldown = get_earliest_cooldown_remaining_sec()
+                                            wait_s = max(10, rem_cooldown if rem_cooldown > 0 else ACCOUNT_LIMIT_COOLDOWN_SEC)
+                                            log_warn(
+                                                "SCRIPT",
+                                                f"[{mid_item}] ⏳ Tất cả các tài khoản đều đang bị Limit tạm dừng 30 phút -> Hệ thống chờ {wait_s // 60}p{wait_s % 60:02d}s rồi tự động chạy lại '{mid_item}' từ đầu!",
+                                                project_id=mid_item,
+                                            )
+                                            waited = 0
+                                            while waited < wait_s and not self.should_stop:
+                                                rem_now = max(0, int(wait_s - waited))
+                                                if waited % 15 == 0:
+                                                    self._update_idea_record(
+                                                        mid_item,
+                                                        status="RUNNING",
+                                                        retry_count=attempt_idx + 1,
+                                                        current_step=f"⏳ Các nick đang nghỉ Limit 30p — Tự chạy lại sau {rem_now // 60}p{rem_now % 60:02d}s...",
+                                                    )
+                                                    self._emit(
+                                                        status="running",
+                                                        current_ma_id=mid_item,
+                                                        current_step=f"⏳ Tạm dừng 30p chờ mở Limit ({rem_now // 60}p{rem_now % 60:02d}s)",
+                                                        message=f"[{mid_item}] ⏳ Nick bị Limit đang tạm nghỉ 30 phút — Còn {rem_now // 60} phút {rem_now % 60} giây sẽ tự động thử lại...",
+                                                    )
+                                                time.sleep(1.0)
+                                                waited += 1
+                                            # Sau khi hết 30 phút chờ, cho phép thử lại trên tất cả các nick đã hết hạn cooldown
+                                            failed_accs_for_mid.clear()
                                     else:
                                         log_error(
                                             "SCRIPT",
-                                            f"[{mid_item}] ❌ Đã thử tự động tối đa {max_retries}/{max_retries} lần nhưng vẫn gặp lỗi: {exc_try}",
+                                            f"[{mid_item}] ❌ Đã thử tự động tối đa {total_attempts - 1} lần nhưng vẫn gặp lỗi: {exc_try}",
                                             project_id=mid_item,
                                         )
                                         self._update_idea_record(
                                             mid_item,
                                             status="ERROR",
-                                            retry_count=max_retries,
-                                            current_step=f"❌ Lỗi sau {max_retries} lần Retry — Bấm '🔁 Viết Lại' để chạy lại ({str(exc_try)[:55]})",
+                                            retry_count=total_attempts - 1,
+                                            current_step=f"❌ Lỗi sau {total_attempts - 1} lần Retry — Bấm '🔁 Viết Lại' để chạy lại ({str(exc_try)[:55]})",
                                         )
                                         raise
                         finally:
@@ -4937,6 +5346,16 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         sweep_completed_and_idle_tabs_across_all_accounts()
                     except Exception:
                         pass
+
+                # ==============================================================
+                # KIỂM TRA LẠI TOÀN BỘ KỊCH BẢN ĐÃ XONG: NẾU KỊCH BẢN NÀO CHƯA CÓ THUMBNAIL THÌ TẠO BÙ NGAY (ĐỔI NICK NẾU LIMIT)
+                # ==============================================================
+                if not self.should_stop:
+                    try:
+                        self.ensure_all_projects_have_thumbnails_sync(target_ids=clean_ids)
+                        sweep_completed_and_idle_tabs_across_all_accounts()
+                    except Exception as e_ens_th:
+                        log_warn("SCRIPT", f"Cảnh báo khi quét tạo bù Thumbnail cuối phiên: {e_ens_th}")
 
                 # ==============================================================
                 # QUÉT VÉT LẦN CUỐI ĐẢM BẢO MỌI KỊCH BẢN ĐÃ XONG ĐỀU ĐƯỢC RENDER MP4

@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.3",
-  "build_number": 116,
-  "released_at": "2026-11-05 11:02:00",
+  "version": "V1.0.4",
+  "build_number": 117,
+  "released_at": "2026-11-06 22:40:10",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Sửa triệt để lỗi sau khi Update & Reset không tự mở lại ứng dụng: Tách tiến trình _ota_restart_helper.py qua WMI độc lập, bỏ cờ /T khi tắt PID cũ để không tự hủy helper, và chống đóng nhầm Server khi Chrome App chuyển tiếp cửa sổ.\n2. Lưu 100% file Voice & Phụ đề trực tiếp tại Folder Project đã chọn; thư mục VIDEO XONG chỉ nhận Video MP4 khi đã hoàn thiện 100%.\n3. Tăng tốc tối đa Server VOICEVOX GPU (tách 8 luồng /audio_query + khóa tuần tự /synthesis)."
+  "changelog": "1. Tự động tạm dừng 30 phút khi tài khoản (nick) bị Limit và đẩy ngay kịch bản sang nick khác để làm lại từ đầu (STEP 2); sau 30 phút tự động mở khóa nick bị Limit để chạy tiếp. 2. Chốt chặn 100% kịch bản phải có Thumbnail: kiểm tra lại sau khi xong kịch bản và cuối lô, nếu thiếu hoặc lỗi tự động chuyển qua nick khác để tạo lại cho tới khi đủ Thumbnail."
 }

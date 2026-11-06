@@ -124,6 +124,142 @@ _PENDING_PROJECTS_BY_ACC: Dict[str, set] = {
     "acc_2": set(),
     "acc_3": set(),
 }
+ACCOUNT_LIMIT_COOLDOWN_SEC = 1800  # Tạm dừng 30 phút (1800 giây) khi tài khoản bị Limit
+_ACCOUNT_COOLDOWN_UNTIL: Dict[str, float] = {
+    "acc_1": 0.0,
+    "acc_2": 0.0,
+    "acc_3": 0.0,
+}
+_ACCOUNT_COOLDOWN_REASON: Dict[str, str] = {
+    "acc_1": "",
+    "acc_2": "",
+    "acc_3": "",
+}
+
+
+class AccountRateLimitError(RuntimeError):
+    """Ngoại lệ chuyên biệt khi tài khoản ChatGPT bị giới hạn (Rate Limit / Quota / Không phản hồi)."""
+
+    def __init__(self, acc_id: str, message: str):
+        super().__init__(message)
+        self.acc_id = acc_id
+
+
+def mark_account_rate_limited(
+    acc_id: str,
+    reason: str = "",
+    cooldown_sec: int = ACCOUNT_LIMIT_COOLDOWN_SEC,
+) -> float:
+    """
+    Đánh dấu tài khoản `acc_id` bị Limit -> Tạm dừng nhận kịch bản mới trong `cooldown_sec` (mặc định 30 phút = 1800s).
+    Sau đúng 30 phút hệ thống sẽ tự động mở khóa để thử lại.
+    """
+    if acc_id not in ACCOUNTS_CONFIG:
+        return 0.0
+    now = time.time()
+    until_ts = now + max(60, int(cooldown_sec))
+    clean_reason = (reason or "Tài khoản chạm giới hạn (Rate Limit / Timeout)").strip()[:180]
+    with _STATE_LOCK:
+        _ACCOUNT_COOLDOWN_UNTIL[acc_id] = until_ts
+        _ACCOUNT_COOLDOWN_REASON[acc_id] = clean_reason
+        if acc_id in _PENDING_PROJECTS_BY_ACC:
+            _PENDING_PROJECTS_BY_ACC[acc_id].clear()
+    _STATUS_CACHE["ts"] = 0.0
+    resume_str = time.strftime("%H:%M:%S", time.localtime(until_ts))
+    label = ACCOUNTS_CONFIG.get(acc_id, {}).get("label", acc_id)
+    log_warn(
+        f"⏸️ [{label}] Phát hiện bị LIMIT / nghẽn ({clean_reason}) -> "
+        f"Tạm dừng {label} trong {int(cooldown_sec // 60)} phút (Mở lại lúc {resume_str}) và chuyển kịch bản sang nick khác!",
+        category="CHROME",
+    )
+    return until_ts
+
+
+def is_account_in_cooldown(acc_id: str) -> tuple[bool, int, str]:
+    """
+    Kiểm tra xem `acc_id` có đang trong thời gian tạm dừng 30 phút vì Limit hay không.
+    Tự động mở khóa ngay khi hết 30 phút.
+    """
+    if acc_id not in ACCOUNTS_CONFIG:
+        return False, 0, ""
+    now = time.time()
+    unlocked_now = False
+    with _STATE_LOCK:
+        until_ts = float(_ACCOUNT_COOLDOWN_UNTIL.get(acc_id, 0.0) or 0.0)
+        reason = str(_ACCOUNT_COOLDOWN_REASON.get(acc_id, "") or "")
+        if until_ts <= 0.0:
+            return False, 0, ""
+        if now >= until_ts:
+            _ACCOUNT_COOLDOWN_UNTIL[acc_id] = 0.0
+            _ACCOUNT_COOLDOWN_REASON[acc_id] = ""
+            unlocked_now = True
+        else:
+            return True, int(round(until_ts - now)), reason
+    if unlocked_now:
+        label = ACCOUNTS_CONFIG.get(acc_id, {}).get("label", acc_id)
+        log_info(
+            f"▶️ [{label}] Đã hết 30 phút tạm dừng Limit -> Tự động mở khóa {label} để hoạt động trở lại!",
+            category="CHROME",
+        )
+    return False, 0, ""
+
+
+def clear_account_cooldown(acc_id: Optional[str] = None) -> None:
+    """Xóa trạng thái tạm dừng Limit cho 1 hoặc toàn bộ tài khoản."""
+    with _STATE_LOCK:
+        targets = [acc_id] if (acc_id and acc_id in ACCOUNTS_CONFIG) else list(ACCOUNTS_CONFIG.keys())
+        for aid in targets:
+            _ACCOUNT_COOLDOWN_UNTIL[aid] = 0.0
+            _ACCOUNT_COOLDOWN_REASON[aid] = ""
+    _STATUS_CACHE["ts"] = 0.0
+
+
+def get_earliest_cooldown_remaining_sec(candidate_accs: Optional[List[str]] = None) -> int:
+    """Trả về số giây còn lại ngắn nhất để ít nhất 1 tài khoản thoát khỏi trạng thái tạm dừng 30 phút."""
+    accs = candidate_accs or list(ACCOUNTS_CONFIG.keys())
+    rem_list: List[int] = []
+    for aid in accs:
+        in_cd, rem_s, _ = is_account_in_cooldown(aid)
+        if not in_cd:
+            return 0
+        if rem_s > 0:
+            rem_list.append(rem_s)
+    return min(rem_list) if rem_list else 0
+
+
+_RATE_LIMIT_PATTERNS = re.compile(
+    r"(?:"
+    r"you(?:['’]?ve|\s+have)?\s+reached\s+(?:your|the)(?:\s+\w+){0,3}\s+(?:limit|usage\s+cap|message\s+cap|cap|quota)|"
+    r"you(?:['’]?ve|\s+have)?\s+hit\s+(?:your|the)(?:\s+\w+){0,3}\s+(?:limit|cap|quota)|"
+    r"rate\s+limit|"
+    r"usage\s+cap|"
+    r"message\s+cap|"
+    r"too\s+many\s+requests|"
+    r"requests\s+too\s+quickly|"
+    r"wait\s+before\s+generating\s+more\s+images|"
+    r"image\s+generation\s+limit|"
+    r"limit\s+for\s+image\s+generations|"
+    r"try\s+again\s+in\s+\d+\s*(?:minute|minutes|hour|hours)|"
+    r"please\s+wait\s+\d+\s*(?:minute|minutes|hour|hours)\s+before|"
+    r"unusual\s+activity\s+from\s+your\s+system|"
+    r"đã\s+đạt\s+giới\s+hạn|"
+    r"vượt\s+quá\s+giới\s+hạn"
+    r")",
+    flags=re.IGNORECASE,
+)
+
+
+def _detect_rate_limit_in_text(text: str, max_len_for_content_check: int = 900) -> str:
+    """Phát hiện thông báo giới hạn (Rate Limit / Quota) từ văn bản trả về hoặc banner cảnh báo của ChatGPT."""
+    t = (text or "").strip()
+    if not t or len(t) > max_len_for_content_check:
+        return ""
+    m = _RATE_LIMIT_PATTERNS.search(t)
+    if m:
+        return t[:180].replace("\n", " ").strip()
+    return ""
+
+
 CHATGPT_GUARD_URL = "https://chatgpt.com/?studio_login_guard=1#studio_login_guard"
 _PROTECTED_WS_URLS: set = set()
 
@@ -890,6 +1026,7 @@ def _inspect_account_login_state(acc_id: str) -> Dict[str, Any]:
     else:
         email_or_user = "Chưa mở tab ChatGPT/Gemini"
 
+    in_cd, rem_cd_sec, cd_reason = is_account_in_cooldown(acc_id)
     return {
         "acc_id": acc_id,
         "label": cfg["label"],
@@ -906,6 +1043,9 @@ def _inspect_account_login_state(acc_id: str) -> Dict[str, Any]:
         "max_threads": MAX_THREADS_PER_ACCOUNT,
         "active_projects": all_active_projects,
         "hidden": is_hidden,
+        "in_cooldown": in_cd,
+        "cooldown_remaining_sec": rem_cd_sec,
+        "cooldown_reason": cd_reason,
     }
 
 
@@ -1082,24 +1222,50 @@ def sweep_completed_and_idle_tabs_across_all_accounts() -> Dict[str, Any]:
     }
 
 
-def select_best_available_account(preferred_acc_id: Optional[str] = None, project_id: Optional[str] = None) -> str:
-    """Chọn tài khoản ChatGPT đã đăng nhập và đang rảnh nhất (Load Balancing trực tiếp thời gian thực giữa các Acc)."""
+def select_best_available_account(
+    preferred_acc_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    exclude_accs: Optional[set] = None,
+) -> str:
+    """
+    Chọn tài khoản ChatGPT đã đăng nhập, KHÔNG bị tạm dừng Limit 30 phút và đang rảnh nhất
+    (Load Balancing + Automatic Failover trực tiếp thời gian thực giữa các Acc).
+    """
     global _ROUND_ROBIN_IDX
-    if preferred_acc_id and preferred_acc_id in ACCOUNTS_CONFIG:
-        if project_id:
-            with _STATE_LOCK:
-                for aid in _PENDING_PROJECTS_BY_ACC:
-                    _PENDING_PROJECTS_BY_ACC[aid].discard(project_id)
-                _PENDING_PROJECTS_BY_ACC.setdefault(preferred_acc_id, set()).add(project_id)
-        return preferred_acc_id
+    excl = set(exclude_accs or set())
+
+    # Nếu có preferred_acc_id nhưng nick đó KHÔNG bị loại trừ và KHÔNG đang trong 30 phút tạm dừng Limit thì dùng luôn
+    if preferred_acc_id and preferred_acc_id in ACCOUNTS_CONFIG and preferred_acc_id not in excl:
+        in_cd, _, _ = is_account_in_cooldown(preferred_acc_id)
+        if not in_cd:
+            if project_id:
+                with _STATE_LOCK:
+                    for aid in _PENDING_PROJECTS_BY_ACC:
+                        _PENDING_PROJECTS_BY_ACC[aid].discard(project_id)
+                    _PENDING_PROJECTS_BY_ACC.setdefault(preferred_acc_id, set()).add(project_id)
+            return preferred_acc_id
 
     status_all = check_all_web_accounts_status(force_refresh=False).get("accounts", {})
     logged_in_accs = [aid for aid in ["acc_1", "acc_2", "acc_3"] if status_all.get(aid, {}).get("logged_in")]
-    if len(logged_in_accs) < 2:
-        # Tự động kiểm tra và bật đủ các tài khoản ChatGPT đã lưu trên ổ cứng (ví dụ cả Acc #1 và Acc #2)
+    if len(logged_in_accs) < 2 or excl:
+        # Tự động kiểm tra và bật đủ các tài khoản ChatGPT đã lưu trên ổ cứng (Acc #1, Acc #2, Acc #3)
         logged_in_accs = ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
 
-    if logged_in_accs:
+    # Ưu tiên 1: Các tài khoản đã đăng nhập, KHÔNG nằm trong danh sách loại trừ (excl) và KHÔNG bị tạm dừng 30p (cooldown)
+    ready_accs = [
+        aid for aid in logged_in_accs
+        if aid not in excl and not is_account_in_cooldown(aid)[0]
+    ]
+    # Ưu tiên 2: Nếu mọi tài khoản ngoài excl đều đang tạm dừng hoặc chưa lọc được, lấy tài khoản đã đăng nhập không nằm trong excl
+    if not ready_accs:
+        ready_accs = [aid for aid in logged_in_accs if not is_account_in_cooldown(aid)[0]]
+    # Ưu tiên 3: Nếu tất cả các nick đều đang trong 30p cooldown, chọn nick ngoài excl có thời gian chờ còn lại ngắn nhất
+    if not ready_accs and logged_in_accs:
+        cand_pool = [aid for aid in logged_in_accs if aid not in excl] or list(logged_in_accs)
+        cand_pool.sort(key=lambda a: is_account_in_cooldown(a)[1])
+        ready_accs = [cand_pool[0]]
+
+    if ready_accs:
         with _STATE_LOCK:
             if project_id:
                 for aid in _PENDING_PROJECTS_BY_ACC:
@@ -1110,18 +1276,23 @@ def select_best_available_account(preferred_acc_id: Optional[str] = None, projec
                 pend_projs = set(_PENDING_PROJECTS_BY_ACC.get(a, set()))
                 return len(act_projs | pend_projs)
 
-            loads = {a: _live_load(a) for a in logged_in_accs}
+            loads = {a: _live_load(a) for a in ready_accs}
             min_load = min(loads.values())
-            least_loaded = [a for a in logged_in_accs if loads[a] == min_load]
+            least_loaded = [a for a in ready_accs if loads[a] == min_load]
             chosen = least_loaded[_ROUND_ROBIN_IDX % len(least_loaded)]
             _ROUND_ROBIN_IDX += 1
             if project_id:
                 _PENDING_PROJECTS_BY_ACC.setdefault(chosen, set()).add(project_id)
             return chosen
 
-    # Nếu chưa tài khoản nào xác nhận đăng nhập, ưu tiên tài khoản đang mở trình duyệt hoặc mặc định acc_1
-    open_accs = [aid for aid in ["acc_1", "acc_2", "acc_3"] if status_all.get(aid, {}).get("browser_open")]
-    fallback = open_accs[0] if open_accs else "acc_1"
+    # Nếu chưa tài khoản nào xác nhận đăng nhập, ưu tiên tài khoản đang mở trình duyệt (ngoài excl và không cooldown)
+    open_accs = [
+        aid for aid in ["acc_1", "acc_2", "acc_3"]
+        if status_all.get(aid, {}).get("browser_open") and aid not in excl and not is_account_in_cooldown(aid)[0]
+    ]
+    if not open_accs:
+        open_accs = [aid for aid in ["acc_1", "acc_2", "acc_3"] if aid not in excl and not is_account_in_cooldown(aid)[0]]
+    fallback = open_accs[0] if open_accs else ("acc_2" if "acc_1" in excl else "acc_1")
     ensure_chrome_debug_browser_open(
         open_chatgpt_home=True,
         force_bring_to_front=False,
@@ -1139,17 +1310,49 @@ class ChatGPTWebSession:
     """
     Phiên làm việc trực tiếp trên 1 Tab ChatGPT Web thông qua Chrome DevTools Protocol (CDP).
     Hỗ trợ hội thoại nhiều bước liên tiếp (STEP 2 -> STEP 3 -> STEP 4 A/B/C -> STEP 5 -> STEP 6)
-    trong cùng 1 đoạn chat để giữ trọn vẹn ngữ cảnh.
+    trong cùng 1 đoạn chat để giữ trọn vẹn ngữ cảnh, kèm cơ chế tự động đổi sang Nick khác khi bị Limit/Lỗi.
     """
 
-    def __init__(self, project_id: str, acc_id: Optional[str] = None):
+    def __init__(self, project_id: str, acc_id: Optional[str] = None, exclude_accs: Optional[set] = None):
         self.project_id = project_id
-        self.acc_id = select_best_available_account(acc_id, project_id=project_id)
+        self.excluded_accs: set = set(exclude_accs or set())
+        self.acc_id = select_best_available_account(acc_id, project_id=project_id, exclude_accs=self.excluded_accs)
         self.cfg = ACCOUNTS_CONFIG[self.acc_id]
         self.port = self.cfg["port"]
         self.tab_id: Optional[str] = None
         self.ws_url: Optional[str] = None
         self.resumed_existing_chat: bool = False
+
+    def switch_to_another_account(self, extra_exclude: Optional[set] = None) -> bool:
+        """
+        Đóng tab hiện tại trên tài khoản vừa bị Limit/Lỗi và chuyển ngay phiên làm việc sang tài khoản (nick) khác đang rảnh.
+        """
+        old_acc = self.acc_id
+        try:
+            self.close_session_tab(keep_open=False)
+        except Exception:
+            pass
+        self.excluded_accs.add(old_acc)
+        if extra_exclude:
+            self.excluded_accs.update(extra_exclude)
+        new_acc = select_best_available_account(
+            preferred_acc_id=None,
+            project_id=self.project_id,
+            exclude_accs=self.excluded_accs,
+        )
+        self.acc_id = new_acc
+        self.cfg = ACCOUNTS_CONFIG[self.acc_id]
+        self.port = self.cfg["port"]
+        self.tab_id = None
+        self.ws_url = None
+        self.resumed_existing_chat = False
+        log_info(
+            f"[{self.project_id}] 🔀 Đã chuyển phiên từ {ACCOUNTS_CONFIG.get(old_acc, {}).get('label', old_acc)} "
+            f"sang {self.cfg['label']} (Cổng {self.port})!",
+            category="CHROME",
+            project_id=self.project_id,
+        )
+        return self.open_session_tab(force_new_chat=True)
 
     def open_session_tab(self, force_new_chat: bool = True) -> bool:
         """
@@ -1962,10 +2165,18 @@ class ChatGPTWebSession:
                 }}
                 latestText = parts.join('\\n\\n');
             }}
+            let alertText = '';
+            try {{
+                const alertNodes = Array.from(document.querySelectorAll('[role="alert"], .toast-root, [data-testid*="limit"], [data-testid*="rate"], [class*="rate-limit"]'));
+                if (alertNodes.length > 0) {{
+                    alertText = alertNodes.map(a => (a.innerText || '').trim()).filter(Boolean).join(' | ').slice(0, 400);
+                }}
+            }} catch (e) {{}}
             return {{
                 hasNewTurn: newNodes.length > 0,
                 isStreaming: isStreaming,
-                text: latestText
+                text: latestText,
+                alertText: alertText
             }};
         }})()
         """
@@ -1988,6 +2199,21 @@ class ChatGPTWebSession:
             has_new_turn = bool(state.get("hasNewTurn"))
             is_streaming = bool(state.get("isStreaming"))
             curr_text = str(state.get("text") or "").strip()
+            alert_text = str(state.get("alertText") or "").strip()
+
+            rl_detected = _detect_rate_limit_in_text(alert_text, 500) or (
+                _detect_rate_limit_in_text(curr_text, 600) if not is_streaming else ""
+            )
+            if rl_detected:
+                mark_account_rate_limited(
+                    self.acc_id,
+                    reason=f"ChatGPT báo giới hạn tại {step_label}: {rl_detected}",
+                    cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+                )
+                raise AccountRateLimitError(
+                    self.acc_id,
+                    f"Tài khoản {self.cfg['label']} bị giới hạn (Limit) tại {step_label}: {rl_detected}",
+                )
 
             if has_new_turn and curr_text:
                 started_responding = True
@@ -2033,7 +2259,16 @@ class ChatGPTWebSession:
             if backend_md and len(backend_md) >= int(len(last_text) * 0.85):
                 return backend_md
             return last_text
-        raise RuntimeError(f"Quá thời gian chờ ({timeout_sec}s) phản hồi từ ChatGPT tại bước {step_label}.")
+        # Khi tài khoản hoàn toàn không phản hồi sau timeout_sec (600s) -> Đánh dấu tạm dừng 30 phút và đẩy sang nick khác!
+        mark_account_rate_limited(
+            self.acc_id,
+            reason=f"Quá thời gian chờ ({timeout_sec}s) không phản hồi tại bước {step_label}",
+            cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+        )
+        raise AccountRateLimitError(
+            self.acc_id,
+            f"Quá thời gian chờ ({timeout_sec}s) phản hồi từ ChatGPT trên {self.cfg['label']} tại bước {step_label} -> Tạm dừng {self.cfg['label']} 30 phút và chuyển sang nick khác!",
+        )
 
     def generate_image_and_harvest_base64(
         self,
@@ -2158,12 +2393,20 @@ class ChatGPTWebSession:
             if (newTurns.length > 0) {{
                 latestText = newTurns.map(n => (n.innerText || '').trim()).join('\\n').trim();
             }}
+            let alertText = '';
+            try {{
+                const alertNodes = Array.from(document.querySelectorAll('[role="alert"], .toast-root, [data-testid*="limit"], [data-testid*="rate"], [class*="rate-limit"]'));
+                if (alertNodes.length > 0) {{
+                    alertText = alertNodes.map(a => (a.innerText || '').trim()).filter(Boolean).join(' | ').slice(0, 400);
+                }}
+            }} catch (e) {{}}
 
             return {{
                 isStreaming: isStreaming,
                 isCreatingImgText: isCreatingImgText,
                 newImgCount: newImgs.length,
-                latestText: latestText
+                latestText: latestText,
+                alertText: alertText
             }};
         }})()
         """
@@ -2302,6 +2545,24 @@ class ChatGPTWebSession:
             is_streaming = bool(st.get("isStreaming"))
             new_img_count = int(st.get("newImgCount") or 0)
             latest_text = str(st.get("latestText") or "").strip()
+            alert_text = str(st.get("alertText") or "").strip()
+
+            rl_img = _detect_rate_limit_in_text(alert_text, 500) or (
+                _detect_rate_limit_in_text(latest_text, 700) if not is_streaming else ""
+            )
+            if rl_img:
+                mark_account_rate_limited(
+                    self.acc_id,
+                    reason=f"Giới hạn tạo ảnh Thumbnail ({step_label}): {rl_img}",
+                    cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+                )
+                return {
+                    "success": False,
+                    "rate_limited": True,
+                    "acc_id": self.acc_id,
+                    "error": f"Tài khoản {self.cfg['label']} bị giới hạn (Limit) tạo ảnh: {rl_img}",
+                    "assistant_text": latest_text,
+                }
 
             if progress_cb:
                 progress_cb(step_label, elapsed)
@@ -2336,10 +2597,16 @@ class ChatGPTWebSession:
                     if idle_after_stream_ticks >= 8 and latest_text:
                         return {
                             "success": False,
+                            "acc_id": self.acc_id,
                             "error": f"ChatGPT trả lời văn bản nhưng chưa xuất ảnh: {latest_text[:150]}",
                             "assistant_text": latest_text,
                         }
             else:
                 idle_after_stream_ticks = 0
 
-        return {"success": False, "error": f"Quá thời gian chờ tạo ảnh ({timeout_sec}s) tại bước {step_label}."}
+        return {
+            "success": False,
+            "acc_id": self.acc_id,
+            "timeout": True,
+            "error": f"Quá thời gian chờ tạo ảnh ({timeout_sec}s) tại bước {step_label}.",
+        }
