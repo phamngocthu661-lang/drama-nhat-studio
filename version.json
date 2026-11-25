@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.7",
-  "build_number": 120,
-  "released_at": "2026-11-25 14:07:20",
+  "version": "V1.0.8",
+  "build_number": 121,
+  "released_at": "2026-11-25 16:01:09",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Sửa chế độ viết kịch bản bằng Gemini (đã chạy thử thật trọn quy trình: kịch bản 45.576 chữ + SEO + Thumbnail 6 dòng): chọn đúng model Gemini mới (4 Neon + tư duy Cao), gửi được lệnh vẽ Thumbnail, nhận biết đúng trạng thái đăng nhập Gemini. 2. Sửa lỗi tạo bù Thumbnail khi đổi nick luôn bị hỏng (ảnh hưởng cả ChatGPT). 3. Tiêu đề khóa không còn dính dấu ':' ở đầu; lỗi Gemini không còn làm nghỉ nhầm nick ChatGPT."
+  "changelog": "1. Ưu tiên sản xuất kịch bản tối đa: trong lúc viết, Thumbnail chỉ vẽ 1 lần, lỗi thì bỏ qua và chuyển ngay sang tiêu đề tiếp theo (không giữ nick để vẽ lại). 2. Thumbnail còn thiếu được tạo bù SAU KHI viết xong các kịch bản, song song trên các nick ChatGPT; bấm Chạy Tiếp thêm tiêu đề thì ưu tiên viết kịch bản trước rồi mới tạo bù tiếp. 3. Thumbnail tạo bù sau khi video đã render sẽ tự chép sang thư mục chứa video."
 }
