@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.5",
-  "build_number": 118,
-  "released_at": "2026-11-25 11:34:30",
+  "version": "V1.0.6",
+  "build_number": 119,
+  "released_at": "2026-11-25 12:38:32",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Chỉ khóa nick 30 phút khi ChatGPT báo Limit thật; lỗi tạm thời chỉ cho nick nghỉ 5 phút hoặc chuyển nick ngay. 2. Đổi nick là VIẾT TIẾP từ phần đã lưu (STEP 2/3 và các Part đã xong), không làm lại từ đầu. 3. Nút ▶ CHẠY TIẾP: đang chạy vẫn thêm được mã mới, vừa viết kịch bản vừa Render song song. 4. Gửi lệnh ChatGPT ổn định hơn, không gửi trùng. 5. STEP 5 chỉ chấm điểm, STEP 6 ghi đúng kết quả chấm và độ dài thật. 6. Nâng cấp bộ skill ADAS V4."
+  "changelog": "1. Viết kịch bản cùng lúc trên 5 nick ChatGPT (thêm Nick 4 cổng 9228, Nick 5 cổng 9229 — bấm ACC 4/ACC 5 để đăng nhập lần đầu). 2. Video đã sản xuất xong được đánh dấu vĩnh viễn (VIDEO_DONE.json): dù chuyển hoặc xóa MP4, ứng dụng vẫn nhận biết và không render lại; muốn làm lại phải xác nhận Render Lại. 3. Tự dọn file thừa: viết xong xóa part_a/b/c và bản sao kịch bản; render xong xóa Voice WAV, file render dở và bản sao trùng; thư mục video cuối chỉ giữ MP4 + SEO + Thumbnail."
 }
