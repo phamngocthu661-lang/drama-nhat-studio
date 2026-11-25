@@ -18,14 +18,67 @@ from .chatgpt_web_client import (
 )
 from .logger_service import log_error, log_info, log_warn
 
-SRT_CHATGPT_CONCURRENCY_LIMIT = 3
+SRT_CHATGPT_CONCURRENCY_LIMIT = 5
 _SRT_CHATGPT_SEMAPHORE = threading.Semaphore(SRT_CHATGPT_CONCURRENCY_LIMIT)
+_SRT_ACC_BUSY_LOCK = threading.Lock()
+_SRT_ACC_IN_USE: set = set()
+_SRT_ACC_RR_IDX = 0
+
+
+def _acquire_srt_account_slot(
+    candidate_pool: List[str],
+    preferred_acc_id: Optional[str],
+    excl_accs: set,
+    wait_timeout_sec: float = 45.0,
+    should_stop_cb: Optional[Callable[[], bool]] = None,
+    logged_accs_priority: Optional[List[str]] = None,
+) -> Optional[str]:
+    """
+    Cấp phát ĐỘC QUYỀN tối đa 1 job SRT → SEO trên mỗi tài khoản ChatGPT tại một thời điểm
+    (ưu tiên các nick đang mở sẵn `logged_accs_priority` trước rồi mới tới các nick lưu trên ổ cứng,
+    xoay vòng đều qua Acc #1..#5 để tuyệt đối không dồn 3 luồng nặng vào cùng 1 nick).
+    """
+    global _SRT_ACC_RR_IDX
+    deadline = time.time() + max(1.0, float(wait_timeout_sec))
+    priority_set = set(logged_accs_priority or [])
+
+    while True:
+        if should_stop_cb and should_stop_cb():
+            raise InterruptedError("Đã dừng tiến trình theo yêu cầu.")
+
+        pool = [a for a in candidate_pool if a in ACCOUNTS_CONFIG and a not in excl_accs and not is_account_in_cooldown(a)[0]]
+        if not pool:
+            return None
+
+        with _SRT_ACC_BUSY_LOCK:
+            free_accs = [a for a in pool if a not in _SRT_ACC_IN_USE]
+            if free_accs:
+                free_logged = [a for a in free_accs if a in priority_set] if priority_set else []
+                pick_from = free_logged or free_accs
+                if preferred_acc_id and preferred_acc_id in free_accs:
+                    chosen = preferred_acc_id
+                else:
+                    chosen = pick_from[_SRT_ACC_RR_IDX % len(pick_from)]
+                    _SRT_ACC_RR_IDX += 1
+                _SRT_ACC_IN_USE.add(chosen)
+                return chosen
+
+        if time.time() >= deadline:
+            return None
+        time.sleep(0.5)
+
+
+def _release_srt_account_slot(acc_id: Optional[str]) -> None:
+    if not acc_id:
+        return
+    with _SRT_ACC_BUSY_LOCK:
+        _SRT_ACC_IN_USE.discard(acc_id)
 
 _SRT_TIME_LINE_RE = re.compile(
     r"^\s*(\d{1,2}:\d{2}:\d{2}[,\.]\d{1,3})\s*-->\s*(\d{1,2}:\d{2}:\d{2}[,\.]\d{1,3})"
 )
 _TS_CHAPTER_LINE_RE = re.compile(
-    r"^\s*(?:[-•*・\d+\.]+\s*)?(?:\*\*|`)?\[?(?P<ts>(?:\d{1,2}:)?\d{1,2}:\d{2})\]?(?:\*\*|`)?\s*(?:[-–—:：|]\s*)?(?P<label>.+?)\s*$"
+    r"^\s*(?:(?:[-•*・]+|\d+[\.\)])\s*)?(?:\*\*|`)?\[?(?P<ts>(?:\d{1,2}:)?\d{1,2}:\d{2})\]?(?:\*\*|`)?\s*(?:[-–—:：|]\s*)?(?P<label>.+?)\s*$"
 )
 _CHAPTER_HEADER_RE = re.compile(
     r"^(?:▼?\s*目次.*|チャプター.*|タイムスタンプ.*|TIMESTAMPS.*|CHAPTERS.*)$",
@@ -635,15 +688,30 @@ def update_seo_files_with_chatgpt_srt_result(
     render_seo_file.write_text(seed_text, encoding="utf-8")
     updated_paths.extend([str(master_seo_file), str(render_seo_file)])
 
+    extra_final_dirs: List[Path] = []
     if final_proj_dir.resolve() != proj_dir.resolve() and final_proj_dir.exists():
+        extra_final_dirs.append(final_proj_dir / "renders")
+    loc_file = renders_dir / "video_location.json"
+    if loc_file.exists():
         try:
-            final_renders_dir = final_proj_dir / "renders"
-            final_renders_dir.mkdir(parents=True, exist_ok=True)
-            f_master = final_proj_dir / "00_TIEU_DE_VA_SEO_YOUTUBE.txt"
-            f_render = final_renders_dir / f"{ma_id}_SEO.txt"
-            f_master.write_text(seed_text, encoding="utf-8")
+            loc_data = json.loads(loc_file.read_text(encoding="utf-8"))
+            loc_final = Path(str(loc_data.get("final_renders_dir") or "").strip())
+            if str(loc_final) and loc_final.exists() and loc_final.resolve() != renders_dir.resolve():
+                if all(p.resolve() != loc_final.resolve() for p in extra_final_dirs):
+                    extra_final_dirs.append(loc_final)
+        except Exception:
+            pass
+
+    for f_renders in extra_final_dirs:
+        try:
+            f_renders.mkdir(parents=True, exist_ok=True)
+            f_render = f_renders / f"{ma_id}_SEO.txt"
             f_render.write_text(seed_text, encoding="utf-8")
-            updated_paths.extend([str(f_master), str(f_render)])
+            updated_paths.append(str(f_render))
+            f_master = f_renders.parent / "00_TIEU_DE_VA_SEO_YOUTUBE.txt"
+            if f_master.exists():
+                f_master.write_text(seed_text, encoding="utf-8")
+                updated_paths.append(str(f_master))
         except Exception:
             pass
 
@@ -692,6 +760,8 @@ def analyze_project_srt_with_chatgpt_sync(
     allow_fallback: bool = True,
     progress_cb: Optional[Callable[[str], None]] = None,
     should_stop_cb: Optional[Callable[[], bool]] = None,
+    timeout_sec: int = 135,
+    repair_timeout_sec: int = 90,
 ) -> Dict[str, Any]:
     """
     Quy trình hoàn chỉnh:
@@ -743,7 +813,7 @@ def analyze_project_srt_with_chatgpt_sync(
     if progress_cb:
         progress_cb(f"[{ma_id}] Đang đọc & phân tích cấu trúc thời gian subtitles.srt...")
 
-    digest_info = build_srt_chronological_digest(target_srt)
+    digest_info = build_srt_chronological_digest(target_srt, max_chars=18000)
     if not digest_info.get("digest_text"):
         raise RuntimeError(f"[{ma_id}] File subtitles.srt rỗng hoặc không đọc được mốc phụ đề.")
 
@@ -795,27 +865,53 @@ def analyze_project_srt_with_chatgpt_sync(
                 )
         else:
             excl_accs: set = set()
-            candidate_pool = logged_accs or saved_accs
-            max_acc_tries = max(1, min(len(ACCOUNTS_CONFIG), len(candidate_pool)))
+            # Gộp cả nick đang mở (logged_accs) và nick đã lưu phiên trên đĩa (saved_accs) để xoay vòng đều Acc #1..#5
+            candidate_pool = list(logged_accs)
+            for sa in saved_accs:
+                if sa not in candidate_pool:
+                    candidate_pool.append(sa)
+            max_cap = 2 if allow_fallback else len(ACCOUNTS_CONFIG)
+            max_acc_tries = max(1, min(max_cap, len(candidate_pool)))
 
             for acc_try in range(max_acc_tries):
                 if should_stop_cb and should_stop_cb():
                     raise InterruptedError("Đã dừng tiến trình theo yêu cầu.")
 
                 sess: Optional[ChatGPTWebSession] = None
+                locked_acc_slot: Optional[str] = None
                 try:
                     use_pref = preferred_acc_id if (acc_try == 0 and preferred_acc_id and preferred_acc_id not in excl_accs) else None
-                    # Kiểm tra nếu tất cả tài khoản đều đang bị cooldown 30p -> không treo vô ích khi allow_fallback=True
+                    # Kiểm tra nếu tất cả tài khoản đều đang bị cooldown -> không treo vô ích khi allow_fallback=True
                     avail_non_cd = [
-                        aid for aid in tuple(ACCOUNTS_CONFIG.keys())
+                        aid for aid in candidate_pool
                         if aid not in excl_accs and not is_account_in_cooldown(aid)[0]
                     ]
-                    if not avail_non_cd and allow_fallback:
+                    if not avail_non_cd:
+                        if allow_fallback:
+                            break
+                        avail_non_cd = [aid for aid in candidate_pool if aid not in excl_accs]
+                    if not avail_non_cd:
                         break
+
+                    # Chiếm quyền độc quyền 1 nick rảnh (chỉ 1 job SRT/nick tại 1 thời điểm -> tránh dồn 3 tab vào Acc #1)
+                    wait_slot = 45.0 if allow_fallback else 120.0
+                    locked_acc_slot = _acquire_srt_account_slot(
+                        candidate_pool=candidate_pool,
+                        preferred_acc_id=use_pref,
+                        excl_accs=excl_accs,
+                        wait_timeout_sec=wait_slot,
+                        should_stop_cb=should_stop_cb,
+                        logged_accs_priority=logged_accs,
+                    )
+                    if not locked_acc_slot:
+                        last_err = RuntimeError("Các tài khoản ChatGPT đang bận xử lý luồng SRT khác.")
+                        if allow_fallback:
+                            break
+                        raise last_err
 
                     sess = ChatGPTWebSession(
                         project_id=f"{ma_id}_SRT_SEO",
-                        acc_id=use_pref,
+                        acc_id=locked_acc_slot,
                         exclude_accs=excl_accs,
                     )
                     used_acc_id = sess.acc_id
@@ -829,15 +925,17 @@ def analyze_project_srt_with_chatgpt_sync(
                         project_id=ma_id,
                     )
 
-                    if not sess.open_session_tab(force_new_chat=True):
+                    # Tắt lock_thinking_medium=False để không ép Thinking Medium cho prompt phân tích SRT (nhanh gấp 3-5x, tránh treo 10p)
+                    if not sess.open_session_tab(force_new_chat=True, lock_thinking_medium=False):
                         raise RuntimeError(f"Không mở được tab ChatGPT trên {acc_lbl} (Cổng {sess.port})")
 
                     resp_text = sess.send_prompt_and_wait(
                         prompt_text,
                         step_label="SRT_TO_SEO_TIMESTAMPS",
-                        timeout_sec=360,
+                        timeout_sec=max(45, int(timeout_sec)),
                         progress_cb=(lambda st, ch: progress_cb(f"[{ma_id}] ChatGPT ({acc_lbl}) đang phân tích SRT ({ch:,} ký tự)...")) if progress_cb else None,
                         should_stop_cb=should_stop_cb,
+                        lock_thinking_medium=False,
                     )
 
                     parsed = parse_and_validate_srt_seo_response(
@@ -857,8 +955,9 @@ def analyze_project_srt_with_chatgpt_sync(
                         resp_retry = sess.send_prompt_and_wait(
                             repair_prompt,
                             step_label="SRT_TO_SEO_FORMAT_FIX",
-                            timeout_sec=240,
+                            timeout_sec=max(30, int(repair_timeout_sec)),
                             should_stop_cb=should_stop_cb,
+                            lock_thinking_medium=False,
                         )
                         parsed = parse_and_validate_srt_seo_response(
                             resp_retry,
@@ -894,6 +993,7 @@ def analyze_project_srt_with_chatgpt_sync(
                         project_id=ma_id,
                     )
                 finally:
+                    _release_srt_account_slot(locked_acc_slot or used_acc_id)
                     if sess is not None:
                         try:
                             sess.close_session_tab(keep_open=False)

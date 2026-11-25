@@ -122,6 +122,7 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
         auto_ensure_stock_hours: bool = True
         target_stock_hours: float = 30.0
         voice_config: Optional[Dict[str, Any]] = None
+        auto_srt_seo: Optional[bool] = None
 
     class StartBatchRequest(BaseModel):
         jobs: list[Dict[str, Any]]
@@ -136,6 +137,7 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
         auto_ensure_stock_hours: bool = True
         target_stock_hours: float = 30.0
         voice_config: Optional[Dict[str, Any]] = None
+        auto_srt_seo: Optional[bool] = None
 
     class YouTubeDownloadRequest(BaseModel):
         url: str
@@ -763,6 +765,16 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
     def api_adas_srt_to_seo_status():
         return {"success": True, **adas_engine.get_srt_to_seo_status()}
 
+    @app.get("/api/srt-seo-config")
+    def api_get_srt_seo_config():
+        return {"success": True, **pipeline.get_auto_srt_seo_info()}
+
+    @app.post("/api/srt-seo-config")
+    def api_set_srt_seo_config(payload: dict = None):
+        payload = payload or {}
+        enabled = bool(payload.get("auto_srt_seo", True))
+        return {"success": True, **pipeline.set_auto_srt_seo(enabled, persist=True)}
+
     @app.get("/api/license/status")
     def get_license_status():
         return license_mgr.get_license_status(check_online_time=False)
@@ -903,6 +915,7 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
             "gpu_name": gpu_name,
             "cuda_available": torch.cuda.is_available(),
             "performance_mode": pipeline.get_performance_mode_info(),
+            "auto_srt_seo": bool(pipeline.get_auto_srt_seo_info().get("auto_srt_seo", True)),
             "resolutions": [
                 {"id": "1920x1080", "label": "Full HD 1080p (1920x1080 - Khuyên dùng)", "default": True},
                 {"id": "2560x1440", "label": "2K Quad HD (2560x1440 - Siêu nét)", "default": False},
@@ -1128,6 +1141,7 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
             auto_ensure_stock_hours=req.auto_ensure_stock_hours,
             target_stock_hours=req.target_stock_hours,
             voice_config=req.voice_config,
+            auto_srt_seo=req.auto_srt_seo,
         )
         if not success:
             raise HTTPException(status_code=400, detail="Một dự án khác đang được xử lý.")
@@ -1154,6 +1168,7 @@ if ($f.ShowDialog($top) -eq [System.Windows.Forms.DialogResult]::OK) {{
             auto_ensure_stock_hours=req.auto_ensure_stock_hours,
             target_stock_hours=req.target_stock_hours,
             voice_config=req.voice_config,
+            auto_srt_seo=req.auto_srt_seo,
         )
         if not success:
             raise HTTPException(status_code=400, detail="Một tiến trình sản xuất khác đang chạy.")

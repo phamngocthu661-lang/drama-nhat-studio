@@ -5371,6 +5371,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 auto_ensure_stock_hours=bool(vcfg.get("auto_ensure_stock_hours", True)),
                 target_stock_hours=float(vcfg.get("target_stock_hours", 10.0)),
                 voice_config=vcfg.get("voice_config"),
+                auto_srt_seo=vcfg.get("auto_srt_seo"),
             )
 
         queued_ids = [j["name"] for j in jobs_to_push]

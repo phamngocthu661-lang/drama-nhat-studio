@@ -1357,7 +1357,7 @@ class ChatGPTWebSession:
         )
         return self.open_session_tab(force_new_chat=True)
 
-    def open_session_tab(self, force_new_chat: bool = True) -> bool:
+    def open_session_tab(self, force_new_chat: bool = True, lock_thinking_medium: bool = True) -> bool:
         """
         Cấp phát 1 Tab độc lập 100% cho `self.project_id` trên trình duyệt của `self.acc_id`.
         Sử dụng khóa `_ACC_TAB_LOCKS[self.acc_id]` để đảm bảo khi chạy 3 luồng song song,
@@ -1493,7 +1493,8 @@ class ChatGPTWebSession:
             if isinstance(st, dict):
                 if st.get("ready"):
                     time.sleep(0.4)
-                    self.ensure_thinking_effort_medium()
+                    if lock_thinking_medium:
+                        self.ensure_thinking_effort_medium()
                     return True
                 if st.get("blank") and tick in (0, 3, 8, 16):
                     _cdp_navigate(self.ws_url, CHATGPT_GUARD_URL, timeout=2.5)
@@ -1675,7 +1676,7 @@ class ChatGPTWebSession:
             )
         return res if isinstance(res, dict) else {"ok": False}
 
-    def start_fresh_chat(self, step_name: str = "") -> bool:
+    def start_fresh_chat(self, step_name: str = "", lock_thinking_medium: bool = True) -> bool:
         """
         Chuyển về ĐOẠN CHAT MỚI HOÀN TOÀN (New Chat) ngay trên Tab đang khóa của chính luồng này (`self.tab_id`),
         luôn duy trì chốt bảo vệ `#studio_login_guard` để không bao giờ bị tiến trình ngoài đóng Tab,
@@ -1747,7 +1748,8 @@ class ChatGPTWebSession:
                 none_nav_ticks = 0
                 if st.get("ready"):
                     time.sleep(0.4)
-                    self.ensure_thinking_effort_medium()
+                    if lock_thinking_medium:
+                        self.ensure_thinking_effort_medium()
                     return True
                 if not st.get("isFresh") and tick in (3, 10):
                     _cdp_navigate(self.ws_url, CHATGPT_GUARD_URL, timeout=2.5)
@@ -1874,6 +1876,7 @@ class ChatGPTWebSession:
         timeout_sec: int = 900,
         progress_cb: Optional[Callable[[str, int], None]] = None,
         should_stop_cb: Optional[Callable[[], bool]] = None,
+        lock_thinking_medium: bool = True,
     ) -> str:
         """
         Bơm prompt vào ô chat của ChatGPT Web, tự động khóa Thinking effort: Medium,
@@ -1947,8 +1950,9 @@ class ChatGPTWebSession:
         prev_backend_head = prev_backend_md[:120].strip() if prev_backend_md else ""
 
         if not already_streaming:
-            # BẮT BUỘC KHÓA MODEL VIẾT Ở CHẾ ĐỘ "Thinking effort: Medium" TRƯỚC MỖI LẦN GỬI LỆNH
-            self.ensure_thinking_effort_medium()
+            # BẮT BUỘC KHÓA MODEL VIẾT Ở CHẾ ĐỘ "Thinking effort: Medium" TRƯỚC MỖI LẦN GỬI LỆNH (nếu bật)
+            if lock_thinking_medium:
+                self.ensure_thinking_effort_medium()
 
             # Dùng ensure_ascii=True để mã hóa an toàn tuyệt đối mọi ký tự tiếng Nhật / Việt (\uXXXX)
             escaped_prompt_json = json.dumps(prompt_text, ensure_ascii=True)
@@ -2162,7 +2166,8 @@ class ChatGPTWebSession:
                         )
                         if has_box:
                             break
-                    self.ensure_thinking_effort_medium()
+                    if lock_thinking_medium:
+                        self.ensure_thinking_effort_medium()
             if not isinstance(inj_res, dict) or not inj_res.get("ok"):
                 raise RuntimeError(f"Không thể gửi lệnh vào ChatGPT ({self.cfg['label']}): {inj_res}")
 

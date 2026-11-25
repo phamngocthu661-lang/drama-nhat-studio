@@ -1,5 +1,32 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 26/11/2026 (Lần 56) — Gỡ Cổng Chặn ChatGPT SRT → SEO Khỏi Luồng Render MP4 (Tách Chạy Ngầm Sau Render + Công Tắc Bật/Tắt + Chống Dồn Nick)
+
+### 1. Vấn đề phát hiện
+- **Treo 100% dàn Render Video ở `49.5%` (`💬 ChatGPT SRT → SEO`)**: Giai đoạn 1.5 trong [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py) trước đây chạy đồng bộ chặn ngay giữa Giai đoạn 1 (Voice/SRT) và Giai đoạn 2..5 (Lấy Stock + Render FFmpeg MP4), làm toàn bộ 5 worker render đứng chờ ChatGPT dù FFmpeg hoàn toàn không cần file SEO.
+- **Dồn 3 luồng cùng vào `Acc #1` + ép `Thinking Medium` + Timeout ~10 phút/nick**: Nhiều video đồng thời chọn chung `Acc #1`, gửi 24.000 chữ với `ensure_thinking_effort_medium()` làm ChatGPT Web đứng tab suốt `360s + 240s`.
+- **Lỗi regex cắt số phút `>= 10`**: Biểu thức `_TS_CHAPTER_LINE_RE` trong [`backend/srt_seo_analyzer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py) dùng `[-•*・\d+\.]+` không bắt buộc dấu `.` nên ăn nhầm chữ số hàng chục của các mốc `10:00`, `25:00` thành `00:00` / `05:00`.
+
+### 2. Giải pháp kỹ thuật & Các file đã nâng cấp
+1. **Tách `SRT → SEO ChatGPT` ra khỏi đường Render Video ([`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py))**:
+   - Gỡ bỏ hoàn toàn lời gọi ChatGPT chặn trước Giai đoạn 2: ngay sau Giai đoạn 1 (Voice + SRT), chỉ tạo nhanh `assets/TIMESTAMPS.txt` nội bộ (`< 0.05s`) nếu chưa có rồi đẩy thẳng sang Giai đoạn 2..5 (**FFmpeg Render MP4 đạt 100% tốc độ ngay lập tức**).
+   - Bổ sung hàng đợi chạy ngầm độc lập SAU KHI Giai đoạn 5 xuất xong MP4 ([`_enqueue_post_render_srt_seo_job()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py) & [`_run_post_render_srt_seo_worker()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py)): giải phóng worker GPU/FFmpeg ngay lập tức sang video tiếp theo, còn ChatGPT chạy ngầm tách biệt ở hậu trường và tự cập nhật thẳng SEO khi hoàn thành.
+   - Thêm [`get_auto_srt_seo_info()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py), [`set_auto_srt_seo()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py) (lưu bền vào `config.json`) và tham số `auto_srt_seo: Optional[bool] = None` ở `start_batch_production_async()`.
+2. **Tối ưu phân bổ 5 nick ChatGPT & sửa regex Timestamps ([`backend/chatgpt_web_client.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/chatgpt_web_client.py), [`backend/srt_seo_analyzer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py))**:
+   - Thêm tùy chọn `lock_thinking_medium: bool = True` cho `open_session_tab()`, `start_fresh_chat()` và `send_prompt_and_wait()` (mặc định `True` cho viết kịch bản; truyền `False` khi phân tích SRT để không ép Thinking Medium).
+   - Bổ sung khóa độc quyền 1 job SRT/1 nick ([`_acquire_srt_account_slot()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py) & [`_release_srt_account_slot()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py)) ưu tiên xoay vòng qua các nick đang mở (`Acc #1..#5`), nén digest `18.000` ký tự, hạ timeout còn `135s` (+`90s` sửa format), thử tối đa 2 nick khi `allow_fallback=True` trước khi tự fallback, và hỗ trợ đồng bộ qua `renders/video_location.json` ra thư mục Video Cuối.
+   - Vá chuẩn regex `_TS_CHAPTER_LINE_RE` thành `(?:[-•*・]+|\d+[\.\)])\s*` để giữ nguyên 100% mốc từ phút thứ `10:00` trở đi.
+3. **API & Công tắc Bật/Tắt trên giao diện Render ([`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py), [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py), [`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html), [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js))**:
+   - Thêm API `GET/POST /api/srt-seo-config` + field `auto_srt_seo` vào `/api/config`, `StartRequest`, `StartBatchRequest`, `start_render_video_for_ideas_async()`.
+   - Thêm công tắc `#render-auto-srt-seo` (`ĐANG BẬT` / `ĐANG TẮT`) ngay phía trên nút **BẮT ĐẦU SẢN XUẤT 1-CLICK** và thanh `#srt-seo-bg-status-bar` hiển thị hàng đợi ngầm sau Render (`app.js?v=20261126_v12`).
+
+### 3. Kết quả kiểm thử
+- `py_compile` & `node --check frontend/app.js`: **PASS (`exit code 0`)**.
+- `code_ontology_guard.py verify`: **`STATUS: PASS`** (`62/62` file Python, 0 đứt gãy, 100% tương thích ngược).
+- E2E tests [`test_srt_seo_e2e.py`](file:///C:/Users/hungp/.gemini/antigravity/brain/963c6656-0a52-4e1f-ac09-444368d2de18/scratch/test_srt_seo_e2e.py) (**6/6 PASS**) & [`test_nonblocking_srt_seo_v56.py`](file:///C:/Users/hungp/.gemini/antigravity/brain/963c6656-0a52-4e1f-ac09-444368d2de18/scratch/test_nonblocking_srt_seo_v56.py) (**2/2 PASS**: phân bổ đều nhiều nick, serialize 1 tab/nick khi chỉ có 1 nick, tắt Thinking Medium, hàng đợi nền sau Render & API config).
+
+---
+
 ## Cập nhật: 21/11/2026 (Lần 55) — Tự Động & Thủ Công Chuyển File `subtitles.srt` Qua ChatGPT Phân Tích, Tối Ưu Mô Tả & Bổ Sung Timestamps Vào File SEO
 
 ### 1. Yêu cầu của người dùng

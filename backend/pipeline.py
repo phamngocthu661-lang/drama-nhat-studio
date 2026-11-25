@@ -256,9 +256,15 @@ class ProductionPipeline:
             "performance_mode": "full_100",
         }
         self.subscribers: list[Callable[[Dict[str, Any]], None]] = []
+        self.auto_srt_seo: bool = True
+        self._srt_seo_bg_lock = threading.Lock()
+        self._srt_seo_bg_queue: List[Dict[str, Any]] = []
+        self._srt_seo_bg_active: set[str] = set()
+        self._srt_seo_bg_worker_running: bool = False
 
-        # Khôi phục chế độ hiệu suất (100% hoặc 70%) đã lưu trong config.json
+        # Khôi phục chế độ hiệu suất (100% hoặc 70%) và tùy chọn Tự động SRT -> SEO đã lưu trong config.json
         self._init_performance_mode_from_config()
+        self._init_auto_srt_seo_from_config()
 
         # BẬT NGAY SERVER VOICE GPU KHI ỨNG DỤNG KHỞI ĐỘNG!
         threading.Thread(target=self._auto_start_gpu_server_on_boot, daemon=True).start()
@@ -275,6 +281,16 @@ class ProductionPipeline:
                 self.paused_for_perf_downscale = set()
             if "voice_synth_lock" not in self.__dict__:
                 self.voice_synth_lock = threading.Lock()
+            if "_srt_seo_bg_lock" not in self.__dict__:
+                self._srt_seo_bg_lock = threading.Lock()
+            if "_srt_seo_bg_queue" not in self.__dict__:
+                self._srt_seo_bg_queue = []
+            if "_srt_seo_bg_active" not in self.__dict__:
+                self._srt_seo_bg_active = set()
+            if "_srt_seo_bg_worker_running" not in self.__dict__:
+                self._srt_seo_bg_worker_running = False
+            if "auto_srt_seo" not in self.__dict__:
+                self._init_auto_srt_seo_from_config()
 
             env_mode = os.environ.get("STUDIO_PERF_MODE", "").strip().lower()
             if env_mode in ("full_100", "work_70"):
@@ -328,6 +344,153 @@ class ProductionPipeline:
             except Exception:
                 pass
         self.set_performance_mode(saved_mode, persist=False)
+
+    def _init_auto_srt_seo_from_config(self):
+        cfg_file = getattr(self, "root_dir", Path(".")) / "config.json"
+        enabled = True
+        if cfg_file.exists():
+            try:
+                cfg = json.loads(cfg_file.read_text(encoding="utf-8"))
+                if "auto_srt_seo" in cfg:
+                    enabled = bool(cfg.get("auto_srt_seo"))
+            except Exception:
+                pass
+        self.auto_srt_seo = enabled
+
+    def get_auto_srt_seo_info(self) -> Dict[str, Any]:
+        self._ensure_hot_reload_compat()
+        with self._srt_seo_bg_lock:
+            pending_ids = [str(x.get("ma_id") or "") for x in self._srt_seo_bg_queue if x.get("ma_id")]
+            active_ids = sorted(self._srt_seo_bg_active)
+        return {
+            "auto_srt_seo": bool(getattr(self, "auto_srt_seo", True)),
+            "bg_worker_running": bool(getattr(self, "_srt_seo_bg_worker_running", False)),
+            "pending_count": len(pending_ids),
+            "pending_ids": pending_ids,
+            "active_count": len(active_ids),
+            "active_ids": active_ids,
+        }
+
+    def set_auto_srt_seo(self, enabled: bool, persist: bool = True) -> Dict[str, Any]:
+        self._ensure_hot_reload_compat()
+        val = bool(enabled)
+        self.auto_srt_seo = val
+        with self.lock:
+            self.state["auto_srt_seo"] = val
+        if persist:
+            cfg_file = getattr(self, "root_dir", Path(".")) / "config.json"
+            try:
+                cfg = json.loads(cfg_file.read_text(encoding="utf-8")) if cfg_file.exists() else {}
+                cfg["auto_srt_seo"] = val
+                cfg_file.write_text(json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+            log_info(
+                "SEO",
+                f"⏱️ Đã {'BẬT' if val else 'TẮT'} tự động chạy nền ChatGPT SRT → SEO & Timestamps sau khi Render xong MP4.",
+            )
+        return self.get_auto_srt_seo_info()
+
+    def _enqueue_post_render_srt_seo_job(
+        self,
+        proj_dir: Path,
+        ma_id: str,
+        srt_path: Path,
+        final_proj_dir: Path,
+        force: bool = False,
+    ) -> None:
+        self._ensure_hot_reload_compat()
+        with self._srt_seo_bg_lock:
+            if ma_id in self._srt_seo_bg_active or any(x.get("ma_id") == ma_id for x in self._srt_seo_bg_queue):
+                return
+            self._srt_seo_bg_queue.append(
+                {
+                    "proj_dir": Path(proj_dir),
+                    "ma_id": ma_id,
+                    "srt_path": Path(srt_path),
+                    "final_proj_dir": Path(final_proj_dir),
+                    "force": bool(force),
+                }
+            )
+            should_spawn = not self._srt_seo_bg_worker_running
+            if should_spawn:
+                self._srt_seo_bg_worker_running = True
+        if should_spawn:
+            threading.Thread(target=self._run_post_render_srt_seo_worker, daemon=True).start()
+
+    def _run_post_render_srt_seo_worker(self) -> None:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _process_one_bg(item: Dict[str, Any]) -> None:
+            mid = item["ma_id"]
+            with self._srt_seo_bg_lock:
+                self._srt_seo_bg_active.add(mid)
+            try:
+                if self.should_stop:
+                    return
+                from .srt_seo_analyzer import analyze_project_srt_with_chatgpt_sync
+
+                adas_ref = getattr(self, "adas_engine", None)
+                idea_rec = None
+                if adas_ref is not None and hasattr(adas_ref, "load_saved_ideas"):
+                    try:
+                        idea_rec = next(
+                            (it for it in adas_ref.load_saved_ideas() if it.get("ma_id") == mid),
+                            None,
+                        )
+                    except Exception:
+                        idea_rec = None
+
+                res = analyze_project_srt_with_chatgpt_sync(
+                    proj_dir=item["proj_dir"],
+                    ma_id=mid,
+                    srt_path=item["srt_path"],
+                    final_proj_dir=item["final_proj_dir"],
+                    locked_title=str((idea_rec or {}).get("locked_title") or ""),
+                    idea=idea_rec,
+                    force=bool(item.get("force", False)),
+                    allow_fallback=True,
+                    should_stop_cb=lambda: bool(self.should_stop),
+                )
+                if adas_ref is not None and hasattr(adas_ref, "_update_idea_record"):
+                    adas_ref._update_idea_record(
+                        mid,
+                        has_srt=True,
+                        has_seo=True,
+                        has_srt_seo=bool(res and res.get("source") == "chatgpt_web"),
+                    )
+            except InterruptedError:
+                pass
+            except Exception as e_bg:
+                log_warn(f"⚠️ [{mid}] Lưu ý khi chạy nền SRT → SEO sau Render: {e_bg}", category="SEO", project_id=mid)
+            finally:
+                with self._srt_seo_bg_lock:
+                    self._srt_seo_bg_active.discard(mid)
+
+        try:
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                pending_futs = []
+                while True:
+                    next_item = None
+                    with self._srt_seo_bg_lock:
+                        if self.should_stop:
+                            self._srt_seo_bg_queue.clear()
+                            break
+                        if self._srt_seo_bg_queue:
+                            next_item = self._srt_seo_bg_queue.pop(0)
+                    if next_item is not None:
+                        pending_futs.append(pool.submit(_process_one_bg, next_item))
+                        continue
+                    pending_futs = [f for f in pending_futs if not f.done()]
+                    if not pending_futs:
+                        with self._srt_seo_bg_lock:
+                            if not self._srt_seo_bg_queue:
+                                break
+                        continue
+                    time.sleep(0.5)
+        finally:
+            with self._srt_seo_bg_lock:
+                self._srt_seo_bg_worker_running = False
 
     def get_performance_mode_info(self) -> Dict[str, Any]:
         self._ensure_hot_reload_compat()
@@ -558,6 +721,10 @@ class ProductionPipeline:
             self.state["active_count"] = len(self.active_jobs_detail)
             self.state["pending_count"] = len(self.pending_jobs)
             self.state["completed_count"] = len(self.state.get("results") or [])
+            self.state["auto_srt_seo"] = bool(getattr(self, "auto_srt_seo", True))
+            with self._srt_seo_bg_lock:
+                self.state["srt_seo_bg_pending"] = len(self._srt_seo_bg_queue)
+                self.state["srt_seo_bg_active"] = sorted(self._srt_seo_bg_active)
             snapshot = dict(self.state)
 
         for cb in self.subscribers:
@@ -577,6 +744,10 @@ class ProductionPipeline:
             self.state["active_count"] = len(self.active_jobs_detail)
             self.state["pending_count"] = len(self.pending_jobs)
             self.state["completed_count"] = len(self.state.get("results") or [])
+            self.state["auto_srt_seo"] = bool(getattr(self, "auto_srt_seo", True))
+            with self._srt_seo_bg_lock:
+                self.state["srt_seo_bg_pending"] = len(self._srt_seo_bg_queue)
+                self.state["srt_seo_bg_active"] = sorted(self._srt_seo_bg_active)
             return dict(self.state)
 
     def stop(self):
@@ -601,6 +772,7 @@ class ProductionPipeline:
         auto_ensure_stock_hours: bool = True,
         target_stock_hours: float = 30.0,
         voice_config: Optional[Dict[str, Any]] = None,
+        auto_srt_seo: Optional[bool] = None,
     ) -> bool:
         """
         Bắt đầu chạy danh sách kịch bản hoặc tự động bơm thẳng vào Pool Đa Luồng nếu dây chuyền đang chạy!
@@ -614,9 +786,15 @@ class ProductionPipeline:
         if isinstance(voice_config, dict) and voice_config.get("performance_mode") in ("full_100", "work_70"):
             self.set_performance_mode(voice_config["performance_mode"], persist=True)
 
+        # Đồng bộ tùy chọn Tự động phân tích SRT -> SEO sau khi Render xong (nếu UI gửi kèm)
+        if auto_srt_seo is not None:
+            self.set_auto_srt_seo(bool(auto_srt_seo), persist=True)
+        elif isinstance(voice_config, dict) and "auto_srt_seo" in voice_config:
+            self.set_auto_srt_seo(bool(voice_config.get("auto_srt_seo")), persist=True)
+
         # Lưu cấu hình Voice mới nhất từ giao diện ngay khi bấm Render
         if isinstance(voice_config, dict) and voice_config:
-            clean_vcfg = {k: v for k, v in voice_config.items() if k != "performance_mode"}
+            clean_vcfg = {k: v for k, v in voice_config.items() if k not in ("performance_mode", "auto_srt_seo")}
             saved_vcfg = save_voice_config(clean_vcfg)
             log_info(
                 "VOICE",
@@ -629,6 +807,8 @@ class ProductionPipeline:
         for j in jobs:
             if not isinstance(j.get("voice_config"), dict):
                 j["voice_config"] = dict(saved_vcfg)
+            if "auto_srt_seo" not in j:
+                j["auto_srt_seo"] = bool(getattr(self, "auto_srt_seo", True))
 
         with self.lock:
             if self.is_running:
@@ -1188,80 +1368,31 @@ class ProductionPipeline:
                         raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
                     # ==========================================================
-                    # GIAI ĐOẠN 1.5: SAU KHI CHẠY FILE SRT -> CHUYỂN QUA CHATGPT
-                    # PHÂN TÍCH VÀ BỔ SUNG MÔ TẢ + TIMESTAMPS VÀO FILE SEO
+                    # GIAI ĐOẠN 1.5 (KHÔNG CHẶN RENDER): Chuẩn bị nhanh TIMESTAMPS.txt từ SRT
+                    # (<0.05s) để đi thẳng vào Giai đoạn 2..5 (Render Video MP4).
+                    # Việc gửi ChatGPT phân tích SRT -> SEO sẽ chạy nền SAU KHI Render xong MP4!
                     # ==========================================================
                     srt_file_path = Path(voice_res.get("subtitles_srt") or (assets_dir / "subtitles.srt"))
                     if srt_file_path.exists() and srt_file_path.stat().st_size > 30:
-                        self._set_project_live_detail(
-                            proj_name=proj_name,
-                            stage="srt_seo",
-                            stage_label="💬 ChatGPT SRT → SEO",
-                            progress=49.0,
-                            detail="Đang chuyển subtitles.srt sang ChatGPT phân tích Mô tả & Timestamps...",
-                            job_num=job_num,
-                        )
-                        _update_overall_progress(
-                            f"[{proj_name}] 💬 Đã chạy xong SRT -> ChatGPT đang phân tích & bổ sung Timestamps vào SEO...",
-                            "srt_seo",
-                        )
-                        self._update_job_card_status(
-                            proj_name,
-                            "VIDEO_RENDERING",
-                            "💬 Đã xong SRT -> ChatGPT đang phân tích & bổ sung Timestamps vào SEO...",
-                        )
                         try:
-                            from .srt_seo_analyzer import analyze_project_srt_with_chatgpt_sync
-
-                            adas_ref = getattr(self, "adas_engine", None)
-                            idea_rec = None
-                            if adas_ref is not None and hasattr(adas_ref, "load_saved_ideas"):
-                                try:
-                                    idea_rec = next(
-                                        (it for it in adas_ref.load_saved_ideas() if it.get("ma_id") == proj_name),
-                                        None,
-                                    )
-                                except Exception:
-                                    idea_rec = None
-
-                            srt_seo_res = analyze_project_srt_with_chatgpt_sync(
-                                proj_dir=proj_dir,
-                                ma_id=proj_name,
-                                srt_path=srt_file_path,
-                                final_proj_dir=final_proj_dir,
-                                locked_title=str((idea_rec or {}).get("locked_title") or ""),
-                                idea=idea_rec,
-                                force=bool(job.get("force_srt_seo", False)),
-                                allow_fallback=True,
-                                progress_cb=lambda m: self._set_project_live_detail(
-                                    proj_name=proj_name,
-                                    stage="srt_seo",
-                                    stage_label="💬 ChatGPT SRT → SEO",
-                                    progress=49.5,
-                                    detail=m,
-                                    job_num=job_num,
-                                ),
-                                should_stop_cb=lambda: bool(
-                                    self.should_stop or proj_name in getattr(self, "paused_for_perf_downscale", set())
-                                ),
-                            )
-                            if srt_seo_res and srt_seo_res.get("timestamps_path"):
-                                voice_res["timestamps_txt"] = srt_seo_res["timestamps_path"]
-                            if adas_ref is not None and hasattr(adas_ref, "_update_idea_record"):
-                                adas_ref._update_idea_record(
-                                    proj_name,
-                                    has_srt=True,
-                                    has_seo=True,
-                                    has_srt_seo=bool(srt_seo_res and srt_seo_res.get("source") == "chatgpt_web"),
+                            from .srt_seo_analyzer import build_fallback_srt_timestamps_and_description
+                            ts_dest = assets_dir / "TIMESTAMPS.txt"
+                            if not ts_dest.exists() or ts_dest.stat().st_size < 10:
+                                quick_fb = build_fallback_srt_timestamps_and_description(
+                                    srt_path=srt_file_path,
+                                    locked_title=proj_name,
                                 )
-                        except InterruptedError:
-                            raise
-                        except Exception as e_srt_seo:
-                            log_warn(
-                                f"⚠️ [{proj_name}] Lưu ý khi ChatGPT phân tích SRT -> SEO: {e_srt_seo}",
-                                category="SEO",
-                                project_id=proj_name,
-                            )
+                                if quick_fb.get("timestamps_txt"):
+                                    ts_dest.write_text(quick_fb["timestamps_txt"].strip() + "\n", encoding="utf-8")
+                                    voice_res["timestamps_txt"] = str(ts_dest)
+                        except Exception:
+                            pass
+                        try:
+                            adas_ref = getattr(self, "adas_engine", None)
+                            if adas_ref is not None and hasattr(adas_ref, "_update_idea_record"):
+                                adas_ref._update_idea_record(proj_name, has_srt=True)
+                        except Exception:
+                            pass
 
                     if self.should_stop:
                         raise InterruptedError("Đã dừng tiến trình Render theo yêu cầu")
@@ -1739,6 +1870,26 @@ class ProductionPipeline:
                         category="RENDER",
                         project_id=proj_name,
                     )
+
+                    # CHẠY NỀN TÁCH LUỒNG SAU KHI XUẤT XONG MP4: Không bao giờ chặn tốc độ Render Video kế tiếp!
+                    eff_auto_srt_seo = (
+                        bool(job["auto_srt_seo"])
+                        if "auto_srt_seo" in job
+                        else bool(getattr(self, "auto_srt_seo", True))
+                    )
+                    if eff_auto_srt_seo and srt_file_path.exists() and srt_file_path.stat().st_size > 30 and not self.should_stop:
+                        self._enqueue_post_render_srt_seo_job(
+                            proj_dir=proj_dir,
+                            ma_id=proj_name,
+                            srt_path=srt_file_path,
+                            final_proj_dir=final_proj_dir,
+                            force=bool(job.get("force_srt_seo", False)),
+                        )
+                        log_info(
+                            f"⏱️ [{proj_name}] Đã đẩy phân tích SRT → ChatGPT SEO & Timestamps vào hàng đợi chạy ngầm sau Render!",
+                            category="SEO",
+                            project_id=proj_name,
+                        )
 
                 except InterruptedError as yield_err:
                     try:
@@ -2225,6 +2376,19 @@ def _auto_patch_live_instances_on_reload():
                     return JSONResponse({"success": False, "detail": "ADAS Engine not found"}, status_code=500)
                 return JSONResponse({"success": True, **main_adas.get_srt_to_seo_status()})
 
+            async def _dynamic_srt_seo_config_handler(request):
+                if main_pipeline is None:
+                    return JSONResponse({"success": False, "detail": "Pipeline not found"}, status_code=500)
+                if request.method == "POST":
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        body = {}
+                    enabled_val = bool(body.get("auto_srt_seo", True)) if isinstance(body, dict) else True
+                    info = main_pipeline.set_auto_srt_seo(enabled_val, persist=True)
+                    return JSONResponse({"success": True, **info})
+                return JSONResponse({"success": True, **main_pipeline.get_auto_srt_seo_info()})
+
             for f_app in live_fastapi_apps:
                 try:
                     routes_list = getattr(getattr(f_app, "router", None), "routes", None)
@@ -2246,8 +2410,17 @@ def _auto_patch_live_instances_on_reload():
                                 "/api/storage-paths",
                                 "/api/adas/srt-to-seo",
                                 "/api/adas/srt-to-seo/status",
+                                "/api/srt-seo-config",
                             )
                         ]
+                        routes_list.insert(
+                            0,
+                            Route(
+                                "/api/srt-seo-config",
+                                endpoint=_dynamic_srt_seo_config_handler,
+                                methods=["GET", "POST"],
+                            ),
+                        )
                         routes_list.insert(
                             0,
                             Route(

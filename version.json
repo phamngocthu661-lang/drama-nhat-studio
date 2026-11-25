@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.8",
-  "build_number": 121,
-  "released_at": "2026-11-25 16:01:09",
+  "version": "V1.0.9",
+  "build_number": 122,
+  "released_at": "2026-11-26 02:27:30",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Ưu tiên sản xuất kịch bản tối đa: trong lúc viết, Thumbnail chỉ vẽ 1 lần, lỗi thì bỏ qua và chuyển ngay sang tiêu đề tiếp theo (không giữ nick để vẽ lại). 2. Thumbnail còn thiếu được tạo bù SAU KHI viết xong các kịch bản, song song trên các nick ChatGPT; bấm Chạy Tiếp thêm tiêu đề thì ưu tiên viết kịch bản trước rồi mới tạo bù tiếp. 3. Thumbnail tạo bù sau khi video đã render sẽ tự chép sang thư mục chứa video."
+  "changelog": "1. Sửa triệt để lỗi treo dàn Render Video ở 49.5% (ChatGPT SRT -> SEO): tách phân tích SRT sang hàng đợi chạy ngầm SAU KHI xuất xong Video MP4 (không bao giờ chặn GPU/CPU FFmpeg Render). 2. Thêm công tắc Bật/Tắt ngay trên giao diện Render cùng thanh theo dõi hàng đợi ngầm. 3. Tối ưu SRT -> SEO: khóa 1 job/1 nick chia đều qua 5 nick ChatGPT (không dồn Acc #1), tắt ép Thinking Medium, hạ timeout xuống 135s và sửa lỗi regex cắt mốc phút >= 10:00."
 }

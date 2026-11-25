@@ -685,6 +685,49 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function syncAutoSrtSeoUI(enabled) {
+    const val = Boolean(enabled);
+    const chk = document.getElementById("render-auto-srt-seo");
+    const badge = document.getElementById("render-auto-srt-seo-badge");
+    if (chk) chk.checked = val;
+    if (badge) {
+      badge.innerText = val ? "ĐANG BẬT" : "ĐANG TẮT";
+      badge.className = val
+        ? "px-2 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-400/30 font-mono text-[10px] font-bold shrink-0"
+        : "px-2 py-0.5 rounded bg-surface-container-high text-on-surface-variant border border-outline-variant/30 font-mono text-[10px] font-bold shrink-0";
+    }
+    try {
+      localStorage.setItem("studio_auto_srt_seo", val ? "1" : "0");
+    } catch (_) {}
+  }
+
+  function setupAutoSrtSeoToggle() {
+    const chk = document.getElementById("render-auto-srt-seo");
+    if (!chk) return;
+    const saved = localStorage.getItem("studio_auto_srt_seo");
+    if (saved === "0" || saved === "1") {
+      syncAutoSrtSeoUI(saved === "1");
+    }
+    chk.addEventListener("change", async () => {
+      const enabled = Boolean(chk.checked);
+      syncAutoSrtSeoUI(enabled);
+      try {
+        await fetch("/api/srt-seo-config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auto_srt_seo: enabled }),
+        });
+      } catch (_) {}
+      appendInstantLogToUI(
+        enabled
+          ? "⏱️ Đã BẬT tự động gửi subtitles.srt qua ChatGPT SEO sau khi Render xong MP4 (Chạy ngầm — Không chặn tốc độ Render)."
+          : "⏸️ Đã TẮT tự động gửi SRT qua ChatGPT khi Render (Chỉ tạo nhanh TIMESTAMPS.txt nội bộ; vẫn có thể bấm nút ⏱️ SEO thủ công).",
+        "SEO",
+        "INFO"
+      );
+    });
+  }
+
   // 4. Load Config từ Backend
   async function loadConfig() {
     try {
@@ -693,6 +736,18 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.gpu_name) {
         const gpuEl = document.getElementById("gpu-name");
         if (gpuEl) gpuEl.innerText = data.gpu_name;
+      }
+      if (typeof data.auto_srt_seo === "boolean") {
+        const savedPref = localStorage.getItem("studio_auto_srt_seo");
+        const effVal = (savedPref === "0" || savedPref === "1") ? (savedPref === "1") : data.auto_srt_seo;
+        syncAutoSrtSeoUI(effVal);
+        if ((savedPref === "0" || savedPref === "1") && effVal !== data.auto_srt_seo) {
+          fetch("/api/srt-seo-config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ auto_srt_seo: effVal }),
+          }).catch(() => {});
+        }
       }
       if (data.storage_paths) {
         syncStoragePathsToUI(data.storage_paths);
@@ -1502,6 +1557,7 @@ document.addEventListener("DOMContentLoaded", () => {
           delete_used_stocks: shouldDeleteUsedStocks,
           auto_ensure_stock_hours: shouldAutoEnsureStock,
           target_stock_hours: targetStockHours,
+          auto_srt_seo: (document.getElementById("render-auto-srt-seo") ? document.getElementById("render-auto-srt-seo").checked : true),
           voice_config: getCurrentVoiceConfigFromUI()
         };
       } else {
@@ -1523,6 +1579,7 @@ document.addEventListener("DOMContentLoaded", () => {
           delete_used_stocks: shouldDeleteUsedStocks,
           auto_ensure_stock_hours: shouldAutoEnsureStock,
           target_stock_hours: targetStockHours,
+          auto_srt_seo: (document.getElementById("render-auto-srt-seo") ? document.getElementById("render-auto-srt-seo").checked : true),
           voice_config: getCurrentVoiceConfigFromUI()
         };
       }
@@ -1724,6 +1781,21 @@ document.addEventListener("DOMContentLoaded", () => {
       btnProduce.disabled = false;
       btnProduce.style.opacity = "1";
       renderActiveVideoJobBoxes([]);
+    }
+
+    const srtBgBar = document.getElementById("srt-seo-bg-status-bar");
+    if (srtBgBar) {
+      const bgActive = Array.isArray(state.srt_seo_bg_active) ? state.srt_seo_bg_active : [];
+      const bgPending = Number(state.srt_seo_bg_pending || 0);
+      if (bgActive.length > 0 || bgPending > 0) {
+        srtBgBar.classList.remove("hidden");
+        srtBgBar.classList.add("flex");
+        const actStr = bgActive.length > 0 ? bgActive.join(", ") : "Đang chuẩn bị";
+        srtBgBar.innerHTML = `<span>⏱️ Hàng đợi ngầm ChatGPT SRT → SEO (sau Render): <b class="text-primary">${actStr}</b></span><span>Chờ: ${bgPending}</span>`;
+      } else {
+        srtBgBar.classList.add("hidden");
+        srtBgBar.classList.remove("flex");
+      }
     }
   }
 
@@ -2016,6 +2088,7 @@ document.addEventListener("DOMContentLoaded", () => {
       auto_ensure_stock_hours: autoEnsureStock ? autoEnsureStock.checked : true,
       target_stock_hours: targetStockHoursInput ? parseFloat(targetStockHoursInput.value) || 30.0 : 30.0,
       performance_mode: activePerfMode,
+      auto_srt_seo: (document.getElementById("render-auto-srt-seo") ? document.getElementById("render-auto-srt-seo").checked : true),
       voice_config: getCurrentVoiceConfigFromUI()
     };
   }
@@ -4817,4 +4890,5 @@ Capacity: PASS`;
   setupWindowCloseAutoShutdown();
   setupGithubOtaAutoUpdater();
   setupPerformanceModeSelector();
+  setupAutoSrtSeoToggle();
 });
