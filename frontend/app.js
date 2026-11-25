@@ -2244,6 +2244,8 @@ document.addEventListener("DOMContentLoaded", () => {
       const isRunning = (it.status === "RUNNING" || (it.status === "VIDEO_RENDERING" && isVideoRenderingNow) || isVideoRenderingNow) && !hasMp4;
       const hasThumb = !!it.has_thumbnail;
       const hasSeo = !!it.has_seo;
+      const hasSrt = !!it.has_srt;
+      const hasSrtSeo = !!it.has_srt_seo;
 
       let statusPill = `<span class="px-1.5 py-0.5 rounded bg-surface-container text-on-surface-variant text-[10px] font-mono shrink-0">⏳ Chưa xong</span>`;
       if (hasMp4) {
@@ -2284,6 +2286,9 @@ document.addEventListener("DOMContentLoaded", () => {
             `}
             ${(hasScript && !hasThumb) ? `
               <button type="button" class="btn-idea-thumb px-1.5 py-0.5 rounded bg-surface-container hover:bg-surface-bright text-secondary border border-outline-variant/30 text-[10px] transition-all" data-id="${maId}" title="Tạo Thumbnail">🖼</button>
+            ` : ""}
+            ${hasSrt ? `
+              <button type="button" class="btn-idea-srt-seo px-1.5 py-0.5 rounded ${hasSrtSeo ? "bg-cyan-500/15 hover:bg-cyan-500/30 text-cyan-300 border-cyan-400/40" : "bg-cyan-500/25 hover:bg-cyan-500/40 text-cyan-200 border-cyan-400/60 font-bold"} border text-[10px] transition-all" data-id="${maId}" title="${hasSrtSeo ? "Đã bổ sung Timestamps & Mô tả chuẩn từ SRT qua ChatGPT — Bấm để phân tích lại" : "Chuyển subtitles.srt qua ChatGPT phân tích, tối ưu Mô tả tiếng Nhật & bổ sung Timestamps vào file SEO"}">${hasSrtSeo ? "⏱️✓" : "⏱️ SEO"}</button>
             ` : ""}
             <button type="button" class="btn-idea-view p-1 rounded bg-surface-container hover:bg-surface-bright text-on-surface-variant hover:text-on-surface border border-outline-variant/30 transition-all" data-id="${maId}" title="Xem Chi Tiết Kịch Bản & SEO">
               <span class="material-symbols-outlined text-[13px]">visibility</span>
@@ -2380,6 +2385,14 @@ document.addEventListener("DOMContentLoaded", () => {
             btn.innerText = origText;
           }, 1500);
         }
+      });
+    });
+
+    listEl.querySelectorAll(".btn-idea-srt-seo").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const mid = btn.dataset.id;
+        if (!mid) return;
+        await triggerSrtToSeoBatch([mid], btn, true, false);
       });
     });
 
@@ -2584,10 +2597,163 @@ document.addEventListener("DOMContentLoaded", () => {
         alert(data.detail || "Không thể khởi chạy Agent!");
         return;
       }
+      if (data.message) {
+        // mode "added": dây chuyền đang chạy -> các mã vừa bấm được nạp thêm vào hàng đợi (Chạy Tiếp)
+        appendInstantLogToUI(data.message, "SCRIPT", "INFO");
+      }
       await loadSavedIdeas();
       await fetchSystemLogs();
     } catch (e) {
       alert("Lỗi khởi chạy dây chuyền Agent: " + e.message);
+    }
+  }
+
+  let srtToSeoPollActive = false;
+
+  async function triggerSrtToSeoBatch(maIds = null, triggerBtn = null, force = true, allowFallback = false) {
+    if (srtToSeoPollActive) {
+      alert("⏳ Hệ thống đang phân tích SRT → SEO ChatGPT cho một lô khác. Vui lòng đợi hoàn tất!");
+      return;
+    }
+
+    const isBatchAll = !Array.isArray(maIds) || maIds.length === 0;
+    let effectiveForce = !!force;
+    if (isBatchAll) {
+      if (!confirm(
+        "⏱️ CHUYỂN FILE .SRT QUA CHATGPT PHÂN TÍCH MÔ TẢ & TIMESTAMPS SEO?\n\n" +
+        "• Hệ thống sẽ đọc file subtitles.srt của các dự án trong kho, gửi qua ChatGPT Web để tối ưu Mô tả tiếng Nhật (YOUTUBE_DESCRIPTION_JA) và chèn Timestamps/Chapters chuẩn theo thời lượng video.\n" +
+        "• Giữ nguyên 100% LOCKED_TITLE gốc, cập nhật thẳng vào 00_TIEU_DE_VA_SEO_YOUTUBE.txt và renders/{ID}_SEO.txt.\n\n" +
+        "Bấm OK để bắt đầu!"
+      )) {
+        return;
+      }
+    }
+
+    const allBatchBtns = [triggerBtn, document.getElementById("btn-adas-srt-to-seo-all"), document.getElementById("btn-adas-modal-srt-seo")]
+      .filter((b, idx, arr) => b && arr.indexOf(b) === idx);
+    let modalRefreshed = false;
+    const origHtmlMap = new Map();
+    const restoreButtons = () => {
+      allBatchBtns.forEach((b) => {
+        b.disabled = false;
+        if (modalRefreshed && b.id === "btn-adas-modal-srt-seo") {
+          return;
+        }
+        if (origHtmlMap.has(b)) {
+          b.innerHTML = origHtmlMap.get(b);
+        }
+      });
+    };
+
+    allBatchBtns.forEach((b) => {
+      origHtmlMap.set(b, b.innerHTML);
+      b.disabled = true;
+      b.innerText = "⏳ Đang gửi ChatGPT...";
+    });
+
+    srtToSeoPollActive = true;
+    try {
+      const startPost = async (forceFlag) => {
+        const res = await fetch("/api/adas/srt-to-seo", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            ma_ids: isBatchAll ? null : maIds,
+            force: forceFlag,
+            allow_fallback: !!allowFallback
+          })
+        });
+        const data = await res.json().catch(() => ({}));
+        return { res, data };
+      };
+
+      let { res, data } = await startPost(effectiveForce);
+      if (!res.ok && isBatchAll && !effectiveForce && data.detail && String(data.detail).includes("đã được phân tích SRT")) {
+        const rerun = confirm(
+          `${data.detail}\n\nBạn có muốn chạy phân tích LẠI toàn bộ các dự án có file .srt qua ChatGPT không?`
+        );
+        if (!rerun) {
+          return;
+        }
+        effectiveForce = true;
+        ({ res, data } = await startPost(true));
+      }
+
+      if (!res.ok) {
+        alert("❌ Không thể chạy SRT → SEO ChatGPT: " + (data.detail || `HTTP ${res.status}`));
+        return;
+      }
+
+      const logTargetId = (!isBatchAll && maIds.length === 1) ? maIds[0] : "";
+      appendInstantLogToUI(
+        `⏱️ [SRT → SEO CHATGPT] ${data.message || `Đang xử lý ${data.count || 0} dự án...`}`,
+        "SEO",
+        "INFO",
+        logTargetId
+      );
+
+      let lastLogIdx = 0;
+      while (true) {
+        await new Promise((r) => setTimeout(r, 850));
+        const stRes = await fetch("/api/adas/srt-to-seo/status");
+        if (!stRes.ok) continue;
+        const st = await stRes.json().catch(() => ({}));
+
+        if (Array.isArray(st.logs) && st.logs.length > lastLogIdx) {
+          for (let i = lastLogIdx; i < st.logs.length; i++) {
+            const msgLine = st.logs[i];
+            if (msgLine) {
+              appendInstantLogToUI(msgLine, "SEO", "INFO", logTargetId);
+            }
+          }
+          lastLogIdx = st.logs.length;
+        }
+
+        const total = st.total || 0;
+        const processed = st.processed || 0;
+        const progressTxt = total > 0 ? `⏳ SRT→SEO ${processed}/${total}` : "⏳ Đang xử lý...";
+        allBatchBtns.forEach((b) => {
+          b.innerText = progressTxt;
+        });
+
+        if (st.completed || !st.running) {
+          await loadSavedIdeas();
+          const detailModal = document.getElementById("adas-detail-modal");
+          const updatedIds = Array.isArray(st.updated_ids) ? st.updated_ids : [];
+          const failedIds = Array.isArray(st.failed_ids) ? st.failed_ids : [];
+
+          if (
+            currentProjectDetailData &&
+            currentProjectDetailData.ma_id &&
+            updatedIds.includes(currentProjectDetailData.ma_id) &&
+            detailModal &&
+            detailModal.style.display !== "none"
+          ) {
+            await openProjectDetailModal(currentProjectDetailData.ma_id, "seo_pack");
+            modalRefreshed = true;
+          }
+
+          if (st.error && updatedIds.length === 0) {
+            alert("❌ Lỗi SRT → SEO ChatGPT:\n" + st.error);
+          } else {
+            const summaryLines = [
+              `✅ HOÀN TẤT PHÂN TÍCH SRT → SEO CHATGPT!`,
+              `• Đã cập nhật thành công: ${updatedIds.length}/${total} dự án${updatedIds.length ? ` (${updatedIds.join(", ")})` : ""}`
+            ];
+            if (failedIds.length > 0) {
+              summaryLines.push(`• Thất bại / Bỏ qua: ${failedIds.length} dự án (${failedIds.join(", ")})`);
+              if (st.error) summaryLines.push(`• Chi tiết lỗi cuối: ${st.error}`);
+            }
+            alert(summaryLines.join("\n"));
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      alert("❌ Lỗi kết nối khi chạy SRT → SEO ChatGPT: " + e.message);
+    } finally {
+      srtToSeoPollActive = false;
+      restoreButtons();
     }
   }
 
@@ -2601,6 +2767,20 @@ document.addEventListener("DOMContentLoaded", () => {
       const titleEl = document.getElementById("adas-detail-modal-title");
       if (titleEl) {
         titleEl.innerText = `📄 HỒ SƠ DỰ ÁN & SEO YOUTUBE — MÃ: ${maId}`;
+      }
+      const modalSrtBtn = document.getElementById("btn-adas-modal-srt-seo");
+      if (modalSrtBtn) {
+        const hasSrt = !!currentProjectDetailData.has_srt;
+        const hasSrtSeo = !!currentProjectDetailData.has_srt_seo;
+        modalSrtBtn.disabled = !hasSrt;
+        modalSrtBtn.classList.toggle("opacity-40", !hasSrt);
+        modalSrtBtn.classList.toggle("cursor-not-allowed", !hasSrt);
+        modalSrtBtn.title = hasSrt
+          ? "Phân tích file subtitles.srt qua ChatGPT để tối ưu Mô tả tiếng Nhật & bổ sung Timestamps vào file SEO"
+          : "Chưa có file subtitles.srt — Hãy chạy Dựng Video / Tạo Voice trước";
+        modalSrtBtn.innerHTML = hasSrtSeo
+          ? `<span class="material-symbols-outlined text-[15px]">schedule</span> Cập Nhật Lại SRT → SEO`
+          : `<span class="material-symbols-outlined text-[15px]">schedule</span> SRT → ChatGPT SEO`;
       }
       switchDetailModalTab(initialTab);
       if (modal) modal.style.display = "flex";
@@ -3227,6 +3407,11 @@ Capacity: PASS`;
       }
     });
 
+    const srtToSeoAllBtn = document.getElementById("btn-adas-srt-to-seo-all");
+    if (srtToSeoAllBtn) {
+      srtToSeoAllBtn.addEventListener("click", () => triggerSrtToSeoBatch(null, srtToSeoAllBtn, false, false));
+    }
+
     const retryErrorsBtn = document.getElementById("btn-adas-retry-errors");
     if (retryErrorsBtn) {
       retryErrorsBtn.addEventListener("click", async () => {
@@ -3316,6 +3501,38 @@ Capacity: PASS`;
       });
     }
 
+    // Nút CHẠY TIẾP: nạp mọi mã chưa xong vào dây chuyền theo Chế Độ Chạy đang chọn.
+    // Đang chạy -> nạp thêm vào hàng đợi đang chạy (vừa viết vừa render, không phải dừng). Đã dừng -> viết tiếp từ phần đã lưu.
+    const continueBtn = document.getElementById("btn-adas-continue");
+    if (continueBtn) {
+      continueBtn.addEventListener("click", async () => {
+        const res = await fetch("/api/adas/ideas");
+        if (!res.ok) return;
+        const data = await res.json();
+        const outModeSel = document.getElementById("adas-output-mode-select");
+        const outMode = outModeSel ? outModeSel.value : "full_video";
+        const ideas = data.ideas || [];
+        let ids;
+        if (outMode === "script_seo_thumb_only") {
+          ids = ideas.filter((it) => !it.has_script || it.status === "ERROR" || it.status === "PARTIAL_SCRIPT").map((it) => it.ma_id);
+        } else if (outMode === "render_ready_only") {
+          ids = ideas.filter((it) => !!it.has_script && !it.has_video_mp4 && it.status !== "COMPLETED_VIDEO").map((it) => it.ma_id);
+        } else {
+          ids = ideas.filter((it) => !it.has_video_mp4 && it.status !== "COMPLETED_VIDEO").map((it) => it.ma_id);
+        }
+        if (ids.length === 0) {
+          alert("✅ Không còn mã nào chưa xong theo Chế Độ Chạy đang chọn.");
+          return;
+        }
+        continueBtn.disabled = true;
+        try {
+          await triggerRunADAS(ids, null, false);
+        } finally {
+          continueBtn.disabled = false;
+        }
+      });
+    }
+
     // 9. Modal Xem Chi Tiết Kết Quả & Đẩy Sang Bàn Sản Xuất Video
     const closeDetailBtn = document.getElementById("btn-close-adas-detail-modal");
     const detailModal = document.getElementById("adas-detail-modal");
@@ -3326,6 +3543,18 @@ Capacity: PASS`;
     document.querySelectorAll(".adas-view-tab").forEach((b) => {
       b.addEventListener("click", () => switchDetailModalTab(b.dataset.tab));
     });
+
+    const modalSrtSeoBtn = document.getElementById("btn-adas-modal-srt-seo");
+    if (modalSrtSeoBtn) {
+      modalSrtSeoBtn.addEventListener("click", async () => {
+        if (!currentProjectDetailData || !currentProjectDetailData.ma_id) return;
+        if (!currentProjectDetailData.has_srt) {
+          alert("⚠️ Dự án này chưa có file subtitles.srt — Hãy chạy tạo Voice / Dựng Video trước.");
+          return;
+        }
+        await triggerSrtToSeoBatch([currentProjectDetailData.ma_id], modalSrtSeoBtn, true, false);
+      });
+    }
 
     const copyDetailBtn = document.getElementById("btn-adas-copy-detail");
     if (copyDetailBtn) {

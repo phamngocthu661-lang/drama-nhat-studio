@@ -1,2 +1,2 @@
-3.0-three-part-publish-gate
-Requires A/B/C PASS_LOCKED + final verify audit PASS
+ADAS SKILLS V4.0.0 — 2026-11-10
+Compatible with 00_CONTROLLER_V4 runtime v4.0.0; original reference corpus retained.

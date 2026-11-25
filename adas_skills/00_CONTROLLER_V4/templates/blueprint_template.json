@@ -1,0 +1,355 @@
+{
+  "template_only": true,
+  "locked_title": "<TITLE>",
+  "title_promise": "<PROMISE>",
+  "central_question": "<QUESTION>",
+  "narrative_spine": "<SPINE>",
+  "primary_dna": "<ONE>",
+  "secondary_dna": [
+    "<ONE>"
+  ],
+  "hook_dna": "<ONE>",
+  "emotional_arc": "<ARC>",
+  "reversal_mechanism": "<MECHANISM>",
+  "characters": [
+    {
+      "name": "<name>",
+      "want": "<goal>",
+      "motive": "<reason>",
+      "knowledge_ids": [
+        "E01"
+      ]
+    }
+  ],
+  "timeline": [
+    {
+      "scene": "A01",
+      "date": "<DATE>",
+      "location": "<PLACE>"
+    }
+  ],
+  "proof_chain": [
+    {
+      "id": "E01",
+      "created_by": "<person>",
+      "stored_at": "<place>",
+      "accessed_by": "<person>",
+      "access_path": "<lawful reason>",
+      "first_seen_scene": "A02"
+    }
+  ],
+  "setup_payoff": [
+    {
+      "id": "S1",
+      "scene": "A01"
+    },
+    {
+      "id": "S2",
+      "scene": "A02"
+    }
+  ],
+  "reveals": [
+    {
+      "id": "R1",
+      "seed_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "R2",
+      "seed_ids": [
+        "S1",
+        "S2"
+      ]
+    },
+    {
+      "id": "R3",
+      "seed_ids": [
+        "S1",
+        "S2"
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "id": "A01",
+      "part": "A",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2000
+    },
+    {
+      "id": "A02",
+      "part": "A",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2000
+    },
+    {
+      "id": "A03",
+      "part": "A",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2000
+    },
+    {
+      "id": "A04",
+      "part": "A",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2000
+    },
+    {
+      "id": "A05",
+      "part": "A",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2000
+    },
+    {
+      "id": "A06",
+      "part": "A",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2000
+    },
+    {
+      "id": "A07",
+      "part": "A",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2000
+    },
+    {
+      "id": "B01",
+      "part": "B",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2100
+    },
+    {
+      "id": "B02",
+      "part": "B",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2100
+    },
+    {
+      "id": "B03",
+      "part": "B",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2100
+    },
+    {
+      "id": "B04",
+      "part": "B",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2100
+    },
+    {
+      "id": "B05",
+      "part": "B",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2100
+    },
+    {
+      "id": "B06",
+      "part": "B",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2100
+    },
+    {
+      "id": "B07",
+      "part": "B",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2100
+    },
+    {
+      "id": "C01",
+      "part": "C",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2200
+    },
+    {
+      "id": "C02",
+      "part": "C",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2200
+    },
+    {
+      "id": "C03",
+      "part": "C",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2200
+    },
+    {
+      "id": "C04",
+      "part": "C",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2200
+    },
+    {
+      "id": "C05",
+      "part": "C",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2200
+    },
+    {
+      "id": "C06",
+      "part": "C",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2200
+    },
+    {
+      "id": "C07",
+      "part": "C",
+      "purpose": "<purpose>",
+      "new_info": "<fact>",
+      "action": "<action>",
+      "conflict": "<pressure>",
+      "state_change": "<change>",
+      "evidence": "<proof id>",
+      "knowledge_transfer": "<who knows how>",
+      "target_chars": 2200
+    }
+  ],
+  "part_contracts": {
+    "A": {
+      "entry_state": "<state>",
+      "exit_state": "<state>",
+      "open_loops": [
+        "L1"
+      ],
+      "next_scene": "<next scene>"
+    },
+    "B": {
+      "entry_state": "<state>",
+      "exit_state": "<state>",
+      "open_loops": [
+        "L1"
+      ],
+      "next_scene": "<next scene>"
+    },
+    "C": {
+      "entry_state": "<state>",
+      "exit_state": "<state>",
+      "open_loops": [
+        "L1"
+      ],
+      "next_scene": "<next scene>",
+      "title_promise_payoff_id": "R3"
+    }
+  }
+}

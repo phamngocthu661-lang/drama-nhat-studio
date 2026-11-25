@@ -43,3 +43,6 @@ Write toward **44,000–47,000 pure characters** so later edits do not accidenta
 
 ## Expansion quality rule
 Never pad length with repetition, duplicated moral lessons, redundant flashbacks, paraphrases of the same emotion, or empty dialogue. Extra length must perform at least one story function: new clue, new decision, new consequence, motivation, relationship shift, setup, payoff, escalating risk, or meaningful aftermath.
+
+## V4 binding: strict UTF-8 + clean narration
+Runtime canonical: `scripts/adas_v4.py` (also packaged in 00_CONTROLLER_V4); invalid UTF-8 and metadata-leak both FAIL even if pure chars in range. Do not trust a count from `errors=replace`, quoted metadata, or a full file mixed with a ledger.

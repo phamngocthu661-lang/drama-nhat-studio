@@ -1,17 +1,29 @@
 ---
 name: adas-idea-title-packaging
 description: "Generate, score and package original Japanese story premises, titles and 6-layer high-CTR thumbnail narratives before outlining."
+version: 4.0.0
 ---
+
+## V4.0 CROSS-SKILL CONTRACT — BẮT BUỘC (ưu tiên so với nội dung V3 cũ)
+- Chạy trong phạm vi **STEP 2–STEP 6**. Không STEP 1/7, không Channel Audit, không nghiên cứu thị trường, không bắt buộc vidIQ.
+- `references/ADAS_V4_WORKFLOW.md` là bản hợp đồng vận hành trong skill cài độc lập; `00_CONTROLLER_V4/PROJECT_WORKFLOW.md` là bản gốc của gói tổng. Dùng CLI `scripts/adas_v4.py` hoặc bản controller cùng phiên bản.
+- `LOCKED_TITLE` bất biến từ STEP 2–6. Không thay bằng synonym hay đổi dấu; muốn thay phải tạo project/version mới có chấp thuận của user.
+- Japanese narration luôn lưu `script/A.txt`, `script/B.txt`, `script/C.txt` độc lập, UTF-8 strict, metadata sidecar JSON.
+- Cốt truyện theo **20–24 meaningful scenes**, A/B/C part budgets + tổng đúng Hard Contract; không thêm filler.
+- STEP 5 tuyệt đối audit-only: chỉ phát ticket. STEP 4 mới sửa, và chỉ theo ticket/scope, có SHA baseline; một part PASS_LOCKED không tự động mở khóa.
+- Mỗi Part tối đa 3 repair cycles; không lặp vô hạn. REPLAN ở STEP 3 chỉ được đề xuất và biên tập phần chưa khóa; mở vùng đã khóa cần user override rõ.
+- Điểm số 100 do reviewer nhận định; công cụ cơ học **không** tự xác nhận logic, nguồn pháp lý, retentions hay cảm xúc đúng.
+
 
 # Idea, Title & 6-Layer Thumbnail Packaging Engine
 
-Mục tiêu: biến research thành premise đủ mạnh để đáng viết 90–120 phút; chọn title **trước** khi viết script; đồng thời tạo cấu trúc thumbnail 6 tầng theo visual language của niche Japanese long-form family drama.
+Mục tiêu: biến seed/idea do người dùng cung cấp thành premise đủ mạnh để đáng viết 90–120 phút; chọn title **trước** khi viết script; đồng thời tạo cấu trúc thumbnail 6 tầng theo visual language của niche Japanese long-form family drama.
 
 ## Bắt buộc dùng reference corpus
 Đọc `references/corpus_dna.md` và `references/hard_length_contract.md` trước khi thực hiện. Đọc thêm `references/thumbnail_dna_6_layer.md` khi tạo packaging. Các pattern chỉ dùng như benchmark cơ chế; không sao chép exact wording/composition của competitor.
 
 ## Input
-- `MECHANISM_LIBRARY` + `30_RAW_PREMISES` từ skill 01, hoặc seed topic của người dùng.
+- Seed/topic do người dùng cung cấp; `MECHANISM_LIBRARY/30_RAW_PREMISES` chỉ là dữ liệu tùy chọn nếu có (KHÔNG có STEP 1 trong bộ này).
 - Audience/channel positioning.
 - Nếu có ảnh competitor/reference trong Project, dùng chúng để hiểu visual language nhưng không copy nguyên thumbnail.
 
@@ -51,7 +63,7 @@ So với competitor/reference gần nhất. Idea mới phải đổi ít nhất 
 1 relationship, 2 setting, 3 trigger, 4 hidden secret, 5 proof object, 6 final payoff.
 Nếu chỉ đổi vật thể/địa điểm nhưng giữ cùng logic → FAIL.
 
-## 4. Tạo 3 title/idea
+## 4. Tạo một title winner (mặc định) — biến thể chỉ theo yêu cầu
 - A = Mystery-led
 - B = Emotion-led
 - C = Conflict-led
@@ -184,12 +196,11 @@ Ví dụ pattern:
 15. `THUMBNAIL_SCORE /100`
 
 ## Output tổng của skill
-1. Top 5 premise + Idea Score
-2. 3 titles cho mỗi top premise
-3. Chọn 1 title winner + lý do
+1. ĐÚNG một premise + Idea Score (`ONE_IDEA_MODE`, mặc định)
+2. ĐÚNG một title winner + lý do; chỉ tạo các biến thể khi người dùng yêu cầu rõ
 4. `TITLE_PROMISE`: chính xác người xem đang đòi câu trả lời gì
 5. Full 6-layer thumbnail narrative architecture
-6. `ORIGINALITY_DIFF`: 4/6 yếu tố đã đổi so với reference gần nhất
+6. `ORIGINALITY_REPORT`: kiểm tra 8 yếu tố; cùng cơ chế và payoff → RED dù đổi 4/6 bề mặt
 7. `LONGFORM_CAPACITY` + scene/reveal capacity note
 8. Handoff cho skill 03
 
@@ -203,3 +214,13 @@ Ví dụ pattern:
 - Image-generation prompts must include the six exact Japanese line strings, their colors, and a prohibition on any other rendered textual overlays. Rendered images must be VISUALLY COUNTED: if not exactly six, REJECT/REGENERATE; do not label PASS.
 - This rule overrides any historical reference suggesting 7–10 lines or permitting beat-to-line expansion, including older STEP 2/STEP 6 outputs.
 - Output validation flag: SIX_LINES_ONLY: PASS only if visible count = 6; otherwise FAIL.
+
+
+## V4 STEP 2 EXTENSION — OUTPUT & CREATIVE LOCK
+- Default `ONE_IDEA_MODE`: CHỈ một premise và một title, kể cả khi tài liệu tham khảo đưa ra ví dụ 3 title. Không chọn chủ đề mới ngoài seed/brief của user.
+- Chọn `PRIMARY_STORY_DNA` + 1–2 `SECONDARY_DNA` theo `references/creative_dna_v4.md`, `HOOK_DNA`, `EMOTIONAL_ARC`, `REVERSAL_MECHANISM` trước khi khóa.
+- Sinh `plans/idea.json` theo `00_CONTROLLER_V4/templates/idea_template.json`: title, promise, premise, fields fingerprint (relation, setting, trigger, evidence, mechanism, reveal, payoff, consequence).
+- Kiểm `python scripts/adas_v4.py originality plans/idea.json --history .../reference_title_history.json .../HISTORY_INDEX.json`. RED → dừng để đổi mechanism/payoff; YELLOW → review thủ công, không báo original tuyệt đối.
+- Phân biệt reference corpus chỉ có tiêu đề (title comparison) với project history có fingerprint đầy đủ; không tuyên bố semantic compare 35 scripts bằng heuristic.
+- Tạo `title_lock.json` (verbatim UTF-8) và `thumbnail_spec.json` L1–L6. `TITLE_PROMISE` phải có mapping payoff sau này.
+- Output chỉ một title + idea blueprint + thumbnail 6 beat; handoff STEP 3 khi `LONGFORM_CAPACITY=PASS`, title đã khóa.

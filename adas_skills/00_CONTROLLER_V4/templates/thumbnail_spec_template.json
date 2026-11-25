@@ -1,0 +1,46 @@
+{
+  "template_only": true,
+  "locked_title": "<TITLE>",
+  "title": "<TITLE>",
+  "right_face_fraction": 0.37,
+  "L1": {
+    "text": "<one-line Japanese>",
+    "color": "yellow"
+  },
+  "L2": {
+    "text": "<one-line Japanese>",
+    "color": "white"
+  },
+  "L3": {
+    "text": "<one-line Japanese>",
+    "color": "magenta"
+  },
+  "L4": {
+    "text": "<one-line Japanese>",
+    "color": "yellow"
+  },
+  "L5": {
+    "text": "<one-line Japanese>",
+    "color": "cyan"
+  },
+  "L6": {
+    "spans": [
+      {
+        "text": "<cyan span>",
+        "color": "cyan"
+      },
+      {
+        "text": "<magenta span>",
+        "color": "magenta"
+      }
+    ],
+    "same_baseline": true
+  },
+  "visual_qa": {
+    "detected_lines": null,
+    "l6_same_baseline": false,
+    "no_extra_text": false,
+    "face_position_verified": false,
+    "text_readability_confirmed": false
+  }
+}

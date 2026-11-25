@@ -1,110 +1,29 @@
-# PROJECT INSTRUCTIONS — SIMPLE WRITE ↔ AUDIT LOOP v3.2
+# ADAS MASTER CONTROLLER — V4.0.0 (STEP 2–6 ONLY)
 
-## CORE PRINCIPLE
-Sau STEP 1–3, sản xuất kịch bản chỉ dùng:
+ROLE: Điều phối đúng 5 skill trong ZIP (02/03/04/05/06). Không có STEP 1 hoặc STEP 7 trong package. Không tự khởi tạo Channel Audit, nghiên cứu thị trường, hoặc gọi vidIQ.
 
-**STEP 4 — WRITE / PATCH SCRIPT**
+## BẤT BIẾN
+1. Đầu vào tối thiểu: PROJECT_ID + chủ đề/seed do người dùng cung cấp. Cấu hình KEY theo chuyên mục này. Nếu có dữ liệu sản xuất trước đây, dùng HISTORY_INDEX.json cục bộ.
+2. STEP 2 mặc định tạo DUY NHẤT một ý tưởng, một tiêu đề, một thumbnail concept 6 beat. Khóa `LOCKED_TITLE` UTF-8 (không sửa đến STEP 6).
+3. STEP 3 thiết kế Story Bible/Blueprint 20–24 meaningful scenes; kiểm timeline, nhân vật biết gì, evidence provenance, 3 reveals có setup hợp lý, ngân sách PART.
+4. STEP 4 viết A → B → C, mỗi lần duy nhất một PART. Narration-only riêng `script/A.txt` v.v. Count: NFC Unicode L/N; A 13.334–16.000; B,C 13.334–17.000; total 40.001–50.000 (min có thể đạt theo PART = 40.002). Checkpoint + handoff JSON sau A/B/C, đủ mới chuyển tiếp.
+5. STEP 5 audit-only với 2 pass nội bộ: logic/dependencies trước, holistic sau. Rubric >=95, B>=16, C/D/E>=8, I>=5, zero P0, A/B/C PASS_LOCKED; trả repair ticket nếu FAIL. KHÔNG trực tiếp sửa hay xóa kịch bản.
+6. STEP 4 PATCH chỉ được sửa line scope của ticket đã phát, bảo toàn SHA byte các part khác và vùng đã khóa; tối đa 3 repair cycles/part. P0 gốc cần thay vùng đã khóa → DEPENDENCY_BLOCKED và xin user override, KHÔNG auto-replan.
+7. STEP 6 chỉ sau Final Audit PASS. SEO giữ LOCKED_TITLE y nguyên. Thumbnail cuối 16:9, **chính xác 6 dòng vật lý** L1–L6; L6 cyan+magenta cùng baseline. Kiểm nguồn/layer + hậu kiểm trực quan; không bịa kết quả đếm từ ảnh.
+8. Sau EXPORTED, có thể ghi project vào HISTORY_INDEX.json để chống trùng các lượt sau.
 
-**STEP 5 — AUDIT / REPAIR TICKETS**
+## NEXT ACTION CONTROLLER
+CREATED → TITLE_LOCKED → OUTLINE_APPROVED → A_READY → B_READY → C_READY → AUDIT_IN_PROGRESS → PUBLISH_READY → EXPORTED.
+- Nếu STEP 3 không PASS: chỉnh Blueprint chưa khóa, không đi STEP 4.
+- Nếu STEP 4 PART fail: bổ sung/sửa PART đó trước part tiếp.
+- Nếu STEP 5 fail: tạo tickets → STEP 4 patch scoped → STEP 5 audit lại; không có STEP khác được thêm vào luồng.
+- Nếu đã dùng hết 3 cycle/part: STOP, báo root cause và yêu cầu quyết định của user.
+- Không bao giờ cho STEP 6 chạy nếu audit stale, title mismatch, raw file thiếu hoặc thumbnail chưa được kiểm tra.
 
-Nếu chưa đạt: STEP 4 → STEP 5 → STEP 4 → STEP 5 cho đến khi >=95.
+## TOOLS
+Controller riêng ở `00_CONTROLLER_V4/scripts/adas_v4.py`; bản giống hệt được đóng gói trong `scripts/` của từng skill để dùng độc lập. Python 3.10+; Pillow chỉ cần cho ảnh/thumbnail.
+Giao diện CLI, mẫu dữ liệu và các cửa kiểm định tại `00_CONTROLLER_V4/PROJECT_WORKFLOW.md` và `QUICK_START.md`.
 
-Không có pre-audit, delta-audit riêng, verification step riêng, replan step riêng hay quality gate trung gian.
-
-# STEP 1 — RESEARCH
-Dùng `01_research_outlier_skill.zip`.
-
-# STEP 2 — IDEA / TITLE / THUMBNAIL
-Dùng `02_idea_title_packaging_skill.zip`.
-
-Khóa:
-- LOCKED_TITLE
-- LOCKED_TITLE_PROMISE
-- TITLE_FACTS
-- TITLE_LOCKED: YES
-
-Từ đây không đổi title.
-
-# STEP 3 — STORY ARCHITECTURE
-Dùng `03_story_architecture_logic_skill.zip`.
-
-Tạo Story Bible, Timeline, Character Knowledge, Causal Chain, Setup/Payoff, scene plan A/B/C, TITLE_FACT_MAP.
-
-STEP 3 chỉ thiết kế một lần trước khi viết.
-Trong vòng sửa sau audit không quay STEP 3; lỗi lớn thì STEP 5 yêu cầu STEP 4 rewrite đúng PART lỗi.
-
-# STEP 4 — WRITE / PATCH SCRIPT
-Dùng `04_longform_script_writer_skill.zip`.
-
-## BUILD MODE
-- PART A: 13.334–16.000 pure chars
-- PART B: 13.334–17.000
-- PART C: 13.334–17.000
-- TOTAL: 40.001–50.000
-
-Chỉ khi TOTAL PASS mới chuyển STEP 5.
-Không pre-audit. Không tự chấm điểm.
-
-## PATCH MODE
-Nhận repair tickets từ STEP 5.
-Chỉ sửa PART/scene bị lỗi.
-Part PASS_LOCKED không được sửa.
-Sửa xong quay thẳng STEP 5.
-
-# STEP 5 — AUDIT / REPAIR TICKETS
-Dùng `05_script_auditor_100_skill.zip`.
-
-STEP 5:
-- đọc full script;
-- chấm /100;
-- khóa phần tốt;
-- chỉ ra chính xác phần cần sửa.
-
-STEP 5 không rewrite script, không đổi title, không tạo bước xác nhận khác.
-
-Nếu score <95:
-- PASS_LOCKED_PARTS
-- REPAIR_TICKETS
-- PARTS_TO_PATCH
-- RETURN_TO_STEP_4_PATCH
-
-Nếu score >=95 → STEP 6.
-
-## Anti-loop
-Nếu 2 vòng liên tiếp điểm không tăng:
-- không micro-patch tiếp;
-- STEP 5 phát 1 ROOT_CAUSE_REWRITE_TICKET cho đúng PART;
-- STEP 4 rewrite PART đó;
-- PART đã đạt giữ nguyên.
-
-# STEP 6 — SEO / PUBLISH PACK
-Dùng `06_seo_publish_pack_skill.zip`.
-Chỉ chạy khi STEP 5 >=95 và Publish Ready.
-Title = LOCKED_TITLE verbatim.
-
-# STEP 7 — POST-PUBLISH ANALYTICS
-Dùng `07_postpublish_analytics_skill.zip`.
-
-# HARD SCRIPT LENGTH
-PURE_CHARACTER_COUNT chỉ Unicode letters + numbers; bỏ punctuation, symbol, whitespace, line break.
-
-PASS = 40.001–50.000.
-
-# IMMUTABILITY RULE
-- PASS_LOCKED = read-only.
-- STEP 4 chỉ sửa PATCH_REQUIRED.
-- Không rewrite part đã đạt.
-- Không sửa title.
-
-# SIMPLE LOOP
-STEP 3 architecture → STEP 4 BUILD A+B+C → Length PASS → STEP 5 AUDIT → nếu <95 khóa phần tốt + repair tickets → STEP 4 PATCH chỉ part lỗi → STEP 5 AUDIT lại → lặp đến >=95 → STEP 6.
-
-# STEP STATUS
-Sau mỗi STEP chỉ cần:
-- Completed STEP
-- Result
-- PASS / NEEDS REVISION
-- Next STEP
-- Exact command
-
-Nếu user nói `tiếp tục`, `next`, `làm tiếp` thì chạy ngay STEP được đề xuất gần nhất.
+## QUY TẮC ĐIỀU PHỐI CỐT LÕI
+Mỗi lần xuất ra: COMPLETED_STEP, INPUT_FILES, OUTPUT_FILES, GATE_STATUS, ERRORS, NEXT_ACTION, EXACT_COMMAND.
+Nếu người dùng nói `tiếp tục` / `next`, chạy STEP tiếp theo **chỉ khi** dữ liệu đầu vào và gate cần thiết tồn tại.

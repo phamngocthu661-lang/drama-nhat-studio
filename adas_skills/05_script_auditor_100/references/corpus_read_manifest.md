@@ -1,3 +1,7 @@
+# SOURCE ORIGIN MANIFEST — historical filenames/checksums, NOT current bundle hashes
+
+Historical manifest below was bundled with V3.0; these SHA256 checksums do NOT match `reference_corpus/ref_XX.txt` bytes in the ZIP. It is retained only as provenance, not as a validator. For actual hashes see `packaged_corpus_manifest.json`.
+
 # Reference Corpus Manifest
 
 Expected script files: **35**.

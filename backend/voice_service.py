@@ -177,8 +177,9 @@ def split_long_subtitle_segments(
 import re as _re_mod
 
 _FAST_MAYBE_LEAK_RE = _re_mod.compile(
-    r"[A-Za-z]|日本語脚本|日本語ナレーション|```|---|===|"
-    r"LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE",
+    r"[A-Za-z]|日本語脚本|日本語ナレーション|【第|```|---|===|"
+    r"LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE|"
+    r"PART_STATUS|PASS_LOCKED|REWRITE_BUDGET|SCOPE_VIOLATION|PROOF_CHAIN|CREATIVE_DNA",
     _re_mod.IGNORECASE,
 )
 
@@ -187,7 +188,8 @@ def strip_leaked_titles_and_metadata(raw_text: str):
     """
     Quét, ghi nhận và xóa sạch 100% các dòng [LOCKED_TITLE], [SELECTED_TITLE], [WINNING_TITLE],
     bao gồm cả phần câu tiêu đề bị tách thành 2–4 dòng kế tiếp, cũng như các dòng nhãn kỹ thuật
-    (STEP 4 · BUILD PART A, PART A — 日本語脚本, <CodeBlock>, <WritingBlock>, CONTINUITY:, ENDING:...)
+    của ADAS V4.0.0 (STEP 4 · BUILD PART A, PART A — 日本語脚本, <CodeBlock>, <WritingBlock>,
+    CONTINUITY:, ENDING:, PART_STATUS, PASS_LOCKED, REWRITE_BUDGET, PROOF_CHAIN, CREATIVE_DNA...)
     để tuyệt đối không bao giờ bị lọt vào quá trình tạo Voice (TTS) hay Phụ đề Video (Render MP4).
     """
     import re
@@ -197,7 +199,7 @@ def strip_leaked_titles_and_metadata(raw_text: str):
         return raw_text.strip(), []
 
     cleaned_raw = re.sub(
-        r"</?(?:CodeBlock|WritingBlock|title|grid|grid-item|caption)[^>]*>",
+        r"</?(?:CodeBlock|WritingBlock|title|grid|grid-item|caption|script|REWRITE_PART_[ABC])[^>]*>",
         "",
         raw_text,
         flags=re.IGNORECASE,
@@ -209,15 +211,15 @@ def strip_leaked_titles_and_metadata(raw_text: str):
     i = 0
 
     title_key_re = re.compile(
-        r"(?:LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE|TITLE_LOCKED|LOCKED_TITLE_PROMISE|TITLE_FACTS)\s*[:：\-—]?",
+        r"(?:LOCKED_TITLE|SELECTED_TITLE|WINNING_TITLE|FINAL_TITLE|DRAFT_TITLE|TITLE_LOCKED|LOCKED_TITLE_PROMISE|TITLE_FACTS|TITLE_PROMISE_PAYOFF)\s*[:：\-—]?",
         re.IGNORECASE,
     )
     step_part_re = re.compile(
-        r"^(?:[A-Z]{1,6}\d{1,5}\s*[—–\-·:：]+\s*)?(?:STEP\s*[1-7]\b|BUILD\s+PART\s*[ABC]\b|PART\s*[:：\-—–·]?\s*[ABC]\b|SCENE\s+[ABC]?\d+\b|CHAPTER\s+\d+\b)",
+        r"^(?:[A-Z]{1,6}\d{1,5}\s*[—–\-·:：]+\s*)?(?:STEP\s*[1-7]\b|BUILD\s+PART\s*[ABC]\b|PART\s*[:：\-—–·]?\s*[ABC]\b|SCENE\s+[ABC]?\d+\b|CHAPTER\s+\d+\b|【第[一二三四五六七八九十\d]+(?:部|章|話))",
         re.IGNORECASE,
     )
     stop_block_re = re.compile(
-        r"^(?:PART_PURE_CHARACTER_COUNT|PART_LENGTH_GATE|CONTINUITY_LEDGER|CONTINUITY\s+LEDGER|PART_HANDOFF_LEDGER|HANDOFF_LEDGER|HANDOFF\s+LEDGER|PART_[ABC]_HANDOFF|NEXT_ACTION|READY_FOR_AUDIT|PATCH_CHANGELOG)\b",
+        r"^(?:PART_PURE_CHARACTER_COUNT|PART_LENGTH_GATE|CONTINUITY_LEDGER|CONTINUITY\s+LEDGER|PART_HANDOFF_LEDGER|HANDOFF_LEDGER|HANDOFF\s+LEDGER|PART_[ABC]_HANDOFF|NEXT_ACTION|READY_FOR_AUDIT|PATCH_CHANGELOG|PART_STATUS|PASS_LOCKED|REWRITE_BUDGET|SCOPE_VIOLATION|PROOF_CHAIN)\b",
         re.IGNORECASE,
     )
     meta_kv_re = re.compile(r"^[A-Z][A-Z0-9_/\-\s]{1,35}[:：]")

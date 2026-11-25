@@ -1,0 +1,22 @@
+ADAS SKILLS V4.0 — UPGRADED PRODUCTION PACKAGE
+
+02_idea_title_packaging         ONE IDEA + LOCKED_TITLE + OFFLINE ORIGINALITY
+03_story_architecture_logic     STORY BLUEPRINT + CAUSAL PROOF / TIMELINE
+04_longform_script_writer       A/B/C + STRICT COUNT + CONTINUITY LEDGER + SCOPED PATCH
+05_script_auditor_100           TWO-PASS AUDIT INSIDE STEP5 + 100 POINT GATES
+06_seo_publish_pack            16:9 + EXACT SIX LINES + SEO (TITLE IMMUTABLE)
+
+No Channel Audit. No market/vidIQ research. No STEP 1/7.
+
+CÀI ĐẶT:
+- Giải nén ZIP tổng, vào 01_INSTALL_5_SKILLS và cài riêng 5 file ZIP (02–06).
+- Xem 02_CONTROLLER_AND_GUIDES/QUICK_START.md để gắn Controller và hiểu hợp đồng dữ liệu.
+- Nếu chạy độc lập từng skill, nó có bản runtime Python và references/ADAS_V4_WORKFLOW.md riêng.
+- Để dùng state machine toàn dự án, chạy 02_CONTROLLER_AND_GUIDES/scripts/adas_v4.py.
+
+LƯU Ý:
+- Khởi tạo project V4 mới; đừng chép project_state / audit / lock cũ V3 vào V4.
+- Giữ tập 35 reference story; không nhận định corpus historical checksum của filenames là checksum byte của ref_XX.
+- PASS script mechanical != semantic proof. Reviewer phải đánh giá tính logic và thumbnail thật.
+
+Gói gồm 5 skill, Controller, template JSON, CHANGELOG, Test Report, SHA256.

@@ -124,7 +124,10 @@ _PENDING_PROJECTS_BY_ACC: Dict[str, set] = {
     "acc_2": set(),
     "acc_3": set(),
 }
-ACCOUNT_LIMIT_COOLDOWN_SEC = 1800  # Tạm dừng 30 phút (1800 giây) khi tài khoản bị Limit
+ACCOUNT_LIMIT_COOLDOWN_SEC = 1800  # Tạm dừng 30 phút (1800 giây) khi tài khoản bị Limit THẬT
+# Lỗi tạm thời (quá thời gian chờ, nghẽn mạng, gửi lệnh trượt...) chỉ nghỉ ngắn 5 phút,
+# tránh trường hợp vài lỗi lặt vặt khóa cả 3 nick 30 phút khiến mọi luồng đứng chờ.
+ACCOUNT_SOFT_COOLDOWN_SEC = 300
 _ACCOUNT_COOLDOWN_UNTIL: Dict[str, float] = {
     "acc_1": 0.0,
     "acc_2": 0.0,
@@ -140,9 +143,21 @@ _ACCOUNT_COOLDOWN_REASON: Dict[str, str] = {
 class AccountRateLimitError(RuntimeError):
     """Ngoại lệ chuyên biệt khi tài khoản ChatGPT bị giới hạn (Rate Limit / Quota / Không phản hồi)."""
 
-    def __init__(self, acc_id: str, message: str):
+    def __init__(self, acc_id: str, message: str = "", real_limit: bool = True):
         super().__init__(message)
         self.acc_id = acc_id
+        self.message = message
+        # True = ChatGPT báo Limit thật (đã khóa 30 phút); False = lỗi tạm thời (chỉ nghỉ ngắn)
+        self.real_limit = bool(real_limit)
+
+    def __reduce__(self):
+        # Cho phép copy/pickle ngoại lệ giữa các luồng (trước đây lỗi "missing 'message'")
+        return (self.__class__, (self.acc_id, self.message, self.real_limit))
+
+
+def is_real_rate_limit_error(err: BaseException) -> bool:
+    """True khi lỗi là Limit thật từ ChatGPT (nick đã bị khóa 30 phút ở nơi phát hiện)."""
+    return isinstance(err, AccountRateLimitError) and bool(getattr(err, "real_limit", True))
 
 
 def mark_account_rate_limited(
@@ -2053,8 +2068,9 @@ class ChatGPTWebSession:
                 }}
 
                 // Vòng lặp xác nhận gửi thật sự (sentConfirmed - Master Blueprint V6.0)
+                // Prompt dài (>12k) bị ChatGPT đổi thành file đính kèm nên cần chờ lâu hơn: ~30 giây.
                 let sentConfirmed = false;
-                for (let s = 0; s < 25; s++) {{
+                for (let s = 0; s < 90; s++) {{
                     await new Promise(r => setTimeout(r, 320));
                     const stopNow = document.querySelector('[data-testid="stop-button"], form button[aria-label*="Stop" i], button[aria-label*="Stop streaming" i]');
                     const curBox = document.querySelector('#prompt-textarea, #mobile-composer-prompt, textarea[id*="prompt"], div.ProseMirror[contenteditable="true"], [role="textbox"][contenteditable="true"], main textarea');
@@ -2080,12 +2096,50 @@ class ChatGPTWebSession:
             }})()
             """
             port_lock = _PORT_INJECT_LOCKS.setdefault(self.port, threading.Lock())
+            prompt_head_norm = " ".join(prompt_text.split())[:80]
+            sent_probe_js = """
+            (() => {
+                const users = Array.from(document.querySelectorAll('[data-message-author-role="user"]'));
+                let head = '';
+                if (users.length > 0) head = (users[users.length - 1].innerText || '').split(/\\s+/).join(' ').trim().slice(0, 200);
+                const stopBtn = document.querySelector('[data-testid="stop-button"], button[aria-label*="Stop streaming" i]');
+                return { userCount: users.length, lastUserHead: head, streaming: Boolean(stopBtn), href: location.href };
+            })()
+            """
+            base_probe = _cdp_eval_js(self.ws_url, sent_probe_js, await_promise=False, timeout=4.0)
+            base_probe = base_probe if isinstance(base_probe, dict) else {}
+
+            def _prompt_already_sent() -> bool:
+                """Kiểm tra lệnh đã thật sự vào khung chat chưa -> tránh gửi trùng 2 lần."""
+                if not self.ws_url:
+                    return False
+                cur = _cdp_eval_js(self.ws_url, sent_probe_js, await_promise=False, timeout=4.0)
+                if not isinstance(cur, dict):
+                    return False
+                if cur.get("streaming"):
+                    return True
+                head_now = str(cur.get("lastUserHead") or "")
+                head_match = bool(prompt_head_norm) and head_now.startswith(prompt_head_norm[:60])
+                if not head_match:
+                    return False
+                if int(cur.get("userCount") or 0) > int(base_probe.get("userCount") or 0):
+                    return True
+                return head_now != str(base_probe.get("lastUserHead") or "")
+
             inj_res = None
             for inj_attempt in range(3):
                 _install_chatgpt_tab_protection_js(self.ws_url)
                 with port_lock:
-                    inj_res = _cdp_eval_js(self.ws_url, inject_js, await_promise=True, timeout=45.0)
+                    inj_res = _cdp_eval_js(self.ws_url, inject_js, await_promise=True, timeout=60.0)
                 if isinstance(inj_res, dict) and inj_res.get("ok"):
+                    break
+                if _prompt_already_sent():
+                    log_info(
+                        f"[{self.project_id}] Lệnh đã vào ChatGPT ({self.cfg['label']}) dù chưa kịp xác nhận -> Không gửi lại, tiếp tục chờ trả lời.",
+                        category="CHROME",
+                        project_id=self.project_id,
+                    )
+                    inj_res = {"ok": True, "method": "sent_detected_after_retry_check"}
                     break
                 log_warn(
                     f"[{self.project_id}] Thử gửi lệnh lại vào ChatGPT ({self.cfg['label']}) lần {inj_attempt + 2}/3 (kết quả trước: {inj_res})...",
@@ -2097,8 +2151,19 @@ class ChatGPTWebSession:
                     self.tab_id = None
                     self.ws_url = None
                     self.open_session_tab(force_new_chat=True)
+                    base_probe = {}
                 else:
-                    _cdp_navigate(self.ws_url, CHATGPT_GUARD_URL, timeout=2.5)
+                    # Giữ nguyên đoạn chat hiện tại (không mở chat mới) để không mất ngữ cảnh các lượt trước.
+                    has_box_now = _cdp_eval_js(
+                        self.ws_url,
+                        f"Boolean(document.querySelector('{COMPOSER_SELECTOR}'))",
+                        await_promise=False,
+                        timeout=2.0,
+                    )
+                    if not has_box_now:
+                        cur_href = str(base_probe.get("href") or "")
+                        reload_url = cur_href if "/c/" in cur_href else CHATGPT_GUARD_URL
+                        _cdp_navigate(self.ws_url, reload_url, timeout=2.5)
                     for _w in range(20):
                         time.sleep(0.5)
                         has_box = _cdp_eval_js(
@@ -2259,15 +2324,16 @@ class ChatGPTWebSession:
             if backend_md and len(backend_md) >= int(len(last_text) * 0.85):
                 return backend_md
             return last_text
-        # Khi tài khoản hoàn toàn không phản hồi sau timeout_sec (600s) -> Đánh dấu tạm dừng 30 phút và đẩy sang nick khác!
+        # Không phản hồi sau timeout_sec: chưa chắc là Limit (có thể mạng/tab đơ) -> chỉ nghỉ ngắn 5 phút rồi chuyển nick
         mark_account_rate_limited(
             self.acc_id,
             reason=f"Quá thời gian chờ ({timeout_sec}s) không phản hồi tại bước {step_label}",
-            cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+            cooldown_sec=ACCOUNT_SOFT_COOLDOWN_SEC,
         )
         raise AccountRateLimitError(
             self.acc_id,
-            f"Quá thời gian chờ ({timeout_sec}s) phản hồi từ ChatGPT trên {self.cfg['label']} tại bước {step_label} -> Tạm dừng {self.cfg['label']} 30 phút và chuyển sang nick khác!",
+            f"Quá thời gian chờ ({timeout_sec}s) phản hồi từ ChatGPT trên {self.cfg['label']} tại bước {step_label} -> Nghỉ {self.cfg['label']} {ACCOUNT_SOFT_COOLDOWN_SEC // 60} phút và chuyển sang nick khác!",
+            real_limit=False,
         )
 
     def generate_image_and_harvest_base64(

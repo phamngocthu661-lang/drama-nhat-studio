@@ -585,7 +585,7 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
         if not req.ma_ids:
             raise HTTPException(status_code=400, detail="Vui lòng chọn ít nhất 1 Mã ý tưởng để chạy!")
 
-        started = adas_engine.start_run_ideas_async(
+        run_res = adas_engine.start_run_ideas_async(
             ma_ids=req.ma_ids,
             preferred_acc_id=req.preferred_acc_id,
             auto_produce_video=req.auto_produce_video,
@@ -595,9 +595,21 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
             force_rewrite_script=req.force_rewrite_script,
             max_retries=max(1, min(5, req.max_retries)),
         )
-        if not started:
-            raise HTTPException(status_code=400, detail="Dây chuyền viết kịch bản đang chạy một dự án khác!")
-        return {"success": True, "message": f"Đã bắt đầu chạy dây chuyền Step 2 -> Step 6 cho {len(req.ma_ids)} dự án!"}
+        # Dây chuyền đang chạy -> các mã mới được nạp thẳng vào hàng đợi đang chạy (Chạy Tiếp), không còn bị từ chối
+        if not run_res.get("ok"):
+            raise HTTPException(status_code=400, detail=run_res.get("message") or "Không thể khởi chạy dây chuyền viết kịch bản!")
+        return {
+            "success": True,
+            "mode": run_res.get("mode"),
+            "added": run_res.get("added", []),
+            "existed": run_res.get("existed", []),
+            "upgraded": run_res.get("upgraded", []),
+            "message": run_res.get("message", ""),
+        }
+
+    @app.get("/api/adas/run-queue")
+    def api_adas_run_queue():
+        return adas_engine.get_run_queue_info()
 
     @app.post("/api/adas/stop")
     def api_adas_stop():
@@ -727,6 +739,26 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
         if not started:
             raise HTTPException(status_code=400, detail="Hệ thống ChatGPT đang bận chạy dự án khác. Vui lòng đợi hoàn tất!")
         return {"success": True, "ma_id": ma_id, "message": f"Đã bắt đầu tạo & đánh giá 3 Thumbnail (6 dòng chữ) cho {ma_id}!"}
+
+    @app.post("/api/adas/srt-to-seo")
+    def api_adas_srt_to_seo(payload: dict = None):
+        payload = payload or {}
+        ma_ids = payload.get("ma_ids")
+        if isinstance(ma_ids, str):
+            ma_ids = [ma_ids]
+        res = adas_engine.start_srt_to_seo_async(
+            ma_ids=ma_ids,
+            preferred_acc_id=payload.get("preferred_acc_id"),
+            force=bool(payload.get("force", True)),
+            allow_fallback=bool(payload.get("allow_fallback", False)),
+        )
+        if not res.get("started"):
+            raise HTTPException(status_code=400, detail=res.get("message", "Không tìm thấy dự án có file subtitles.srt để phân tích!"))
+        return {"success": True, **res}
+
+    @app.get("/api/adas/srt-to-seo/status")
+    def api_adas_srt_to_seo_status():
+        return {"success": True, **adas_engine.get_srt_to_seo_status()}
 
     @app.get("/api/license/status")
     def get_license_status():

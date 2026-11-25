@@ -1,7 +1,19 @@
 ---
 name: adas-seo-publish-pack
 description: "Create Japanese YouTube SEO metadata and final 6-layer high-CTR thumbnail packaging after script quality approval."
+version: 4.0.0
 ---
+
+## V4.0 CROSS-SKILL CONTRACT — BẮT BUỘC (ưu tiên so với nội dung V3 cũ)
+- Chạy trong phạm vi **STEP 2–STEP 6**. Không STEP 1/7, không Channel Audit, không nghiên cứu thị trường, không bắt buộc vidIQ.
+- `references/ADAS_V4_WORKFLOW.md` là bản hợp đồng vận hành trong skill cài độc lập; `00_CONTROLLER_V4/PROJECT_WORKFLOW.md` là bản gốc của gói tổng. Dùng CLI `scripts/adas_v4.py` hoặc bản controller cùng phiên bản.
+- `LOCKED_TITLE` bất biến từ STEP 2–6. Không thay bằng synonym hay đổi dấu; muốn thay phải tạo project/version mới có chấp thuận của user.
+- Japanese narration luôn lưu `script/A.txt`, `script/B.txt`, `script/C.txt` độc lập, UTF-8 strict, metadata sidecar JSON.
+- Cốt truyện theo **20–24 meaningful scenes**, A/B/C part budgets + tổng đúng Hard Contract; không thêm filler.
+- STEP 5 tuyệt đối audit-only: chỉ phát ticket. STEP 4 mới sửa, và chỉ theo ticket/scope, có SHA baseline; một part PASS_LOCKED không tự động mở khóa.
+- Mỗi Part tối đa 3 repair cycles; không lặp vô hạn. REPLAN ở STEP 3 chỉ được đề xuất và biên tập phần chưa khóa; mở vùng đã khóa cần user override rõ.
+- Điểm số 100 do reviewer nhận định; công cụ cơ học **không** tự xác nhận logic, nguồn pháp lý, retentions hay cảm xúc đúng.
+
 
 # SEO, Metadata & Final Thumbnail Publish Pack
 
@@ -34,7 +46,7 @@ Title của niche này là mini-story; không nhét `[感動する話][朗読][�
 SEO đặt chủ yếu ở description, hashtags, playlist và channel semantic consistency.
 
 ## Metadata workflow
-1. Giữ title winner; chỉ sửa nếu audit cho thấy title promise sai.
+1. Giữ `LOCKED_TITLE` nguyên văn, không có quyền sửa. Nếu promise sai → `TITLE_PROMISE_BLOCKED`, báo người dùng để mở project version mới, KHÔNG tự đổi title.
 2. Description line 1 nói rõ format/topic tự nhiên.
 3. 3 core hashtags tối đa ưu tiên: `#感動する話 #朗読 #スカッとする話`.
 4. Thêm 2–3 topic hashtags phù hợp thật sự.
@@ -134,8 +146,8 @@ Tùy title.
 **Publish gate:** ưu tiên candidate ≥90. Không publish candidate <85 nếu có thể remake.
 
 # Image-generation prompt contract
-Khi tạo prompt final (`<THUMBNAIL_PROMPT_1>`), phải mô tả rõ:
-- Bắt đầu bằng lệnh tạo ảnh mới hoàn toàn từ văn bản (`Generate a brand-new image from scratch using text-to-image, horizontal landscape size 1536x1024, do NOT look for any reference image to edit`). TUYỆT ĐỐI KHÔNG ghi `3840x2160` hay `1536x864` (vì công cụ tạo ảnh chuẩn của OpenAI chỉ nhận kích thước ngang `1536x1024`).
+Khi tạo prompt final (`<THUMBNAIL_PROMPT_1>`), chỉ mô tả **background không chữ** nếu sử dụng deterministic 6-line overlay; mọi quy định tạo chữ trong ảnh nguồn sau đây chỉ áp dụng cho chế độ manual rendering và KHÔNG là cách được ưu tiên.
+- Bắt đầu bằng lệnh tạo ảnh mới hoàn toàn từ văn bản (`Generate a brand-new image from scratch using text-to-image, horizontal landscape; final deliverable must be 16:9, 1280x720 or 1920x1080; if generator only emits 3:2, create background without text then center-crop to 16:9 and overlay exact six lines via deterministic renderer`). Không bắt buộc đầu ra tool tạo ảnh là 16:9; chỉ **file cuối** phải 16:9. Không dựa vào tỷ lệ ảnh nguồn để tự chứng nhận thumbnail.
 - TUYỆT ĐỐI KHÔNG đưa các câu lệnh hậu kiểm như `reject and regenerate`, `check the rendered image`, `compare with previous image`, hay `modify/edit` vào bên trong nội dung `<THUMBNAIL_PROMPT_1>` để tránh làm công cụ tạo ảnh hiểu nhầm là chỉnh sửa ảnh có sẵn.
 - Japanese high-CTR long-form story poster style
 - dense multi-line text
@@ -183,6 +195,15 @@ Sau image generation:
 - LINE_BREAK_PLAN must specify exactly L1–L6, no separate seventh line. If a line is too long, SHORTEN its Japanese wording; NEVER split it into an additional line.
 - L1 RELATIONSHIP, L2 SITUATION, L3 CONFLICT, L4 ESCALATION, L5 REVERSAL, L6 REACTION. Preserve story logic and avoid revealing the final truth.
 - L6 is exactly ONE physical line, with TWO colored semantic SPANS within it: cyan/blue phrase + magenta phrase. Do not place the two colors on separate lines.
-- Image-generation prompts must include the six exact Japanese line strings, their colors, and a prohibition on any other rendered textual overlays. Always specify `size="1536x1024"` and phrase as a brand-new standalone text-to-image prompt.
+- Preferred: image-generation prompt produces **background only, no readable text**; then render the six exact lines from `thumbnail_spec.json` using typography overlay. Direct text-to-image mode is optional but must pass independent visual QA; if generator produces only 1536x1024 (3:2), crop/resample the background to 16:9 before text overlay.
 - This rule overrides any historical reference suggesting 7–10 lines or permitting beat-to-line expansion, including older STEP 2/STEP 6 outputs.
 - Output validation flag: SIX_LINES_ONLY: PASS only if visible count = 6; otherwise FAIL.
+
+
+## V4 STEP 6 EXTENSION — FINAL FILE CONTRACT
+- Chỉ tạo publish package nếu `project_state.status=PUBLISH_READY`, audit PASS và hash A/B/C/audit còn khớp, score gates đầy đủ, LOCKED_TITLE byte-identical.
+- `thumbnail_spec.json` bắt buộc L1–L5 `text` + `color` (yellow,white,magenta,yellow,cyan), L6 là `spans:[{text,color:cyan},{text,color:magenta}]`, `same_baseline:true`, exactly six physical rows.
+- Cách an toàn: dùng AI tạo **background không có chữ**, crop thành 1280×720, sau đó vẽ chữ bằng renderer `python scripts/adas_v4.py render-thumbnail spec.json --background bg.png --out final.jpg --font <installed_japanese_font>`; không đóng gói font.
+- Kiểm `thumbnail spec.json --image final.jpg`: dimension 16:9 + spec cơ học + review thị giác được ghi nhận (6 hàng nhìn thấy, không chữ phụ, face right 35–40%, L6 một baseline); nếu chưa review, FAIL/PENDING, không tự ghi PASS.
+- Hình AI có sẵn chữ, vật chứng có chữ, và tỉ lệ nhân vật là những phần vẫn phải xem bằng mắt. Không tuyên bố pixel inspector là OCR chính xác.
+- SEO không đổi title. Nếu promise không đúng, dừng bản xuất, không sửa title lặng lẽ.

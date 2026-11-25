@@ -1,0 +1,61 @@
+{
+  "template_only": true,
+  "mode": "BASELINE",
+  "locked_title": "<TITLE>",
+  "logical_audit": "<evidence-based logic pass>",
+  "holistic_audit": "<evidence-based quality pass>",
+  "scores": {
+    "A": 0,
+    "B": 0,
+    "C": 0,
+    "D": 0,
+    "E": 0,
+    "F": 0,
+    "G": 0,
+    "H": 0,
+    "I": 0,
+    "J": 0,
+    "K": 0,
+    "L": 0
+  },
+  "total_score": 0,
+  "fatal_flags": [],
+  "p0_count": 0,
+  "part_status": {
+    "A": "PATCH_REQUIRED",
+    "B": "PATCH_REQUIRED",
+    "C": "PATCH_REQUIRED"
+  },
+  "coverage": {
+    "A": {
+      "reviewed_full": false,
+      "evidence_notes": "<reference actual scenes>",
+      "source_sha256": "<sha> "
+    },
+    "B": {
+      "reviewed_full": false,
+      "evidence_notes": "<reference actual scenes>",
+      "source_sha256": "<sha> "
+    },
+    "C": {
+      "reviewed_full": false,
+      "evidence_notes": "<reference actual scenes>",
+      "source_sha256": "<sha> "
+    }
+  },
+  "tickets": [
+    {
+      "id": "T01",
+      "part": "A",
+      "priority": "P1",
+      "location": "A04",
+      "root_cause": "<issue>",
+      "allowed_scope": {
+        "start_line": 1,
+        "end_line": 1
+      },
+      "acceptance": "<check>",
+      "do_not_touch": []
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "template_only": true,
+  "project_id": "Pxxx",
+  "title": "<TITLE>",
+  "title_promise": "<PROMISE>",
+  "premise": "<PREMISE>",
+  "primary_dna": "DOCUMENT_EVIDENCE_DETECTIVE",
+  "secondary_dna": [
+    "OBJECT_CALLBACK"
+  ],
+  "hook_dna": "SUSPICIOUS_OBJECT",
+  "emotional_arc": "<emotional arc>",
+  "reversal_mechanism": "<mechanism>",
+  "longform_capacity": "RISK",
+  "fingerprint": {
+    "relation": "<fill in>",
+    "setting": "<fill in>",
+    "trigger": "<fill in>",
+    "evidence": "<fill in>",
+    "mechanism": "<fill in>",
+    "reveal": "<fill in>",
+    "payoff": "<fill in>",
+    "consequence": "<fill in>"
+  }
+}

@@ -1,8 +1,19 @@
 ---
 name: adas-story-architecture-logic
-version: 3.0-three-part-lock
+version: 4.0.0
 description: "Build a causal 3-part story architecture for a 40,001–50,000-pure-character Japanese long-form script, with independent Part A/B/C capacity and repair-safe boundaries."
 ---
+
+## V4.0 CROSS-SKILL CONTRACT — BẮT BUỘC (ưu tiên so với nội dung V3 cũ)
+- Chạy trong phạm vi **STEP 2–STEP 6**. Không STEP 1/7, không Channel Audit, không nghiên cứu thị trường, không bắt buộc vidIQ.
+- `references/ADAS_V4_WORKFLOW.md` là bản hợp đồng vận hành trong skill cài độc lập; `00_CONTROLLER_V4/PROJECT_WORKFLOW.md` là bản gốc của gói tổng. Dùng CLI `scripts/adas_v4.py` hoặc bản controller cùng phiên bản.
+- `LOCKED_TITLE` bất biến từ STEP 2–6. Không thay bằng synonym hay đổi dấu; muốn thay phải tạo project/version mới có chấp thuận của user.
+- Japanese narration luôn lưu `script/A.txt`, `script/B.txt`, `script/C.txt` độc lập, UTF-8 strict, metadata sidecar JSON.
+- Cốt truyện theo **20–24 meaningful scenes**, A/B/C part budgets + tổng đúng Hard Contract; không thêm filler.
+- STEP 5 tuyệt đối audit-only: chỉ phát ticket. STEP 4 mới sửa, và chỉ theo ticket/scope, có SHA baseline; một part PASS_LOCKED không tự động mở khóa.
+- Mỗi Part tối đa 3 repair cycles; không lặp vô hạn. REPLAN ở STEP 3 chỉ được đề xuất và biên tập phần chưa khóa; mở vùng đã khóa cần user override rõ.
+- Điểm số 100 do reviewer nhận định; công cụ cơ học **không** tự xác nhận logic, nguồn pháp lý, retentions hay cảm xúc đúng.
+
 
 # STEP 3 — Story Architecture & Logic Preflight — THREE-PART CONTRACT
 
@@ -141,7 +152,7 @@ Bắt buộc xuất:
 Chỉ `APPROVED_FOR_DRAFTING: YES` nếu cả 3 part nằm trong hard range và total ≤50,000.
 
 # 8. REPLAN MODE — CHỈ REPLAN PART BỊ LỖI
-Sau STEP 5, nếu một part bị `REPLAN_REQUIRED`, STEP 3 phải chạy `REPLAN_PART_X` thay vì dựng lại toàn bộ story.
+Sau STEP 5, nếu một part bị `REPLAN_REQUIRED`, STEP 3 chỉ **đề xuất** `REPLAN_PART_X` trên part chưa khóa; không tự quay STEP 3/sửa phần đã PASS_LOCKED. Nếu chạm dependency đã khóa → `DEPENDENCY_BLOCKED` và xin quyết định của người dùng.
 
 Rules:
 - các part `PASS_LOCKED` là immutable;
@@ -166,3 +177,12 @@ Rules:
 - `APPROVED_FOR_DRAFTING: YES/NO`
 
 Nếu NO, nói rõ **part nào thiếu capacity hoặc logic gì**, không được đẩy lỗi xuống STEP 4.
+
+
+## V4 STEP 3 EXTENSION — EXECUTABLE BLUEPRINT
+- Tạo `plans/blueprint.json` theo JSON template, **20–24 scene**; mỗi scene phải có `id`, `part`, `purpose`, `new_info`, `action`, `conflict`, `state_change`, `evidence`, `knowledge_transfer`, `target_chars`.
+- Lập `PROOF_CHAIN` xác định người tạo, địa điểm lưu, người xem, đường được quyền truy cập, scene xuất hiện; cấm dữ liệu có được bằng truy cập bất hợp pháp/phi thực tế.
+- Xác định Character Knowledge, Timeline, Motivation, Setup→Payoff, Reveal Map và Seed IDs đủ hai lần gieo hợp lý cho mỗi reveal.
+- `TITLE_PROMISE` và `PAYOFF_ID` kết nối bất biến; PART A→B→C có `entry_state`, `exit_state`, `open_loops`, `next_scene`.
+- Chạy `python scripts/adas_v4.py blueprint plans/blueprint.json`; only JSON-structure PASS plus semantic logic preflight PASS mới chuyển STEP 4.
+- `REPLAN_PART_X`: chỉ phần FAIL, chỉ trước khi khóa; sau khi có `PASS_LOCKED`, nếu cần sửa seed trong part locked → `DEPENDENCY_BLOCKED + LOCK_OVERRIDE_REQUEST`, không tự chỉnh STEP 3/4.

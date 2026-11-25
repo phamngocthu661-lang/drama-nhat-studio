@@ -6,3 +6,5 @@
 - Final total: 40,001–50,000; this part contract mechanically bottoms at 40,002.
 - Passed parts become immutable after STEP 5.
 - Repair/replan only the failing part.
+
+V4 gate: A/B/C must be checked separately with the same strict UTF-8 counter; STEP 5 is audit-only, STEP 4 is writer/repair; PASS_LOCKED SHA preserved until an explicit user-approved exception.

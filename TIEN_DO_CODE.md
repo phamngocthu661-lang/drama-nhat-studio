@@ -1,5 +1,91 @@
 # NHẬT KÝ TIẾN ĐỘ NÂNG CẤP & SỬA LỖI — DRAMA NHẬT STUDIO
 
+## Cập nhật: 21/11/2026 (Lần 55) — Tự Động & Thủ Công Chuyển File `subtitles.srt` Qua ChatGPT Phân Tích, Tối Ưu Mô Tả & Bổ Sung Timestamps Vào File SEO
+
+### 1. Yêu cầu của người dùng
+- Sau khi hệ thống chạy xong file phụ đề `.srt` ([`subtitles.srt`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voicevox_service.py)), tự động chuyển dữ liệu `.srt` qua **ChatGPT Web** phân tích toàn bộ mạch truyện theo thời gian thực để tối ưu/bổ sung Mô tả tiếng Nhật (`YOUTUBE_DESCRIPTION_JA`) và tạo **Timestamps/Chapters tiếng Nhật** (`▼目次（チャプター・タイムスタンプ）`) lồng trực tiếp vào phần Mô tả của File SEO (giữ nguyên `LOCKED_TITLE`, chỉ cập nhật cho `TOOL_NHAT_DRAMA` + `app/` mirror).
+- Bổ sung đồng thời nút thao tác thủ công trên giao diện cho các dự án đã có sẵn `.srt`.
+
+### 2. Giải pháp kỹ thuật & Các file đã tạo/cập nhật
+1. **Tạo module mới [`backend/srt_seo_analyzer.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py)**:
+   - [`build_srt_chronological_digest()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py#L99): Nén thông minh file `.srt` (hỗ trợ cả video dài 90–140+ phút) thành timeline rút gọn `< 24.000` ký tự giữ nguyên mốc thời gian thật `[MM:SS]`/`[HH:MM:SS]` phủ đều `0% -> 100%` gửi trực tiếp cho ChatGPT Web.
+   - [`build_srt_seo_analysis_prompt()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py) & [`parse_and_validate_srt_seo_response()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py#L399-L453): Ép ChatGPT trả Mô tả tiếng Nhật chuẩn SEO không spoil kết cục kèm tối đa 7–10 Timestamps chuẩn YouTube, hỗ trợ cả `<UPDATED_YOUTUBE_DESCRIPTION_JA>` và `<YOUTUBE_DESCRIPTION_JA>`.
+   - [`update_seo_files_with_chatgpt_srt_result()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py#L567-L672): Ghi đè sạch mục `YOUTUBE_DESCRIPTION_JA` (gỡ thẻ `<WritingBlock>`, dọn block timestamps tiếng Việt cũ ở đáy nếu có, giữ nguyên `LOCKED_TITLE`) đồng bộ vào `00_TIEU_DE_VA_SEO_YOUTUBE.txt`, `renders/{ID}_SEO.txt`, `seo_publish_pack.txt` (nếu có), `assets/TIMESTAMPS.txt` và cache kết quả `assets/srt_chatgpt_seo_result.json` theo `srt_sha256`.
+   - [`analyze_project_srt_with_chatgpt_sync()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py#L683): Giới hạn đồng thời 3 luồng (`_SRT_CHATGPT_SEMAPHORE`), kiểm tra nick ChatGPT đăng nhập sẵn, tự xoay vòng sang nick khác khi gặp `AccountRateLimitError`, và có fallback tiếng Nhật ([`build_fallback_srt_timestamps_and_description()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/srt_seo_analyzer.py#L456-L513)) khi bật `allow_fallback=True` ở luồng Render tự động.
+2. **Tích hợp dây chuyền Render tự động tại [`backend/pipeline.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py)**:
+   - Thêm **GIAI ĐOẠN 1.5** ([lines 1189–1264](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1189-L1264)) chạy ngay sau khi tạo/tái sử dụng `subtitles.srt` (ngoài `voice_synth_lock` để không chặn GPU VOICEVOX của job khác).
+   - Cập nhật **Stage 5** ([lines 1626–1649](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1626-L1649)): Không nối lặp khối timestamps tiếng Việt ở đáy `renders/{ID}_SEO.txt` khi `00_TIEU_DE_VA_SEO_YOUTUBE.txt` đã tích hợp sẵn `▼目次` / `チャプター・タイムスタンプ`.
+   - Cập nhật [`_auto_patch_live_instances_on_reload()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/pipeline.py#L1997) reload `backend.srt_seo_analyzer` và đăng ký dynamic routes `/api/adas/srt-to-seo`, `/api/adas/srt-to-seo/status`.
+3. **Mở rộng [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py) & [`backend/server.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py)**:
+   - Thêm [`has_srt_on_disk()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L1734-L1773), [`get_srt_to_seo_status()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L5695-L5711), [`start_srt_to_seo_async()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L5713-L5874) và đồng bộ trạng thái `has_srt`, `has_srt_seo`, `timestamps_txt` trong disk sync & `get_project_outputs()`.
+   - Mở API `POST /api/adas/srt-to-seo` ([lines 731–745](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py#L731-L745)) và `GET /api/adas/srt-to-seo/status` ([lines 747–749](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/server.py#L747-L749)).
+4. **Cập nhật giao diện [`frontend/index.html`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/index.html) & [`frontend/app.js`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/frontend/app.js)** (và đồng bộ mirror `app/`):
+   - Thêm nút chạy hàng loạt `#btn-adas-srt-to-seo-all` (`⏱️ SRT → SEO ChatGPT`), nút đơn `.btn-idea-srt-seo` trên thẻ dự án đã có `.srt`, và nút `#btn-adas-modal-srt-seo` trong Modal Chi tiết (`#adas-detail-modal`), dùng chung hàm `triggerSrtToSeoBatch()` để gọi API, poll tiến độ mỗi `850ms`, đổ log realtime và tự refresh tab SEO khi hoàn tất.
+5. **Kiểm thử & Chống hồi quy**:
+   - `py_compile` toàn bộ file sửa & `node --check` cho `frontend/app.js` + `app/frontend/app.js`: **PASS (`exit code 0`)**.
+   - `code_ontology_guard.py verify`: **`STATUS: PASS`** (`60/60 file Python`, 0 đứt gãy, 100% tương thích ngược).
+   - Bộ kiểm thử E2E [`test_srt_seo_e2e.py`](file:///C:/Users/hungp/.gemini/antigravity/brain/963c6656-0a52-4e1f-ac09-444368d2de18/scratch/test_srt_seo_e2e.py): **6/6 PASS** (`test_digest_and_parser`, `test_seo_updater_preserves_title_and_clean_timestamps`, `test_chatgpt_failover_cache_and_fallback`, `test_engine_and_fastapi_endpoints`, `test_mirror_and_ui_wiring`, `test_alt_xml_tag_and_hotreload`).
+
+---
+
+## Cập nhật: 10/11/2026 (Lần 54) — Nâng Cấp Toàn Diện Bộ 5 Skill Viết Kịch Bản & Bộ Điều Phối Lên Chuẩn ADAS V4.0.0 (`ADAS_5_SKILLS_V4_0_UPGRADED.zip`)
+
+### 1. Yêu cầu của người dùng
+- Nâng cấp toàn bộ hệ thống skill viết kịch bản (`adas_skills/`) và động cơ điều phối kịch bản ([`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py)) lên phiên bản mới nhất **ADAS V4.0.0** từ gói [`ADAS_5_SKILLS_V4_0_UPGRADED.zip`](file:///C:/Users/hungp/.gemini/antigravity/brain/963c6656-0a52-4e1f-ac09-444368d2de18/.user_uploaded/media_1794315110142_290ebfaa.zip).
+
+### 2. Giải pháp kỹ thuật & Các file đã nâng cấp
+1. **Cập nhật trọn bộ [`adas_skills/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills) (và đồng bộ sang `app/adas_skills/` + `Mexico ông già/adas_skills/`) lên `V4.0.0`**:
+   - **[`00_CONTROLLER_V4/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/00_CONTROLLER_V4)** & **[`adas_skills/instructions.txt`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/instructions.txt)**: Tích hợp bộ điều khiển [`adas_v4.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/00_CONTROLLER_V4/scripts/adas_v4.py), [`PROJECT_WORKFLOW.md`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/00_CONTROLLER_V4/PROJECT_WORKFLOW.md), [`QUICK_START.md`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/00_CONTROLLER_V4/QUICK_START.md), bộ JSON templates V4.0 và bổ sung hỗ trợ font chữ tiếng Nhật Windows (`meiryob.ttc`, `YuGothB.ttc`, `BIZ-UDGothicB.ttc`, `msgothic.ttc`) cho hàm [`resolve_font()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/00_CONTROLLER_V4/scripts/adas_v4.py#L322-L327).
+   - **[`02_idea_title_packaging/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/02_idea_title_packaging/SKILL.md) (`V4.0.0`)**: Bổ sung [`creative_dna_v4.md`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/02_idea_title_packaging/references/creative_dna_v4.md) (`PRIMARY_STORY_DNA`, `SECONDARY_DNA`, `HOOK_DNA`, `EMOTIONAL_ARC`, `REVERSAL_MECHANISM`), `ONE_IDEA_MODE`, kiểm định `ORIGINALITY_FINGERPRINT` 8 yếu tố (`>=5/8` tổng và `>=3/4` yếu tố lõi `trigger, evidence, mechanism, reveal`) và khóa cứng `SIX_LINES_ONLY` (`L1: yellow, L2: white, L3: magenta, L4: yellow, L5: cyan, L6: cyan + magenta same_baseline=true`).
+   - **[`03_story_architecture_logic/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/03_story_architecture_logic/SKILL.md) (`V4.0.0`)**: Hợp đồng kiến trúc 20–24 cảnh (`PART_A_SCENE_PLAN`, `PART_B_SCENE_PLAN`, `PART_C_SCENE_PLAN`), sổ cái vật chứng `PROOF_CHAIN` (`created_by`, `stored_at`, `accessed_by`, `access_path`, `first_seen_scene`), 3 tầng Reveal (mỗi tầng `>= 2 seed_ids`), và gắn `title_promise_payoff_id` tại `PART C`.
+   - **[`04_longform_script_writer/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/04_longform_script_writer/SKILL.md) (`V4.0.0`)**: Quy tắc `ZERO METADATA LEAK` (`META_TITLE`, `META_PART`, `META_CONTROL`, `META_WRAPPER`) đảm bảo 100% văn bản tự sự & lời thoại tiếng Nhật thuần túy kèm sổ bàn giao `PART_HANDOFF_LEDGER`.
+   - **[`05_script_auditor_100/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/05_script_auditor_100/SKILL.md) (`V4.0.0`)**: Quy trình kiểm định độc lập 2 lớp (`TWO-PASS AUDIT`: `Pass 1 — Logic & Dependency Audit` + `Pass 2 — Global Holistic Quality Rubric 12 hạng mục A–L / 100 điểm`, ngưỡng `TOTAL_SCORE >= 95/100`, `P0_COUNT == 0`), đồng bộ toàn bộ 35 file [`reference_corpus/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/05_script_auditor_100/reference_corpus) khớp 100% SHA-256 với [`packaged_corpus_manifest.json`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/05_script_auditor_100/references/packaged_corpus_manifest.json).
+   - **[`06_seo_publish_pack/`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/06_seo_publish_pack/SKILL.md) (`V4.0.0`)**: Khóa bất biến `LOCKED_TITLE` từ STEP 2 và chuẩn hóa bảng màu 6 dòng Thumbnail V4.0.0.
+2. **Nâng cấp [`backend/adas_script_engine.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py) & [`backend/voice_service.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py)**:
+   - Nâng cấp [`DEFAULT_STEP2_PROMPT_TEMPLATE`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L52-L147), [`build_step2_prompt_from_idea()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L561-L614), [`_load_skill_markdown()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2825-L2845), [`_build_step3_prompt()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2847-L2868), [`_build_step4_part_initial_prompt()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2892-L2923), [`_build_step5_audit_prompt()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L2952-L3007), [`_build_step6_seo_prompt()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/adas_script_engine.py#L3009-L3050) và bộ lọc [`strip_leaked_titles_and_metadata()`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/backend/voice_service.py#L186-L246) đồng bộ hoàn toàn với chuẩn **ADAS V4.0.0**.
+   - Kiểm thử tự động [`test_adas_v4.py`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/TOOL_NHAT_DRAMA/adas_skills/00_CONTROLLER_V4/tests/test_adas_v4.py) (`9/9 tests OK`), `verify-corpus` (`35/35 SHA-256 PASS`) và Smoke Test toàn bộ chuỗi Prompt Step 2 $\rightarrow$ Step 6 đạt `100% PASS`.
+
+---
+
+## Cập nhật: 08/11/2026 (Lần 53) — Nhân Bản Độc Lập 100% Ứng Dụng Thành Phiên Bản Mới: `Mexico ông già`
+
+### 1. Yêu cầu của người dùng
+- Nhân bản ứng dụng hiện tại thành một phiên bản độc lập mới dùng cho key mới với tên gọi **`Mexico ông già`**, sẵn sàng tiếp nhận quy trình viết kịch bản mới và quy trình dựng/edit video mới.
+
+### 2. Chi tiết kỹ thuật bản nhân bản `Mexico ông già`
+1. **Đường dẫn thư mục ứng dụng mới**:
+   - Thư mục chính: [`d:\KEY NHẬT DRAMA\Mexico ông già`](file:///d:/KEY%20NH%E1%BA%ACT%20DRAMA/Mexico%20%C3%B4ng%20gi%C3%A0) (đồng bộ trực tiếp qua liên kết ổ đĩa tại [`D:\Mexico ông già`](file:///D:/Mexico%20%C3%B4ng%20gi%C3%A0)).
+   - File khởi chạy: [`Mexico_Ong_Gia.exe`](file:///D:/Mexico%20%C3%B4ng%20gi%C3%A0/Mexico_Ong_Gia.exe), [`Chay_App.bat`](file:///D:/Mexico%20%C3%B4ng%20gi%C3%A0/Chay_App.bat) và [`main.py`](file:///D:/Mexico%20%C3%B4ng%20gi%C3%A0/main.py).
+2. **Cô lập 100% Cổng mạng, Chrome CDP & AppData (chạy song song cùng lúc với bản Nhật mà không đụng nhau)**:
+   - **Cổng Server Backend mặc định**: `8900` (tách biệt hoàn toàn với cổng `8899` của bản Nhật).
+   - **Cổng Chrome CDP ChatGPT (3 nick)**: `9232`, `9233`, `9234` (tách biệt với `9222..9224`).
+   - **Cổng Chrome CDP Gemini**: `9235`, `9236`, `9237` (tách biệt với `9225..9227`).
+   - **Thư mục AppData & SSD Staging riêng**: `%LOCALAPPDATA%\Mexico_Ong_Gia_Studio` và `MexicoUI_Profile_V6`.
+   - **Kho dữ liệu sạch**: `projects/`, `STOOK/`, `saved_ideas.json` khởi tạo mới 100% tại [`storage_paths.json`](file:///D:/Mexico%20%C3%B4ng%20gi%C3%A0/storage_paths.json) và [`config.json`](file:///D:/Mexico%20%C3%B4ng%20gi%C3%A0/config.json).
+   - **Giao diện**: Đổi tên thương hiệu thành `ZC Team - MEXICO ÔNG GIÀ | Workstation Studio` tại [`frontend/index.html`](file:///D:/Mexico%20%C3%B4ng%20gi%C3%A0/frontend/index.html).
+
+---
+
+## Cập nhật: 08/11/2026 (Lần 52) — Kiểm Định Toàn Diện Lô Video `#40` Đến `#45` (`D:\KEY NHẬT\40`..`45`): Kiểm Tra Video, Chuẩn Hóa 100% File SEO Kèm Timestamps ("Timelaps") & Kiểm Tra Thumbnail
+
+### 1. Kết quả kiểm định 6 dự án `#40` đến `#45` (`D:\KEY NHẬT\40`..`D:\KEY NHẬT\45`)
+1. **Kiểm tra Video (`VIDEO_HOAN_CHINH.mp4`) — ĐẠT 100% (6/6 Video)**:
+   - `#40`: [`VIDEO_HOAN_CHINH.mp4`](file:///D:/KEY%20NH%E1%BA%ACT/40/VIDEO_HOAN_CHINH.mp4) — `1,545.77 MB` | `25:15` (`1514.73s`) | `1920x1080 @ 30fps` (H.264 + AAC) | Đủ 10/10 cảnh Hook Video AI + 22 cảnh Body Video AI + 198 ảnh Seinen Manga + hộp thoại dọc né mặt.
+   - `#41`: [`VIDEO_HOAN_CHINH.mp4`](file:///D:/KEY%20NH%E1%BA%ACT/41/VIDEO_HOAN_CHINH.mp4) — `1,529.66 MB` | `24:49` (`1489.00s`) | `1920x1080 @ 30fps` (H.264 + AAC) | Đạt chuẩn 100%.
+   - `#42`: [`VIDEO_HOAN_CHINH.mp4`](file:///D:/KEY%20NH%E1%BA%ACT/42/VIDEO_HOAN_CHINH.mp4) — `1,785.01 MB` | `24:53` (`1493.37s`) | `1920x1080 @ 30fps` (H.264 + AAC) | Đạt chuẩn 100%.
+   - `#43`: [`VIDEO_HOAN_CHINH.mp4`](file:///D:/KEY%20NH%E1%BA%ACT/43/VIDEO_HOAN_CHINH.mp4) — `1,965.12 MB` | `28:55` (`1734.53s`) | `1920x1080 @ 30fps` (H.264 + AAC) | Đạt chuẩn 100%.
+   - `#44`: [`VIDEO_HOAN_CHINH.mp4`](file:///D:/KEY%20NH%E1%BA%ACT/44/VIDEO_HOAN_CHINH.mp4) — `1,632.61 MB` | `26:45` (`1605.47s`) | `1920x1080 @ 30fps` (H.264 + AAC) | Đạt chuẩn 100%.
+   - `#45`: [`VIDEO_HOAN_CHINH.mp4`](file:///D:/KEY%20NH%E1%BA%ACT/45/VIDEO_HOAN_CHINH.mp4) — `1,732.12 MB` | `24:42` (`1481.67s`) | `1920x1080 @ 30fps` (H.264 + AAC) | Đạt chuẩn 100%.
+2. **Kiểm tra & Khắc phục File SEO (`SEO.txt`, `04_SEO_PACKAGING_REPORT.md`, `K1_SEO_MASTER.docx`, `TIMESTAMPS.txt`)**:
+   - **Phát hiện trước khi sửa**: Cả 6/6 file `SEO.txt` và `K1_SEO_MASTER.docx` đều chưa được nhúng mục Timestamps (`00:00 ...`); riêng `#40, #41, #43, #44, #45` trong `TIMESTAMPS.txt` chỉ có số chương trống (`00:00 【導入】 / 02:36 【第1章】...`), chưa có tên chương. Кроме đó, `SEO.txt` của `#41` bị thông báo từ chối của ChatGPT, `#43` bị ghi nhầm dữ liệu Step 3 của `P1006`, và `#40, #42, #44, #45` bị dính chữ rác giao diện ChatGPT (`Pasted text... Worked for...`).
+   - **Đã khắc phục triệt để 100%**:
+     - Chuẩn hóa lại toàn bộ [`TIMESTAMPS.txt`](file:///D:/KEY%20NH%E1%BA%ACT/40/TIMESTAMPS.txt), [`TIMESTAMPS.md`](file:///D:/KEY%20NH%E1%BA%ACT/40/TIMESTAMPS.md), [`SEO.txt`](file:///D:/KEY%20NH%E1%BA%ACT/40/SEO.txt), [`04_SEO_PACKAGING_REPORT.md`](file:///D:/KEY%20NH%E1%BA%ACT/40/04_SEO_PACKAGING_REPORT.md) và [`K1_SEO_MASTER.docx`](file:///D:/KEY%20NH%E1%BA%ACT/40/K1_SEO_MASTER.docx) cho cả 6 thư mục `#40` đến `#45` với đầy đủ 10 mục chuẩn V1.9.2 và **nhúng trực tiếp Timestamps 8 chương (`▼目次（チャプター・タイムスタンプ） 00:00 ...`) vào ngay trong phần Mô tả tiếng Nhật (Section 3) và Section 3.5**.
+     - Nâng cấp [`youtube_timestamps_generator.py`](file:///d:/TEST%20TOOL%20VIDEO%20-%20Copy/tools/youtube_timestamps_generator.py#L145-L214) bổ sung hàm `_inject_timestamps_into_seo_files()` để mọi video render về sau đều tự động nhúng Timestamps vào `SEO.txt` và `K1_SEO_MASTER.docx`.
+3. **Kiểm tra Thumbnail (`assets/thumbnails/THUMBNAIL_A/B/C.png`)**:
+   - Phát hiện 17/18 ảnh Thumbnail trong `#40..#45` đang là ảnh Fallback (nền mờ đóng khung chữ bằng Pillow ghi `FOLDER #40..#45 (THUMBNAIL A/B/C)`), còn `THUMBNAIL_A.png` của `#40` là ảnh ghép 3 phương án A/B/C chung 1 ảnh và lệch chủ đề.
+
+---
+
 ## Cập nhật: 06/11/2026 (Lần 51 — V1.0.4 Build #117) — Tự Động Tạm Dừng 30 Phút Khi Tài Khoản Bị Limit & Đẩy Kịch Bản Sang Nick Khác Làm Lại Từ Đầu + Chốt Chặn 100% Có Thumbnail (Tự Động Đổi Nick Tạo Lại Khi Thiếu/Lỗi)
 
 ### 1. Yêu cầu của người dùng

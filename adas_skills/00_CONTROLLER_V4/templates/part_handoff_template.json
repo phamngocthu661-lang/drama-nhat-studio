@@ -1,0 +1,31 @@
+{
+  "part": "A",
+  "script_sha256": "<sha of script/A.txt>",
+  "end_time": "<local date/time>",
+  "end_location": "<place>",
+  "characters": {
+    "<ID>": {
+      "knowledge_ids": [
+        "E01"
+      ],
+      "state": "<state>"
+    }
+  },
+  "documents": [
+    {
+      "id": "E01",
+      "custodian": "<person>",
+      "access": "<permission>"
+    }
+  ],
+  "open_loops": [
+    "L1"
+  ],
+  "closed_loops": [],
+  "knowledge_corrections": {},
+  "seed_ids": [
+    "S1"
+  ],
+  "forbidden_contradictions": [],
+  "next_scene": "B01"
+}

@@ -424,6 +424,9 @@
                 </div>
                 <div class="flex items-center gap-3">
                   <span class="font-label-lg text-xs font-bold text-primary-container font-mono" id="adas-progress-pct">0%</span>
+                  <button class="flex items-center gap-1 px-2.5 py-0.5 rounded bg-primary-container text-on-primary-container font-label-sm text-[11px] font-bold hover:brightness-110 border border-primary-container/40 transition-all" id="btn-adas-continue" title="Nạp tất cả mã chưa xong vào dây chuyền theo Chế Độ Chạy đang chọn. Đang chạy thì nạp thêm vào hàng đợi (không phải dừng); đã dừng thì viết tiếp từ phần đã lưu." type="button">
+                    <span class="material-symbols-outlined text-[13px]">play_arrow</span> CHẠY TIẾP
+                  </button>
                   <button class="flex items-center gap-1 px-2.5 py-0.5 rounded bg-error-container text-on-error font-label-sm text-[11px] font-bold hover:brightness-110 border border-error/40 transition-all" id="btn-adas-stop" type="button">
                     <span class="material-symbols-outlined text-[13px]">cancel</span> DỪNG KHẨN CẤP
                   </button>
@@ -450,6 +453,9 @@
                   </button>
                   <button class="flex items-center gap-1 px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 text-amber-300 font-label-sm text-[10.5px] font-bold border border-amber-400/50 transition-all active:scale-95" id="btn-adas-check-repair-all" title="Quét toàn bộ Kịch bản &amp; Video MP4 đã tạo: Tự động xóa dòng [LOCKED_TITLE] lỗi trong Kịch bản và cắt bỏ đoạn voice lỗi trong Video MP4" type="button">
                     <span class="material-symbols-outlined text-[13px]">fact_check</span> 🛡️ Check Toàn Bộ
+                  </button>
+                  <button class="flex items-center gap-1 px-2 py-0.5 rounded bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 font-label-sm text-[10.5px] font-bold border border-cyan-400/50 transition-all active:scale-95" id="btn-adas-srt-to-seo-all" title="Chuyển toàn bộ các dự án đã có file phụ đề .srt qua ChatGPT phân tích, tối ưu Mô tả tiếng Nhật và bổ sung Timestamps/Chapters vào file SEO" type="button">
+                    <span class="material-symbols-outlined text-[13px]">schedule</span> ⏱️ SRT → SEO ChatGPT
                   </button>
                 </div>
                 <!-- Bộ lọc tiêu đề: Tất cả / Chưa xong / Đã xong KB / Chưa Render / Đã Render -->
@@ -1496,6 +1502,9 @@
       <div class="flex items-center justify-between pt-1 border-t border-surface-container-high">
         <span class="font-label-sm text-[11px] text-outline font-mono">Dữ liệu được lưu trữ tự động trong folder dự án JSON/TXT</span>
         <div class="flex items-center gap-2">
+          <button class="px-3 py-1.5 rounded bg-cyan-500/20 hover:bg-cyan-500/35 text-cyan-300 font-label-sm text-xs font-bold flex items-center gap-1 border border-cyan-400/50 transition-all" id="btn-adas-modal-srt-seo" title="Phân tích file subtitles.srt qua ChatGPT để tối ưu Mô tả tiếng Nhật &amp; bổ sung Timestamps vào file SEO" type="button">
+            <span class="material-symbols-outlined text-[15px]">schedule</span> SRT → ChatGPT SEO
+          </button>
           <button class="px-3.5 py-1.5 rounded bg-surface-container-high hover:bg-surface-bright text-primary font-label-sm text-xs font-bold flex items-center gap-1 border border-surface-container-high" id="btn-adas-copy-detail" type="button">
             <span class="material-symbols-outlined text-[15px]">content_copy</span> Copy Nội Dung
           </button>
@@ -1532,6 +1541,6 @@
     </div>
   </div>
 
-  <script src="app.js?v=20261103_v10"></script>
+  <script src="app.js?v=20261121_v11"></script>
 </body>
 </html>

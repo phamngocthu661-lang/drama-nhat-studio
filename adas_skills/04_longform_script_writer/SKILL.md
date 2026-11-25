@@ -1,8 +1,19 @@
 ---
 name: adas-longform-japanese-writer
-version: 3.0-three-part-build-patch
+version: 4.0.0
 description: "Write Japanese long-form scripts in three independent parts (A/B/C), each mechanically length-checked, then patch only the specific failing part without touching locked parts."
 ---
+
+## V4.0 CROSS-SKILL CONTRACT — BẮT BUỘC (ưu tiên so với nội dung V3 cũ)
+- Chạy trong phạm vi **STEP 2–STEP 6**. Không STEP 1/7, không Channel Audit, không nghiên cứu thị trường, không bắt buộc vidIQ.
+- `references/ADAS_V4_WORKFLOW.md` là bản hợp đồng vận hành trong skill cài độc lập; `00_CONTROLLER_V4/PROJECT_WORKFLOW.md` là bản gốc của gói tổng. Dùng CLI `scripts/adas_v4.py` hoặc bản controller cùng phiên bản.
+- `LOCKED_TITLE` bất biến từ STEP 2–6. Không thay bằng synonym hay đổi dấu; muốn thay phải tạo project/version mới có chấp thuận của user.
+- Japanese narration luôn lưu `script/A.txt`, `script/B.txt`, `script/C.txt` độc lập, UTF-8 strict, metadata sidecar JSON.
+- Cốt truyện theo **20–24 meaningful scenes**, A/B/C part budgets + tổng đúng Hard Contract; không thêm filler.
+- STEP 5 tuyệt đối audit-only: chỉ phát ticket. STEP 4 mới sửa, và chỉ theo ticket/scope, có SHA baseline; một part PASS_LOCKED không tự động mở khóa.
+- Mỗi Part tối đa 3 repair cycles; không lặp vô hạn. REPLAN ở STEP 3 chỉ được đề xuất và biên tập phần chưa khóa; mở vùng đã khóa cần user override rõ.
+- Điểm số 100 do reviewer nhận định; công cụ cơ học **không** tự xác nhận logic, nguồn pháp lý, retentions hay cảm xúc đúng.
+
 
 # STEP 4 — Japanese Long-form Script Writer — THREE-PART BUILD/PATCH SYSTEM
 
@@ -156,12 +167,9 @@ Sau mỗi part:
 # 9. OUTPUT CONTRACT — BUILD MODE
 Mỗi lần chỉ output **một part**:
 - Japanese narration thuần túy cho part đó (**TUYỆT ĐỐI KHÔNG in dòng `LOCKED_TITLE: ...`, `SELECTED_TITLE: ...`, `PART A — 日本語脚本`, `Pxxx — STEP 4 · BUILD PART A · 日本語脚本`, `<CodeBlock>`, `<WritingBlock>`, `CONTINUITY:`, `ENDING:` vào đầu hay giữa văn bản truyện để tránh rò rỉ vào giọng đọc TTS và phụ đề Video!**)
-- Ở cuối cùng (sau khi kết thúc hoàn toàn văn bản truyện tiếng Nhật) mới ghi:
-- `PART_PURE_CHARACTER_COUNT`
-- `PART_LENGTH_GATE: PASS/FAIL`
-- Continuity ledger
-- Handoff ledger
-- `NEXT_ACTION`
+- Ở **báo cáo ngoài file narration** (JSON sidecar) ghi:
+- `PART_PURE_CHARACTER_COUNT`, `PART_LENGTH_GATE`
+- Continuity ledger, Handoff ledger, `NEXT_ACTION`
 
 Sau C và assembly:
 - `PART_A_COUNT`
@@ -179,3 +187,12 @@ Sau C và assembly:
 - `TOTAL_PURE_CHARACTER_COUNT_AFTER`
 - `LOCKED_OTHER_PARTS_TOUCHED: NO`
 - `READY_FOR_VERIFY_AUDIT: YES/NO`
+
+
+## V4 STEP 4 EXTENSION — WRITER-ONLY REPAIR & CHECKPOINTS
+- Script artifact bắt buộc là `script/A.txt`, `script/B.txt`, `script/C.txt` **chỉ chứa lời kể tiếng Nhật**. Tất cả counts, QA, handoff đi vào JSON khác; không đặt metadata cuối file script.
+- Dùng `python scripts/adas_v4.py count script/A.txt --part A` và `parts script/A.txt script/B.txt script/C.txt` (exit status 0 PASS, 2 FAIL); strict UTF-8, NFC letter/number.
+- Sau mỗi part ghi `PART_HANDOFF.json` chứa date/time/location, characters/knowledge, documents/permissions, seeded clues, open loops, next scene và current SHA.
+- Trước B/C, đối chiếu handoff với Story Bible và người biết thông tin, không có knowledge leak.
+- PATCH chỉ theo `REPAIR_TICKETS` có `allowed_scope.start_line/end_line` xác định **trên snapshot bản trước**. Gọi `patch --before ... --after ... --tickets ... --part ... --cycle ...`; dùng `commit-patch` của controller để đổi state hash sau khi PASS.
+- Nếu patch cần sửa dòng/part đã PASS_LOCKED: STOP và xuất `LOCK_OVERRIDE_REQUEST` để user quyết định; không cho phép override chỉ vì AI tự ghi.

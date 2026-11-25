@@ -1187,6 +1187,87 @@ class ProductionPipeline:
                         raise InterruptedError("PERF_DOWNSCALE_YIELD")
 
                     # ==========================================================
+                    # GIAI ĐOẠN 1.5: SAU KHI CHẠY FILE SRT -> CHUYỂN QUA CHATGPT
+                    # PHÂN TÍCH VÀ BỔ SUNG MÔ TẢ + TIMESTAMPS VÀO FILE SEO
+                    # ==========================================================
+                    srt_file_path = Path(voice_res.get("subtitles_srt") or (assets_dir / "subtitles.srt"))
+                    if srt_file_path.exists() and srt_file_path.stat().st_size > 30:
+                        self._set_project_live_detail(
+                            proj_name=proj_name,
+                            stage="srt_seo",
+                            stage_label="💬 ChatGPT SRT → SEO",
+                            progress=49.0,
+                            detail="Đang chuyển subtitles.srt sang ChatGPT phân tích Mô tả & Timestamps...",
+                            job_num=job_num,
+                        )
+                        _update_overall_progress(
+                            f"[{proj_name}] 💬 Đã chạy xong SRT -> ChatGPT đang phân tích & bổ sung Timestamps vào SEO...",
+                            "srt_seo",
+                        )
+                        self._update_job_card_status(
+                            proj_name,
+                            "VIDEO_RENDERING",
+                            "💬 Đã xong SRT -> ChatGPT đang phân tích & bổ sung Timestamps vào SEO...",
+                        )
+                        try:
+                            from .srt_seo_analyzer import analyze_project_srt_with_chatgpt_sync
+
+                            adas_ref = getattr(self, "adas_engine", None)
+                            idea_rec = None
+                            if adas_ref is not None and hasattr(adas_ref, "load_saved_ideas"):
+                                try:
+                                    idea_rec = next(
+                                        (it for it in adas_ref.load_saved_ideas() if it.get("ma_id") == proj_name),
+                                        None,
+                                    )
+                                except Exception:
+                                    idea_rec = None
+
+                            srt_seo_res = analyze_project_srt_with_chatgpt_sync(
+                                proj_dir=proj_dir,
+                                ma_id=proj_name,
+                                srt_path=srt_file_path,
+                                final_proj_dir=final_proj_dir,
+                                locked_title=str((idea_rec or {}).get("locked_title") or ""),
+                                idea=idea_rec,
+                                force=bool(job.get("force_srt_seo", False)),
+                                allow_fallback=True,
+                                progress_cb=lambda m: self._set_project_live_detail(
+                                    proj_name=proj_name,
+                                    stage="srt_seo",
+                                    stage_label="💬 ChatGPT SRT → SEO",
+                                    progress=49.5,
+                                    detail=m,
+                                    job_num=job_num,
+                                ),
+                                should_stop_cb=lambda: bool(
+                                    self.should_stop or proj_name in getattr(self, "paused_for_perf_downscale", set())
+                                ),
+                            )
+                            if srt_seo_res and srt_seo_res.get("timestamps_path"):
+                                voice_res["timestamps_txt"] = srt_seo_res["timestamps_path"]
+                            if adas_ref is not None and hasattr(adas_ref, "_update_idea_record"):
+                                adas_ref._update_idea_record(
+                                    proj_name,
+                                    has_srt=True,
+                                    has_seo=True,
+                                    has_srt_seo=bool(srt_seo_res and srt_seo_res.get("source") == "chatgpt_web"),
+                                )
+                        except InterruptedError:
+                            raise
+                        except Exception as e_srt_seo:
+                            log_warn(
+                                f"⚠️ [{proj_name}] Lưu ý khi ChatGPT phân tích SRT -> SEO: {e_srt_seo}",
+                                category="SEO",
+                                project_id=proj_name,
+                            )
+
+                    if self.should_stop:
+                        raise InterruptedError("Đã dừng tiến trình Render theo yêu cầu")
+                    if proj_name in getattr(self, "paused_for_perf_downscale", set()):
+                        raise InterruptedError("PERF_DOWNSCALE_YIELD")
+
+                    # ==========================================================
                     # GIAI ĐOẠN 2: CẤP PHÁT VIDEO STOCK (KHÔI PHỤC STOCK CŨ NẾU ĐANG RENDER DỞ & CÒN TỒN TẠI TRÊN Ổ CỨNG)
                     # ==========================================================
                     saved_stock_json = assets_dir / "selected_stock.json"
@@ -1545,7 +1626,12 @@ class ProductionPipeline:
                         master_seo_src = proj_dir / "00_TIEU_DE_VA_SEO_YOUTUBE.txt"
                         if master_seo_src.exists():
                             full_seo_txt = master_seo_src.read_text(encoding="utf-8")
-                            if "Chapters / Timestamps" not in full_seo_txt and timestamps_content:
+                            has_embedded_chapters = (
+                                "▼目次" in full_seo_txt
+                                or "チャプター・タイムスタンプ" in full_seo_txt
+                                or "Chapters / Timestamps" in full_seo_txt
+                            )
+                            if not has_embedded_chapters and timestamps_content:
                                 full_seo_txt += (
                                     "\n\n================================================================================\n"
                                     "⏱️ TIMESTAMPS / CHAPTERS YOUTUBE (TỰ ĐỘNG TÍNH THEO GIỌNG ĐỌC)\n"
@@ -1906,6 +1992,11 @@ def _auto_patch_live_instances_on_reload():
             importlib.reload(_upd_mod)
         except Exception:
             pass
+        try:
+            import backend.srt_seo_analyzer as _srt_seo_mod
+            importlib.reload(_srt_seo_mod)
+        except Exception:
+            pass
 
         live_pipelines: List[Any] = []
         live_balancers: List[Any] = []
@@ -2082,6 +2173,35 @@ def _auto_patch_live_instances_on_reload():
                 except Exception as e:
                     return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
 
+            async def _dynamic_srt_to_seo_handler(request):
+                if main_adas is None:
+                    return JSONResponse({"success": False, "detail": "ADAS Engine not found"}, status_code=500)
+                try:
+                    if request.method == "GET":
+                        return JSONResponse({"success": True, **main_adas.get_srt_to_seo_status()})
+                    try:
+                        body = await request.json()
+                    except Exception:
+                        body = {}
+                    if not isinstance(body, dict):
+                        body = {}
+                    res = main_adas.start_srt_to_seo_async(
+                        ma_ids=body.get("ma_ids"),
+                        preferred_acc_id=body.get("preferred_acc_id"),
+                        force=bool(body.get("force", True)),
+                        allow_fallback=bool(body.get("allow_fallback", False)),
+                    )
+                    if not res.get("started"):
+                        return JSONResponse({"success": False, "detail": res.get("message", "Không thể khởi chạy"), **res}, status_code=400)
+                    return JSONResponse({"success": True, **res})
+                except Exception as e:
+                    return JSONResponse({"success": False, "detail": str(e)}, status_code=500)
+
+            async def _dynamic_srt_to_seo_status_handler(request):
+                if main_adas is None:
+                    return JSONResponse({"success": False, "detail": "ADAS Engine not found"}, status_code=500)
+                return JSONResponse({"success": True, **main_adas.get_srt_to_seo_status()})
+
             for f_app in live_fastapi_apps:
                 try:
                     routes_list = getattr(getattr(f_app, "router", None), "routes", None)
@@ -2098,8 +2218,29 @@ def _auto_patch_live_instances_on_reload():
                             )
                         routes_list[:] = [
                             r for r in routes_list
-                            if getattr(r, "path", "") not in ("/api/adas/check-and-repair-all", "/api/storage-paths")
+                            if getattr(r, "path", "") not in (
+                                "/api/adas/check-and-repair-all",
+                                "/api/storage-paths",
+                                "/api/adas/srt-to-seo",
+                                "/api/adas/srt-to-seo/status",
+                            )
                         ]
+                        routes_list.insert(
+                            0,
+                            Route(
+                                "/api/adas/srt-to-seo/status",
+                                endpoint=_dynamic_srt_to_seo_status_handler,
+                                methods=["GET"],
+                            ),
+                        )
+                        routes_list.insert(
+                            0,
+                            Route(
+                                "/api/adas/srt-to-seo",
+                                endpoint=_dynamic_srt_to_seo_handler,
+                                methods=["GET", "POST"],
+                            ),
+                        )
                         routes_list.insert(
                             0,
                             Route(

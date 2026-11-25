@@ -7,7 +7,7 @@ import shutil
 import threading
 import unicodedata
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable, Tuple
+from typing import Dict, Any, List, Optional, Callable, Tuple, Set
 
 import importlib
 from . import voice_service as _voice_service_mod
@@ -21,8 +21,36 @@ from .chatgpt_web_client import (
     mark_account_rate_limited,
     is_account_in_cooldown,
     get_earliest_cooldown_remaining_sec,
+    is_real_rate_limit_error,
     ACCOUNT_LIMIT_COOLDOWN_SEC,
+    ACCOUNT_SOFT_COOLDOWN_SEC,
 )
+
+
+def classify_script_error(err: BaseException) -> str:
+    """
+    Phân loại lỗi khi viết kịch bản để xử lý đúng cách:
+    - "fatal":      Lỗi thử lại cũng vô ích (không có ý tưởng, người dùng bấm Dừng) -> dừng ngay.
+    - "rate_limit": ChatGPT báo Limit THẬT -> nick đã bị khóa 30 phút tại nơi phát hiện.
+    - "account":    Nick không dùng được (Chrome chưa mở / chưa đăng nhập / không mở được khung chat)
+                    -> nghỉ ngắn nick đó và chuyển nick khác.
+    - "transient":  Lỗi tạm thời (quá giờ, gửi trượt, Part chưa đủ dài...) -> chuyển nick, KHÔNG khóa 30 phút.
+    """
+    msg = str(err or "")
+    if isinstance(err, ValueError) and "Không tìm thấy ý tưởng" in msg:
+        return "fatal"
+    if "Đã dừng theo yêu cầu" in msg or "Đã dừng tiến trình theo yêu cầu" in msg:
+        return "fatal"
+    if is_real_rate_limit_error(err):
+        return "rate_limit"
+    if any(k in msg for k in (
+        "Không mở được khung chat",
+        "Không thể kết nối tới khung chat",
+        "đăng nhập ChatGPT",
+        "đăng nhập tài khoản Google",
+    )):
+        return "account"
+    return "transient"
 from .gemini_web_client import GeminiWebSession, check_all_gemini_accounts_status
 from .voice_service import split_japanese_script, strip_leaked_titles_and_metadata
 from .logger_service import log_info, log_warn, log_error
@@ -46,18 +74,26 @@ def pure_char_count(text: str) -> int:
     return sum(1 for ch in norm if unicodedata.category(ch)[0] in {"L", "N"})
 
 
-# ==============================================================================
-# 2. MẪU PROMPT STEP 2 GỐC CỦA NGƯỜI DÙNG (GIỮ NGUYÊN 100%)
-# ==============================================================================
-DEFAULT_STEP2_PROMPT_TEMPLATE = """CHẠY NGAY STEP 2 — IDEA / TITLE / THUMBNAIL — MÃ {{MÃ_ID}}
+# Ngưỡng độ dài DÙNG CHUNG cho toàn bộ code (khớp hard_length_contract.md của bộ skill ADAS):
+# - Tổng kịch bản: 40.001–50.000 chữ thuần.
+# - Mỗi Part: mục tiêu 13.334+; mức tối thiểu chấp nhận khi đã viết bù hết lượt: 11.000.
+SCRIPT_MIN_TOTAL_PURE = 40001
+SCRIPT_MAX_TOTAL_PURE = 50000
+SCRIPT_MIN_PART_ACCEPT = 11000
 
-MỤC TIÊU: Từ đúng MỘT ý tưởng nghiên cứu dưới đây, xây concept Japanese long-form family drama, đánh giá khả năng viết thành kịch bản dài, tạo 3 tiêu đề Nhật, chọn 1 tiêu đề tốt nhất, và thiết kế thumbnail 6 tầng. Đây là yêu cầu hoàn chỉnh: toàn bộ dữ liệu cần thiết đã được dán trong lệnh. KHÔNG hỏi xin hoặc yêu cầu đọc bảng Excel, CSV, ZIP, hay cuộc hội thoại STEP 1; không xử lý các mã khác. KHÔNG tự ý tạo nhiều kịch bản, và KHÔNG viết script ở STEP 2.
+
+# ==============================================================================
+# 2. MẪU PROMPT STEP 2 CHUẨN ADAS V4.0.0 (02_idea_title_packaging V4.0.0)
+# ==============================================================================
+DEFAULT_STEP2_PROMPT_TEMPLATE = """CHẠY NGAY STEP 2 (ADAS V4.0.0 — ONE_IDEA_MODE) — IDEA / CREATIVE DNA / TITLE / THUMBNAIL — MÃ {{MÃ_ID}}
+
+MỤC TIÊU: Từ đúng MỘT ý tưởng nghiên cứu dưới đây (ONE_IDEA_MODE), xây dựng concept Japanese long-form family drama theo chuẩn ADAS V4.0.0 (`02_idea_title_packaging`), chọn Creative DNA, kiểm định 8-factor Originality Fingerprint, đánh giá năng lực viết dài 20–24 cảnh (40.001–50.000 pure chars), tạo 3 tiêu đề Nhật A/B/C, khóa 1 `LOCKED_TITLE` tốt nhất, và thiết kế thumbnail 6 dòng (`SIX_LINES_ONLY`). Đây là yêu cầu hoàn chỉnh: toàn bộ dữ liệu cần thiết đã được dán trong lệnh. KHÔNG hỏi xin hoặc yêu cầu đọc bảng Excel, CSV, ZIP, hay cuộc hội thoại STEP 1; không xử lý các mã khác. KHÔNG tự ý tạo nhiều kịch bản, và KHÔNG viết script ở STEP 2.
 
 ĐỊNH VỊ: {{ĐỊNH_VỊ_BATCH}}
 
 ========== ĐẦU VÀO DUY NHẤT: {{MÃ_ID}} ==========
 01. Mức ưu tiên do STEP 1 đề xuất: {{ƯU_TIÊN}}
-02. Trạng thái quản lý hiện tại: CHƯA_CHẠY_STEP2
+02. Trạng thái quản lý hiện tại: CHƯA_CHẠY_STEP2 (ONE_IDEA_MODE = TRUE)
 03. Đánh giá năng lực viết dài sơ bộ (không thay kiểm tra STEP 2): {{LONGFORM_CAPACITY_STEP1}}
 04. Tiêu đề Nhật NHÁP để tham khảo, TUYỆT ĐỐI chưa khóa: {{TIÊU_ĐỀ_NHẬT_NHÁP_CHƯA_KHÓA}}
 05. Dịch ý tiếng Việt của bản nháp: {{DỊCH_Ý_TIÊU_ĐỀ_VI}}
@@ -76,64 +112,75 @@ MỤC TIÊU: Từ đúng MỘT ý tưởng nghiên cứu dưới đây, xây con
 18. Từ khóa Nhật GỢI Ý, CHƯA đo volume: {{TỪ_KHÓA_NHẬT_GỢI_Ý_CHƯA_XÁC_MINH_VOLUME}}
 19. Căn cứ khả năng triển khai dài/rủi ro: {{LÝ_DO_CÓ_THỂ_VIẾT_DÀI_HOẶC_RỦI_RO}}
 20. Lưu ý tính khả tín, luật, y tế, tài chính: {{LƯU_Ý_LOGIC_PHÁP_LÝ_Y_TẾ}}
-21. Quy tắc kiểm soát sao chép đã có từ STEP 1: Must change at least 4/6 vs nearest reference before selection
+21. Quy tắc kiểm soát sao chép ADAS V4.0.0: Must differ on >=5/8 factors AND >=3/4 core narrative factors (trigger, evidence, mechanism, reveal) vs nearest reference before selection
 22. Gợi ý góc thumbnail ban đầu (không phải bản duyệt): {{GÓC_THUMBNAIL_ĐỀ_XUẤT}}
 23. Nguồn gốc ý tưởng để truy vết, đã mô tả tại đây và KHÔNG cần mở file: {{RESEARCH_SOURCE}}
 
-QUY ƯỚC ĐẦU VÀO: Tất cả dòng ghi NHÁP / GỢI Ý / ĐỀ XUẤT là hướng nghiên cứu, có thể cải tiến trong STEP 2; không tự nhận là sự thật đã kiểm chứng. Tiêu đề Nhật nháp KHÔNG phải LOCKED_TITLE. Nếu premise có chỗ mâu thuẫn, phải chỉ ra và sửa nguyên nhân trước khi duyệt. Các từ khóa trên chưa có search volume/competition/VPH đã xác minh, tuyệt đối không bịa số liệu.
+QUY ƯỚC ĐẦU VÀO: Tất cả dòng ghi NHÁP / GỢI Ý / ĐỀ XUẤT là hướng nghiên cứu, có thể cải tiến trong STEP 2; không tự nhận là sự thật đã kiểm chứng. Tiêu đề Nhật nháp KHÔNG phải LOCKED_TITLE. Nếu premise có chỗ mâu thuẫn, phải chỉ ra và sửa nguyên nhân trước khi duyệt. Không bịa số liệu search volume/competition/VPH.
 
-========== THAM CHIẾU CHỐNG TRÙNG (ĐÃ NHÚNG, KHÔNG CẦN FILE) ==========
+========== THAM CHIẾU CHỐNG TRÙNG & CREATIVE DNA V4.0.0 (ĐÃ NHÚNG) ==========
 CÁC MÔ-TÍP THAM CHIẾU NỘI BỘ (chỉ để nhận diện điểm trùng, không được sao chép nguyên cốt truyện):
 {{THAM_CHIẾU_MOTIF_BATCH}}
-Chọn mô-típ gần nhất, đối chiếu 6 yếu tố: quan hệ, bối cảnh, tác nhân khởi phát, bí mật, vật chứng và kết quả. Phải có ít nhất 4/6 yếu tố khác biệt CÓ Ý NGHĨA; không được tính thay tên hay thay vật dụng đơn thuần. Nếu thiếu dữ liệu để xác nhận sự khác biệt so với đối thủ thật, ghi rõ đây là đối sánh mô-típ tham chiếu, không khẳng định đã kiểm chứng thị trường.
 
-========== QUY TRÌNH BẮT BUỘC CỦA STEP 2 ==========
+BẢNG CHỌN CREATIVE DNA (ADAS V4.0.0 — Bắt buộc chọn rõ cho dự án này):
+- `PRIMARY_STORY_DNA` (chọn 1): `FAMILY_REINTERPRETATION` | `DOCUMENT_EVIDENCE_DETECTIVE` | `QUIET_DIGNITY_REVERSAL` | `WRONG_BELIEF_CORRECTION` | `DUTY_SACRIFICE_REVEAL` | `PUBLIC_MISJUDGMENT` | `LONG_TERM_SECRET` | `CHOICE_AND_CONSEQUENCE`
+- `SECONDARY_DNA` (chọn 1–2): `OBJECT_CALLBACK` | `RELATIONSHIP_SHIFT` | `WITNESS_REVERSAL` | `REPUTATION_REPAIR` | `PROOF_CHAIN` | `MORAL_ACCOUNTABILITY` | `MULTI_STAGE_REVEAL` | `LIMITED_PERSPECTIVE`
+- `HOOK_DNA` (chọn 1): `CONCRETE_INSULT` | `SUSPICIOUS_OBJECT` | `QUIET_ANOMALY` | `MISREAD_ACTION` | `PUBLIC_COLLISION` | `CONTRADICTORY_RECORD` | `CONSEQUENCE_FIRST`
+- `EMOTIONAL_ARC`: Chuỗi tiến triển cảm xúc có bằng chứng (VD: humiliation -> pursuit -> doubt -> moral correction -> consequence).
+- `REVERSAL_MECHANISM`: Cơ chế đảo ngược thực tế, hợp pháp, có chuỗi bằng chứng kiểm chứng được (không dùng phép màu địa vị hay nguồn dữ liệu bất hợp pháp).
 
-A. CHẤM VÀ CẢI TIẾN IDEA (tối đa 100 điểm)
+========== QUY TRÌNH BẮT BUỘC CỦA STEP 2 (ADAS V4.0.0) ==========
+
+A. CHẤM VÀ CẢI TIẾN IDEA (/100 điểm) + CREATIVE DNA
 - Curiosity gap /20; Emotional stakes /20; Độ gần gũi quan hệ /15; Vật chứng cụ thể /10; Khả năng 3 lớp reveal /15; Tính khả tín /10; Độ rõ cho thumbnail /5; Tính nguyên gốc /5.
-- Dưới 75: loại/chỉnh sửa mạnh, không duyệt. Từ 75–84: sửa premise rồi chấm lại. Từ 85: đủ chuẩn vào vòng title NẾU còn vượt các hard gate khác.
-- Nêu rõ điểm thành phần, tổng, điểm yếu, phiên bản PREMISE_FINAL và CONFLICT_FINAL sau sửa (nếu sửa). Chỉ giữ những chi tiết có chuỗi nguyên nhân-hệ quả.
+- Ngưỡng chuẩn V4.0.0: Chỉ duyệt khi `IDEA_SCORE >= 85/100` (dưới 85 phải nâng cấp premise rồi chấm lại).
+- Xuất rõ: `PRIMARY_STORY_DNA`, `SECONDARY_DNA`, `HOOK_DNA`, `EMOTIONAL_ARC`, `REVERSAL_MECHANISM`, `PREMISE_FINAL` và `CONFLICT_FINAL`.
 
-B. HARD LONGFORM CAPACITY GATE, không được bỏ qua
-- Kịch bản mục tiêu về sau: 40.001–50.000 PURE_CHARACTER_COUNT tiếng Nhật; đích an toàn 44.000–47.000. Đây KHÔNG phải độ dài tiêu đề hay đầu ra của STEP 2.
-- Cách đếm sau này: chuẩn hóa Unicode NFC, chỉ tính ký tự thuộc nhóm Unicode L (chữ) và N (số), bỏ ký hiệu, khoảng trắng, emoji, dấu câu và xuống dòng. 40.000 là FAIL.
-- Trình bày ít nhất 8–12 diễn biến/cảnh mang CHỨC NĂNG KHÁC NHAU (manh mối, quyết định, hậu quả, dịch chuyển quan hệ...), và 3 lớp tiết lộ: sự kiện -> sự thật sâu hơn -> ý nghĩa đảo ngược. Nêu logic nhân-quả và hậu quả theo thời gian; không dùng filler, hồi tưởng lặp hoặc nhân vật cứu nguy tiện lợi.
-- Xuất `LONGFORM_CAPACITY: PASS / RISK / FAIL` kèm lý do. Trạng thái STEP 1 chỉ là đánh giá sơ bộ, KHÔNG tự động được PASS ở bước này. Nếu RISK/FAIL phải nâng cấp premise, tự kiểm lại; vẫn chưa PASS thì dừng, không khóa title, không bàn giao STEP 3.
+B. HARD LONGFORM CAPACITY GATE (40.001–50.000 PURE CHARACTERS)
+- Kịch bản mục tiêu ở STEP 4: `40.001–50.000 PURE_CHARACTER_COUNT` tiếng Nhật (đích an toàn `44.000–47.000`), chia làm 3 phần A/B/C (20–24 cảnh có chức năng nhân-quả riêng biệt).
+- Cách đếm: chuẩn hóa Unicode NFC, chỉ tính ký tự thuộc nhóm Unicode `L` (chữ) và `N` (số). `40.000` là FAIL.
+- Trình bày 8–12 bước ngoặt nhân-quả (turns) chuẩn bị cho 20–24 scenes ở STEP 3 và 3 lớp tiết lộ (`Reveal 1: sự kiện/dị thường` -> `Reveal 2: cơ chế/sự thật sâu hơn` -> `Reveal 3: ý nghĩa đảo ngược & trả lời lời hứa tiêu đề ở Part C`).
+- Xuất `LONGFORM_CAPACITY: PASS / RISK / FAIL` kèm lý do. Chỉ khóa tiêu đề khi đạt `PASS`.
 
-C. ORIGINALITY GATE
-- Chọn reference-mô-típ nội bộ gần nhất ở trên, so sánh 6 mục: RELATIONSHIP, SETTING, TRIGGER, HIDDEN_SECRET, PROOF_OBJECT, FINAL_PAYOFF. Xuất `ORIGINALITY_DIFF` nêu cụ thể từng mục khác/giống và số khác biệt >=4/6. Chỉ thay vật/địa điểm mà giữ nguyên logic tính là KHÔNG khác biệt thật. Không sao chép nguyên văn tiêu đề hoặc thumbnail.
-- Nếu không thể kiểm tra đối thủ thực, ghi rõ giới hạn nguồn; KHÔNG giả vờ đã kiểm chứng competitor.
+C. ORIGINALITY GATE (8-FACTOR FINGERPRINT V4.0.0)
+- Lập `ORIGINALITY_FINGERPRINT` gồm đúng 8 yếu tố:
+  1. `relation` (quan hệ nhân vật)
+  2. `setting` (bối cảnh)
+  3. `trigger` (tác nhân khởi phát — CORE)
+  4. `evidence` (vật chứng/chứng từ — CORE)
+  5. `mechanism` (cơ chế vận hành — CORE)
+  6. `reveal` (bản chất sự thật hé lộ — CORE)
+  7. `payoff` (đòn đảo ngược/hóa giải)
+  8. `consequence` (hệ quả thực tế sau cùng)
+- So sánh với mô-típ tham chiếu gần nhất: Bắt buộc khác biệt có ý nghĩa **>= 5/8 yếu tố** VÀ **>= 3/4 yếu tố cốt lõi (`trigger`, `evidence`, `mechanism`, `reveal`)**. Chỉ đổi tên nhân vật/địa điểm mà giữ nguyên `mechanism + reveal` tính là FAIL.
 
 D. TITLE MATRIX — VIẾT HOÀN TOÀN BẰNG TIẾNG NHẬT
-- Tạo chính xác 3 ứng viên cho đúng mã {{MÃ_ID}}: A = Mystery-led, B = Emotion-led, C = Conflict-led. Mỗi tiêu đề là mini-trailer: quan hệ/bối cảnh bình thường -> bất công hoặc dị thường -> một chi tiết hoặc trích dẫn -> chuyển hướng -> hậu quả chưa hé lộ.
-- Ưu tiên 55–100 ký tự Nhật theo corpus khi phù hợp; không ép số. Tránh spoil, số tiền phóng đại, tuyên bố không có căn cứ, bí mật phi lý và câu dụ nhấp gây hiểu lầm.
-- Chấm từng tiêu đề /50: hiểu ngay /8, câu hỏi chưa trả lời /10, quan hệ /8, chi tiết cụ thể /6, không spoil /6, đáng tin /5, khác tiêu đề tham chiếu /4, dựng thumbnail /3. Chỉ chọn title >=42/50, đồng thời Idea PASS + Longform PASS + Originality PASS.
-- Xuất tiêu đề Nhật đủ nguyên văn, bản dịch tiếng Việt, lý do thắng, `LOCKED_TITLE_PROMISE` (câu hỏi đã hứa với người xem), `TITLE_FACTS` (các fact bắt buộc có để giữ lời hứa, phân biệt với điều chưa chốt).
+- Tạo chính xác 3 ứng viên cho đúng mã {{MÃ_ID}}: `Title A` = Mystery-led, `Title B` = Emotion-led, `Title C` = Conflict-led (ưu tiên 55–100 ký tự Nhật, cấu trúc mini-trailer: bối cảnh/quan hệ -> bất công/dị thường -> chi tiết/trích dẫn -> chuyển hướng -> hậu quả chưa hé lộ).
+- Chấm từng tiêu đề /50: hiểu ngay /8, câu hỏi chưa trả lời /10, quan hệ /8, chi tiết cụ thể /6, không spoil /6, đáng tin /5, khác tiêu đề tham chiếu /4, dựng thumbnail /3. Chỉ chọn `WINNER >= 42/50`.
+- Xuất nguyên văn tiêu đề Nhật thắng cuộc làm `LOCKED_TITLE`, bản dịch tiếng Việt, lý do thắng, `LOCKED_TITLE_PROMISE` (lời hứa bắt buộc phải được giải quyết ở Part C), và `TITLE_FACTS` (các fact không được thay đổi ở STEP 3–6).
 
-E. THUMBNAIL MINI SCREENPLAY — SIX_LINES_ONLY: CHÍNH XÁC 6 DÒNG HIỂN THỊ
-- Trình bày đúng 6 semantic beats, tương ứng CHÍNH XÁC 6 dòng chữ Nhật nhìn thấy; không xuống hàng một beat thành hai dòng: `LAYER_1_RELATIONSHIP` (ai với ai); `LAYER_2_SITUATION` (địa điểm/sự kiện); `LAYER_3_CONFLICT` (bất công); `LAYER_4_CONCRETE_ESCALATION` (hành động hoặc câu nói); `LAYER_5_REVERSAL_TRIGGER` (だが / ところが / その瞬間...); `LAYER_6_REACTION_CLIFFHANGER` (phản ứng mạnh nhưng KHÔNG lộ chân tướng).
-- Xuất `THUMBNAIL_ANGLE`, `MAIN_PROTAGONIST` (giới/tuổi/cảm xúc/tư thế phù hợp), `SUPPORTING_FIGURES`, `PROOF_OBJECT`, `LINE_BREAK_PLAN` (CHÍNH XÁC 6 DÒNG L1–L6, một semantic beat trên một dòng, tuyệt đối không dòng thứ bảy), `COLOR_PLAN`. Tả kỹ cảnh/ánh sáng/gương mặt/đồ vật để có thể dựng hình; không tự tạo hình nếu chưa được yêu cầu.
-- Layout 16:9; chữ nằm bên trái/giữa (có thể mở rộng chiều ngang 60–75% khung hình và PHẦN CHỮ CÓ THỂ ĐÈ LÊN MỘT PHẦN ẢNH MẶT / VAI NHÂN VẬT bên phải cũng được để mỗi dòng chữ có đủ chỗ nằm ngang, tuyệt đối không bị ép rớt dòng), gương mặt chính 30–40% bên phải, 1–2 nhân vật phụ hợp ngữ cảnh. Bên trái sau chữ tối hơn nhẹ bằng vignette; bên phải mặt sáng/ấm hơn. Dùng display type Nhật ultra-bold, viền đen dày, bóng mạnh, dễ đọc trên điện thoại.
-- White = kể bối cảnh; Yellow = quan hệ/sự kiện/chi tiết; Pink/Magenta = xung đột/câu nói; Cyan/Blue = chuyển hướng. DÒNG 6 (duy nhất) BẮT BUỘC chứa hai cụm CYAN/BLUE + MAGENTA nằm TRÊN CÙNG MỘT HÀNG, viền đen dày; phần magenta là reaction cliffhanger, không spoil. Không tạo dòng riêng cho mỗi màu.
-- Chấm THUMBNAIL /100: tò mò ngay /20, đọc mobile /15, biểu cảm gương mặt /15, đủ 6 tầng /15, cụ thể theo câu chuyện /10, reaction cliffhanger /10, vật chứng/nhân vật phụ /5, phân cấp hình-chữ-màu /5, khác biệt /5. Dưới 80: làm lại; 80–84: dùng được nhưng yếu; 85+: mạnh; 90+: ưu tiên.
+E. THUMBNAIL MINI SCREENPLAY — SIX_LINES_ONLY (CHÍNH XÁC 6 DÒNG HIỂN THỊ)
+- Trình bày đúng 6 semantic beats tương ứng CHÍNH XÁC 6 dòng chữ Nhật ngắn gọn (5–9 ký tự/dòng cho L1–L5):
+  + `L1` (`yellow`): RELATIONSHIP / HOOK (ai với ai)
+  + `L2` (`white`): SITUATION (địa điểm/sự kiện)
+  + `L3` (`magenta`): CONFLICT (bất công/xung đột)
+  + `L4` (`yellow`): CONCRETE_ESCALATION (hành động hoặc câu nói ngắn)
+  + `L5` (`cyan`): REVERSAL_TRIGGER (だが / ところが / その瞬間 / 数日後...)
+  + `L6` (`cyan` + `magenta` trên CÙNG MỘT HÀNG NGANG / `same_baseline = true`): REACTION_CLIFFHANGER (2 cụm ngắn nối tiếp nhau trên đúng 1 dòng cuối, không spoil kết).
+- Layout 16:9; chữ nằm bên trái/giữa (chiếm 58–68% chiều ngang, được phép chạm nhẹ vai/mặt nhân vật để mỗi dòng nằm gọn trên 1 hàng ngang), gương mặt chính 30–38% bên phải.
+- Chấm `THUMBNAIL_SCORE /100` (chỉ PASS khi `>= 85/100`) và chốt `SIX_LINES_ONLY: PASS`.
 
-THUMBNAIL HARD LOCK (ưu tiên cao hơn mọi ví dụ):
-- L1 RELATIONSHIP; L2 SITUATION; L3 CONFLICT; L4 CONCRETE_ESCALATION; L5 REVERSAL_TRIGGER; L6 REACTION_CLIFFHANGER.
-- Chỉ 6 hàng chữ độc lập có thể nhìn thấy trong thumbnail. Không title nhỏ, badge chữ, phụ đề, hàng chữ nằm trong đạo cụ hoặc logo có chữ biến thành dòng phụ.
-- Phần chữ ĐƯỢC PHÉP đè lên ảnh mặt nhân vật nếu cần độ rộng ngang, nhưng TUYỆT ĐỐI BẮT BUỘC PHẢI ĐÚNG 6 DÒNG (L1–L6); chữ Nhật phải rút ngắn nếu dài, tuyệt đối không chia một hàng thành hai. Dòng 6 có hai cụm CYAN + MAGENTA trên đúng một hàng.
-- A/B/C, LINE_BREAK_PLAN, prompt hình và ảnh xuất đều chịu hard lock này. Nếu ảnh được tạo, bắt buộc kiểm tra bằng mắt 6 hàng; khác 6 => THUMBNAIL_LINE_GATE: FAIL và phải sửa/tạo lại. Trong STEP 2 chỉ xuất prompt/hướng dẫn, không tự tạo ảnh nếu chưa được yêu cầu.
+F. ĐẦU RA BẮT BUỘC, ĐÚNG THỨ TỰ:
+1) `ID: {{MÃ_ID}}` + `COMPLETED_STEP: STEP 2 (V4.0.0)` + `STATUS: PASS` + `NEXT_STEP: STEP 3`.
+2) `CREATIVE_DNA` (`PRIMARY_STORY_DNA`, `SECONDARY_DNA`, `HOOK_DNA`, `EMOTIONAL_ARC`, `REVERSAL_MECHANISM`) + `PREMISE_FINAL` + `IDEA_SCORE /100`.
+3) `LONGFORM_CAPACITY: PASS` + 8–12 turns nhân-quả + 3 reveal layers + ghi chú tính khả tín pháp lý/y tế/tài chính.
+4) Bảng `ORIGINALITY_FINGERPRINT` (8 yếu tố vs mô-típ gần nhất, xác nhận >=5/8 tổng và >=3/4 core).
+5) `TITLE_MATRIX` (Title A/B/C tiếng Nhật + dịch Việt + điểm /50 + WINNER).
+6) Bảng `THUMBNAIL_6_LINES` (L1–L6 tiếng Nhật ngắn gọn + màu sắc chuẩn V4.0 + mô tả bố cục cảnh + `THUMBNAIL_SCORE /100` + `SIX_LINES_ONLY: PASS`).
+7) Khối khóa bất biến: `LOCKED_TITLE`, `LOCKED_TITLE_PROMISE`, `TITLE_FACTS`, `TITLE_LOCKED: YES`.
+8) `STEP3_HANDOFF`: Tóm tắt đầy đủ hồ sơ nhân vật, vật chứng, chuỗi 3 tầng tiết lộ, `LOCKED_TITLE_PROMISE` và lệnh chuyển giao sang STEP 3. Không viết STEP 3/4 trong lần chạy này.
 
-F. ĐẦU RA BẮT BUỘC, PHẢI ĐÚNG THỨ TỰ
-1) `ID: {{MÃ_ID}}` + `COMPLETED_STEP: STEP 2` + `RESULT` + `STATUS: PASS / NEEDS REVISION` + `NEXT_STEP`.
-2) Premise chỉnh sửa cuối + Idea Score 8 tiêu chí /100.
-3) Longform Capacity + 8–12 turns theo thứ tự nhân quả + 3 reveal layers; điểm rủi ro đặc thù câu chuyện.
-4) Bảng Originality Diff 6 yếu tố vs mô-típ gần nhất.
-5) Title A/B/C tiếng Nhật và bản dịch Việt, điểm thành phần /50 cho từng title, WINNER.
-6) Full thumbnail đúng 6 dòng vật lý L1–L6 bằng tiếng Nhật + hình ảnh/chữ/dòng/màu + Thumbnail Score /100 + SIX_LINES_ONLY: PASS/FAIL.
-7) Chỉ khi mọi hard gate PASS: xuất chính xác `LOCKED_TITLE`, `LOCKED_TITLE_PROMISE`, `TITLE_FACTS`, `TITLE_LOCKED: YES`. Từ thời điểm này title là bất biến đến STEP 6. Nếu một hard gate chưa PASS thì xuất `TITLE_LOCKED: NO`, giải thích phần phải sửa, TUYỆT ĐỐI không giả khóa.
-8) `STEP3_HANDOFF`: bản tóm tắt tự đủ thông tin gồm nhân vật, xung đột, vật chứng, twist, fact/commitment khóa, rủi ro và command cụ thể "Chạy STEP 3 cho mã {{MÃ_ID}} theo toàn bộ dữ liệu handoff vừa xuất, giữ nguyên LOCKED_TITLE". Không viết STEP 3/4 trong lần chạy này.
-
-BẮT ĐẦU THỰC HIỆN STEP 2 CHO DUY NHẤT MÃ {{MÃ_ID}} NGAY BÂY GIỜ; toàn bộ thông tin của ý tưởng này nằm trong chính tin nhắn. Không yêu cầu đọc hoặc gửi bất kỳ file dữ liệu nghiên cứu nào."""
+BẮT ĐẦU THỰC HIỆN STEP 2 (ADAS V4.0.0) CHO DUY NHẤT MÃ {{MÃ_ID}} NGAY BÂY GIỜ; toàn bộ thông tin của ý tưởng này nằm trong chính tin nhắn."""
 
 DEFAULT_MOTIF_REFERENCES = (
     "- Ref #31: Vợ từ vùng núi về thăm nhà lần đầu sau 18 năm kết hôn, chồng lén đưa 28 vạn yên, khi mở hành lý mang về thì sững sờ.\n"
@@ -548,8 +595,10 @@ def parse_idea_input_block(raw_text: str, custom_id: Optional[str] = None) -> Di
 
 
 def build_step2_prompt_from_idea(idea: Dict[str, Any], custom_template: Optional[str] = None) -> str:
-    """Điền đầy đủ thông tin ý tưởng đã lưu vào đúng mẫu Prompt STEP 2 của người dùng."""
+    """Điền đầy đủ thông tin ý tưởng đã lưu vào đúng mẫu Prompt STEP 2 (tự động nâng cấp chuẩn ADAS V4.0.0 nếu bản lưu cũ là mặc định V3)."""
     tpl = (custom_template or DEFAULT_STEP2_PROMPT_TEMPLATE).strip()
+    if "Must change at least 4/6 vs nearest reference" in tpl and "ORIGINALITY_FINGERPRINT" not in tpl:
+        tpl = DEFAULT_STEP2_PROMPT_TEMPLATE.strip()
     replacements = {
         "{{MÃ_ID}}": idea.get("ma_id", "DRAMA_001"),
         "{{ĐỊNH_VỊ_BATCH}}": idea.get("dinh_vi_batch", DEFAULT_BATCH_POSITIONING),
@@ -578,6 +627,26 @@ def build_step2_prompt_from_idea(idea: Dict[str, Any], custom_template: Optional
     }
     for k, v in replacements.items():
         tpl = tpl.replace(k, str(v or ""))
+
+    # Tự động nhúng nguyên văn 02_idea_title_packaging/SKILL.md (V4.0.0) nếu chưa có
+    if "02_idea_title_packaging" not in tpl:
+        base_dir = Path(__file__).resolve().parent.parent
+        for cand in (
+            base_dir / "adas_skills" / "02_idea_title_packaging" / "SKILL.md",
+            base_dir.parent / "adas_skills" / "02_idea_title_packaging" / "SKILL.md",
+        ):
+            if cand.exists():
+                try:
+                    s2_md = cand.read_text(encoding="utf-8-sig").strip()
+                    if s2_md:
+                        tpl += (
+                            f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 02 (ADAS V4.0.0 — 02_idea_title_packaging) ==========\n"
+                            f"{s2_md}\n"
+                            f"==========================================================================================="
+                        )
+                except Exception:
+                    pass
+                break
     return tpl
 
 
@@ -660,6 +729,11 @@ def extract_clean_japanese_narration(raw_text: str) -> str:
         "NEXT_ACTION",
         "READY_FOR_AUDIT",
         "PATCH_CHANGELOG",
+        "PART_STATUS",
+        "PASS_LOCKED",
+        "REWRITE_BUDGET",
+        "SCOPE_VIOLATION",
+        "PROOF_CHAIN",
     ]
     vi_re = re.compile(r"[ăâđêôơưáàảãạéèẻẽẹíìỉĩịóòỏõọúùủũụýỳỷỹỵ]", re.IGNORECASE)
 
@@ -738,6 +812,7 @@ class ADASScriptEngine:
         self.ideas_io_lock = threading.RLock()
         self.is_running = False
         self.should_stop = False
+        self._ensure_run_queue_attrs()
         self.listeners: List[Callable[[Dict[str, Any]], None]] = []
 
         self._load_storage_paths_config()
@@ -838,7 +913,11 @@ class ADASScriptEngine:
     def get_step2_template(self) -> str:
         if self.step2_template_file.exists():
             try:
-                return self.step2_template_file.read_text(encoding="utf-8")
+                saved = self.step2_template_file.read_text(encoding="utf-8")
+                if "Must change at least 4/6 vs nearest reference" in saved and "ORIGINALITY_FINGERPRINT" not in saved:
+                    self.step2_template_file.write_text(DEFAULT_STEP2_PROMPT_TEMPLATE, encoding="utf-8")
+                    return DEFAULT_STEP2_PROMPT_TEMPLATE
+                return saved
             except Exception:
                 pass
         return DEFAULT_STEP2_PROMPT_TEMPLATE
@@ -1437,7 +1516,7 @@ class ADASScriptEngine:
                 pass
         return cleaned, len(removed_lines)
 
-    def get_script_parts_progress(self, ma_id: str, min_part_chars: int = 9500) -> Dict[str, Any]:
+    def get_script_parts_progress(self, ma_id: str, min_part_chars: int = SCRIPT_MIN_PART_ACCEPT) -> Dict[str, Any]:
         """
         Kiểm tra chi tiết tiến độ 3 phần (`part_a.txt`, `part_b.txt`, `part_c.txt`) của dự án `ma_id`.
         Giúp phát hiện chính xác các dự án bị thiếu Part (ví dụ mới xong Part A 15.848 chữ hoặc Part A+B 32.684 chữ)
@@ -1479,7 +1558,7 @@ class ADASScriptEngine:
             "all_three_valid": len(done_parts) == 3,
         }
 
-    def has_valid_script_on_disk(self, ma_id: str, min_pure_chars: int = 35000, min_part_chars: int = 9500) -> Tuple[bool, str, int]:
+    def has_valid_script_on_disk(self, ma_id: str, min_pure_chars: int = SCRIPT_MIN_TOTAL_PURE, min_part_chars: int = SCRIPT_MIN_PART_ACCEPT) -> Tuple[bool, str, int]:
         """
         Kiểm tra nghiêm ngặt xem dự án `ma_id` đã có kịch bản tiếng Nhật ĐỦ 3 PART (A + B + C) và ĐỦ ĐỘ DÀI CHUẨN hay chưa:
         - Kiểm tra trên cả `projects_dir` và `final_video_dir`.
@@ -1689,6 +1768,47 @@ class ADASScriptEngine:
 
         return (found_thumb is not None), (found_seo is not None), (str(found_thumb) if found_thumb else "")
 
+    def has_srt_on_disk(self, ma_id: str) -> Tuple[bool, Optional[Path], bool]:
+        """
+        Kiểm tra dự án `ma_id` có file phụ đề `subtitles.srt` trên ổ cứng hay chưa
+        và đã từng được ChatGPT phân tích bổ sung Mô tả + Timestamps vào SEO hay chưa.
+        Trả về `(has_srt, srt_path, has_chatgpt_srt_seo)`.
+        """
+        proj_dir = self._get_effective_project_dir(ma_id)
+        f_dir = getattr(self, "final_video_dir", None)
+        final_proj_dir = (Path(f_dir) / ma_id) if f_dir else proj_dir
+
+        srt_candidates = [
+            proj_dir / "assets" / "subtitles.srt",
+            final_proj_dir / "assets" / "subtitles.srt",
+            proj_dir / "subtitles.srt",
+            proj_dir / f"{ma_id}.srt",
+            proj_dir / "renders" / f"{ma_id}.srt",
+        ]
+        found_srt: Optional[Path] = None
+        for cand in srt_candidates:
+            try:
+                if cand.exists() and cand.is_file() and cand.stat().st_size > 30:
+                    found_srt = cand
+                    break
+            except Exception:
+                continue
+
+        has_chatgpt_srt_seo = False
+        if found_srt is not None:
+            for base_d in (proj_dir, final_proj_dir):
+                rec_f = base_d / "assets" / "srt_chatgpt_seo_result.json"
+                if rec_f.exists():
+                    try:
+                        rec_d = json.loads(rec_f.read_text(encoding="utf-8", errors="ignore"))
+                        if rec_d.get("source") == "chatgpt_web" and rec_d.get("timestamps_txt"):
+                            has_chatgpt_srt_seo = True
+                            break
+                    except Exception:
+                        pass
+
+        return (found_srt is not None), found_srt, has_chatgpt_srt_seo
+
     def has_valid_video_mp4_on_disk(
         self,
         ma_id: str,
@@ -1793,9 +1913,12 @@ class ADASScriptEngine:
                 info_data = json.loads(info_file.read_text(encoding="utf-8"))
                 if isinstance(info_data, dict) and info_data.get("ma_id"):
                     has_th, has_seo, th_path = self.has_thumbnail_and_seo_on_disk(mid)
+                    has_srt_ok, _, has_srt_seo_ok = self.has_srt_on_disk(mid)
                     info_data["has_script"] = has_sc
                     info_data["has_thumbnail"] = has_th
                     info_data["has_seo"] = has_seo
+                    info_data["has_srt"] = has_srt_ok
+                    info_data["has_srt_seo"] = has_srt_seo_ok
                     if th_path:
                         info_data["thumbnail_path"] = th_path
                     info_data["pure_char_count"] = sc_chars if has_sc else partial_chars
@@ -1856,6 +1979,9 @@ class ADASScriptEngine:
             reconstructed["locked_title"] = locked_title
             reconstructed["draft_title_ja"] = locked_title
         reconstructed["has_script"] = has_sc
+        has_srt_ok, _, has_srt_seo_ok = self.has_srt_on_disk(mid)
+        reconstructed["has_srt"] = has_srt_ok
+        reconstructed["has_srt_seo"] = has_srt_seo_ok
         reconstructed["pure_char_count"] = sc_chars if has_sc else partial_chars
         reconstructed["has_video_mp4"] = has_mp4
         reconstructed["completed_parts_count"] = 3 if has_sc else len(prog["done_parts"])
@@ -1991,14 +2117,16 @@ class ADASScriptEngine:
 
                 try:
                     r_dir = p_dir / "renders"
+                    a_dir = p_dir / "assets"
                     f_r_dir = (Path(f_dir) / mid / "renders") if f_dir else r_dir
                     dir_sig = (
                         p_dir.stat().st_mtime_ns if p_dir.exists() else 0,
                         r_dir.stat().st_mtime_ns if r_dir.exists() else 0,
+                        a_dir.stat().st_mtime_ns if a_dir.exists() else 0,
                         f_r_dir.stat().st_mtime_ns if f_r_dir.exists() else 0,
                     )
                 except Exception:
-                    dir_sig = (0, 0, 0)
+                    dir_sig = (0, 0, 0, 0)
                 if (
                     not force_restore_deleted
                     and is_vp_busy_for_mid
@@ -2007,7 +2135,8 @@ class ADASScriptEngine:
                     continue
                 if (
                     not force_restore_deleted
-                    and dir_sig != (0, 0, 0)
+                    and dir_sig != (0, 0, 0, 0)
+                    and "has_srt" in it
                     and self._proj_dir_mtime_cache.get(mid) == dir_sig
                     and (
                         curr_st not in ("RUNNING", "VIDEO_RENDERING", "VIDEO_QUEUED", "COMPLETED_VIDEO")
@@ -2018,7 +2147,8 @@ class ADASScriptEngine:
                     continue
                 if (
                     not force_restore_deleted
-                    and dir_sig != (0, 0, 0)
+                    and dir_sig != (0, 0, 0, 0)
+                    and "has_srt" in it
                     and self._proj_dir_mtime_cache.get(mid) == dir_sig
                     and curr_st == "COMPLETED_VIDEO"
                     and it.get("has_video_mp4")
@@ -2028,6 +2158,7 @@ class ADASScriptEngine:
 
                 has_sc, _, sc_chars = self.has_valid_script_on_disk(mid)
                 has_thumb, has_seo, thumb_p = self.has_thumbnail_and_seo_on_disk(mid)
+                has_srt_ok, _, has_srt_seo_ok = self.has_srt_on_disk(mid)
                 prog = self.get_script_parts_progress(mid)
                 done_cnt = 3 if has_sc else len(prog["done_parts"])
                 missing_list = [] if has_sc else prog["missing_parts"]
@@ -2036,7 +2167,7 @@ class ADASScriptEngine:
                 has_mp4, mp4_file, mp4_reason = self.has_valid_video_mp4_on_disk(
                     mid, sc_chars=effective_chars, auto_delete_corrupted=True
                 )
-                if dir_sig != (0, 0, 0):
+                if dir_sig != (0, 0, 0, 0):
                     self._proj_dir_mtime_cache[mid] = dir_sig
 
                 item_changed = False
@@ -2050,6 +2181,14 @@ class ADASScriptEngine:
                     item_changed = True
                 if it.get("has_seo") != has_seo:
                     it["has_seo"] = has_seo
+                    changed = True
+                    item_changed = True
+                if it.get("has_srt") != has_srt_ok:
+                    it["has_srt"] = has_srt_ok
+                    changed = True
+                    item_changed = True
+                if it.get("has_srt_seo") != has_srt_seo_ok:
+                    it["has_srt_seo"] = has_srt_seo_ok
                     changed = True
                     item_changed = True
                 if thumb_p and it.get("thumbnail_path") != thumb_p:
@@ -2778,36 +2917,50 @@ class ADASScriptEngine:
         )
 
     # ==========================================================================
-    # ĐỌC NGUYÊN VĂN SKILL.MD TỪ THƯ MỤC ADAS_SKILLS & TẠO PROMPT STEP 3..6
+    # ĐỌC NGUYÊN VĂN SKILL.MD TỪ THƯ MỤC ADAS_SKILLS & TẠO PROMPT STEP 3..6 (ADAS V4.0.0)
     # ==========================================================================
-    def _load_skill_markdown(self, skill_folder: str) -> str:
-        """Đọc nguyên văn 100% nội dung file SKILL.md của Agent tương ứng."""
-        cand_paths = [
-            self.root_dir / "adas_skills" / skill_folder / "SKILL.md",
-            self.root_dir / "app" / "adas_skills" / skill_folder / "SKILL.md",
+    def _load_skill_markdown(self, skill_folder: str, include_workflow_ref: bool = True) -> str:
+        """Đọc nguyên văn 100% nội dung file SKILL.md (kèm ADAS_V4_WORKFLOW.md nếu có) của Agent tương ứng."""
+        cand_roots = [
+            self.root_dir / "adas_skills" / skill_folder,
+            self.root_dir / "app" / "adas_skills" / skill_folder,
         ]
-        for p in cand_paths:
+        for s_dir in cand_roots:
+            p = s_dir / "SKILL.md"
             if p.exists():
                 try:
-                    return p.read_text(encoding="utf-8-sig").strip()
+                    main_md = p.read_text(encoding="utf-8-sig").strip()
+                    if include_workflow_ref:
+                        wf_ref = s_dir / "references" / "ADAS_V4_WORKFLOW.md"
+                        if wf_ref.exists():
+                            wf_txt = wf_ref.read_text(encoding="utf-8-sig").strip()
+                            if wf_txt and wf_txt not in main_md:
+                                main_md += f"\n\n--- [ADAS V4.0.0 WORKFLOW REFERENCE] ---\n{wf_txt}"
+                    return main_md
                 except Exception:
                     pass
         return ""
 
     def _build_step3_prompt(self, ma_id: str, locked_title: str, step2_context: str = "") -> str:
         skill_md = self._load_skill_markdown("03_story_architecture_logic")
-        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 03 (STORY ARCHITECTURE & LOGIC) ==========\n{skill_md}\n================================================================================" if skill_md else ""
-        ctx_block = f"\n\n========== DỮ LIỆU ĐẦU RA & STEP3_HANDOFF TỪ STEP 2 ==========\n{step2_context[-8000:]}\n==============================================================" if step2_context else ""
-        return f"""Chạy STEP 3 — STORY ARCHITECTURE & LOGIC PREFLIGHT (THREE-PART CONTRACT) cho mã {ma_id} theo toàn bộ dữ liệu STEP3_HANDOFF từ STEP 2.
+        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 03 (ADAS V4.0.0 — STORY ARCHITECTURE & LOGIC) ==========\n{skill_md}\n==============================================================================================" if skill_md else ""
+        ctx_block = f"\n\n========== DỮ LIỆU ĐẦU RA & STEP3_HANDOFF TỪ STEP 2 ==========\n{step2_context[-8500:]}\n==============================================================" if step2_context else ""
+        return f"""Chạy STEP 3 (ADAS V4.0.0) — STORY ARCHITECTURE & LOGIC PREFLIGHT (THREE-PART BLUEPRINT CONTRACT) cho mã {ma_id} theo toàn bộ dữ liệu STEP3_HANDOFF từ STEP 2.
 GIỮ NGUYÊN TUYỆT ĐỐI LOCKED_TITLE: 「{locked_title}」{ctx_block}{skill_block}
 
-YÊU CẦU THỰC THI NGAY CHO MÃ {ma_id}:
-1. HARD FINAL LENGTH CONTRACT: Thiết kế đủ chất liệu nhân-quả thật để STEP 4 viết thành 3 phần độc lập:
+YÊU CẦU THỰC THI NGAY CHO MÃ {ma_id} (CHUẨN ADAS V4.0.0 — 03_story_architecture_logic):
+1. HARD FINAL LENGTH CONTRACT: Thiết kế đủ chất liệu nhân-quả thật (20–24 scenes) để STEP 4 viết thành 3 phần độc lập:
    - PART A (Foundation / Hook / First Pursuit): 13.334–16.000 ký tự thuần (Target an toàn: 14.200–15.200).
    - PART B (Investigation / Contradiction / Midpoint / Escalation): 13.334–17.000 ký tự thuần (Target an toàn: 14.800–15.800).
-   - PART C (Final Escalation / Reveal 3 / Payoff / Consequence / Callback): 13.334–17.000 ký tự thuần (Target an toàn: 15.000–16.000).
+   - PART C (Final Escalation / Reveal 3 / Title Promise Payoff / Consequence / Callback): 13.334–17.000 ký tự thuần (Target an toàn: 15.000–16.000).
    - TỔNG: 40.001–50.000 PURE_CHARACTER_COUNT (Target: 44.000–47.000).
-2. Xuất đầy đủ STORY BIBLE, LOGIC LEDGER, SCENE CAPACITY PLAN (20–24 scenes chia rõ PART_A_SCENE_PLAN, PART_B_SCENE_PLAN, PART_C_SCENE_PLAN) và 3 Handoff Specs (PART_A_HANDOFF, PART_B_HANDOFF, PART_C_HANDOFF), chốt `APPROVED_FOR_DRAFTING: YES`. Không viết văn bản kịch bản ở bước này."""
+2. HỢP ĐỒNG KIẾN TRÚC BẮT BUỘC (EXECUTABLE BLUEPRINT CONTRACT V4.0.0):
+   - `TITLE_PROMISE`: Nêu rõ câu hỏi trung tâm mà `LOCKED_TITLE` đã hứa và gắn mã `title_promise_payoff_id` sẽ được trả lời dứt điểm ở `PART C`.
+   - `STORY_BIBLE` & `CHARACTER_LEDGER`: Hồ sơ nhân vật, động cơ, giới hạn hiểu biết (`knowledge_ids`) theo thời gian.
+   - `PROOF_CHAIN` (Sổ cái vật chứng): Mỗi vật chứng/tài liệu phải ghi rõ `id`, `name`, `created_by`, `stored_at`, `accessed_by`, `access_path` hợp pháp/hợp lý và `first_seen_scene`.
+   - `REVEAL_ARCHITECTURE` (3 tầng tiết lộ): Mỗi tầng Reveal (1, 2, 3) bắt buộc có tối thiểu `>= 2 seed_ids` được gieo ở các cảnh trước đó.
+   - `SCENE_CAPACITY_PLAN` (20–24 scenes chia rõ `PART_A_SCENE_PLAN`, `PART_B_SCENE_PLAN`, `PART_C_SCENE_PLAN`): Mỗi cảnh có `id`, `part`, `purpose`, `new_info`, `action`, `conflict`, `state_change`, `evidence`, `knowledge_transfer`, `target_chars` (tuyệt đối không có cảnh dậm chân tại chỗ).
+   - `PART_CONTRACTS` (`PART_A_HANDOFF`, `PART_B_HANDOFF`, `PART_C_HANDOFF`): Ghi rõ `entry_state`, `exit_state`, `open_loops`, `next_scene`, và chốt `APPROVED_FOR_DRAFTING: YES`. Không viết văn bản kịch bản ở bước này."""
 
     def _extract_compact_step3_for_part(self, step3_context: str, part_letter: str) -> str:
         """
@@ -2831,6 +2984,44 @@ YÊU CẦU THỰC THI NGAY CHO MÃ {ma_id}:
             return f"{head_bible}\n\n...[TRÍCH XUẤT TRỌNG TÂM KẾ HOẠCH PART {p_up}]...\n\n{part_slice}\n\n{handoff_tail}".strip()
         return f"{head_bible}\n\n...\n\n{step3_context[-14500:]}".strip()
 
+    def _extract_part_scene_plan_only(self, step3_context: str, part_letter: str, max_len: int = 12000) -> str:
+        """
+        Dùng cho lệnh VIẾT BÙ: chỉ lấy đầu Story Bible (ngắn) + đúng khối `PART_{X}_SCENE_PLAN`
+        (tới khối Part kế tiếp), không lấy nhầm kế hoạch của Part khác.
+        """
+        src = step3_context or ""
+        if not src:
+            return ""
+        p_up = part_letter.upper()
+        # 2 kiểu nhãn STEP 3 thường gặp: "PART_A_SCENE_PLAN" và tiêu đề "PART A — FOUNDATION / HOOK ..."
+        pattern_tpls = (
+            (r"PART[_\s]*{L}[_\s]*SCENE[_\s]*PLAN", re.IGNORECASE),
+            (r"^[ \t#*]*PART[ \t_]*{L}[ \t]*[—–\-][ \t]*[A-Z]", re.MULTILINE),
+        )
+        own_starts: List[int] = []
+        other_starts: List[int] = []
+        for tpl, flg in pattern_tpls:
+            for letter in ("A", "B", "C"):
+                for m in re.finditer(tpl.format(L=letter), src, flags=flg):
+                    (own_starts if letter == p_up else other_starts).append(m.start())
+        if not own_starts:
+            return src[:max_len]
+        other_starts.sort()
+        # STEP 3 có thể nhắc "PART A —" nhiều lần (mục lục, tóm tắt...). Chọn đoạn dài nhất = kế hoạch cảnh thật.
+        best_start, best_end = own_starts[0], len(src)
+        best_len = -1
+        for st in own_starts:
+            nxt = next((o for o in other_starts if o > st + 20), len(src))
+            if nxt - st > best_len:
+                best_start, best_end, best_len = st, nxt, nxt - st
+        start_idx = max(0, best_start - 120)
+        end_idx = best_end
+        part_slice = src[start_idx:end_idx].strip()
+        bible_budget = max(0, min(3500, max_len - len(part_slice) - 200))
+        head = src[:bible_budget].strip() if start_idx > bible_budget else ""
+        out = f"{head}\n\n...[KẾ HOẠCH CẢNH PART {p_up}]...\n\n{part_slice}" if head else part_slice
+        return out[:max_len]
+
     def _build_step4_part_initial_prompt(
         self,
         ma_id: str,
@@ -2844,8 +3035,8 @@ YÊU CẦU THỰC THI NGAY CHO MÃ {ma_id}:
     ) -> str:
         skill_md = self._load_skill_markdown("04_longform_script_writer")
         compact_s3 = self._extract_compact_step3_for_part(step3_context, part_letter)
-        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 04 (LONGFORM SCRIPT WRITER) ==========\n{skill_md}\n============================================================================" if (skill_md and compact_s3) else ""
-        ctx_block = f"\n\n========== STORY BIBLE & KẾ HOẠCH CẢNH TỪ STEP 3 ==========\n{compact_s3}\n===========================================================" if compact_s3 else ""
+        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 04 (ADAS V4.0.0 — LONGFORM SCRIPT WRITER) ==========\n{skill_md}\n==========================================================================================" if (skill_md and compact_s3) else ""
+        ctx_block = f"\n\n========== STORY BIBLE, PROOF_CHAIN & KẾ HOẠCH CẢNH TỪ STEP 3 ==========\n{compact_s3}\n========================================================================" if compact_s3 else ""
         prev_block = (
             f"\n\n========== ĐOẠN KẾT CỦA PART TRƯỚC (ĐỂ NỐI MẠCH TRUYỆN LIỀN MẠCH 100%, TUYỆT ĐỐI KHÔNG LẶP LẠI) ==========\n"
             f"「...{prev_part_tail[-400:]}」\n"
@@ -2853,15 +3044,15 @@ YÊU CẦU THỰC THI NGAY CHO MÃ {ma_id}:
             if prev_part_tail
             else ""
         )
-        return f"""CHẠY NGAY STEP 4 — BUILD PART {part_letter} CHO MÃ {ma_id}
+        return f"""CHẠY NGAY STEP 4 (ADAS V4.0.0) — BUILD PART {part_letter} CHO MÃ {ma_id}
 LOCKED_TITLE: 「{locked_title}」{ctx_block}{prev_block}{skill_block}
 
-QUY TẮC BẮT BUỘC (04_longform_script_writer):
-1. CHỈ VIẾT VĂN BẢN TỰ SỰ VÀ LỜI THOẠI TIẾNG NHẬT THUẦN TÚY (Japanese Narration & Dialogue) của PART {part_letter} theo đúng `PART_{part_letter}_SCENE_PLAN` đã duyệt ở STEP 3.
-2. ⚠️ CẤM TUYỆT ĐỐI RÒ RỈ TIÊU ĐỀ KHÓA & METADATA: TUYỆT ĐỐI KHÔNG in lại dòng `LOCKED_TITLE: ...`, `SELECTED_TITLE: ...`, `PART {part_letter} — 日本語脚本`, `{ma_id} — STEP 4`, `CONTINUITY:`, `ENDING:` vào đầu hoặc giữa văn bản truyện (để tránh bị đọc nhầm khi tạo Voice TTS và Phụ đề Video). Dòng đầu tiên phải vào thẳng câu chuyện tiếng Nhật!
+QUY TẮC BẮT BUỘC (ADAS V4.0.0 — 04_longform_script_writer):
+1. CHỈ VIẾT VĂN BẢN TỰ SỰ VÀ LỜI THOẠI TIẾNG NHẬT THUẦN TÚY (Pure Japanese Narration & Dialogue) của PART {part_letter} theo đúng `PART_{part_letter}_SCENE_PLAN` và `PROOF_CHAIN` đã duyệt ở STEP 3.
+2. ⚠️ ZERO METADATA LEAK (QUY TẮC CỨNG V4.0.0): TUYỆT ĐỐI KHÔNG in lại dòng `LOCKED_TITLE: ...`, `SELECTED_TITLE: ...`, `PART {part_letter} — 日本語脚本`, `【第...部】`, `SCENE A1`, `{ma_id} — STEP 4`, `CONTINUITY:`, `ENDING:` vào đầu hoặc giữa văn bản truyện (để tránh bị đọc nhầm khi tạo Voice TTS và Phụ đề Video). Dòng đầu tiên phải vào thẳng câu chuyện tiếng Nhật!
 3. MỤC TIÊU ĐỘ DÀI CỨNG CỦA PART {part_letter}: {min_c:,}–{max_c:,} ký tự thuần (Đích an toàn: ~{target_c:,} ký tự thuần Unicode L+N).
-4. Triển khai chi tiết, sâu sắc từng cảnh trong PART_{part_letter}_SCENE_PLAN bằng diễn biến hành động cụ thể, đối thoại giàu cảm xúc đời thực Nhật Bản, chi tiết vật chứng và tâm lý nhân vật. TUYỆT ĐỐI KHÔNG tóm tắt, không nhảy cóc cảnh, không chèn tiêu đề Scene hay ghi chú đạo diễn tiếng Anh/Việt vào giữa văn bản truyện.
-5. ⚠️ QUY TẮC TỐC ĐỘ & HIỂN THỊ: TUYỆT ĐỐI KHÔNG bật công cụ Python / Code Interpreter, KHÔNG đóng gói thành file tải về (.txt/.md/.docx). BẮT BUỘC in trực tiếp toàn bộ 100% văn bản kịch bản tiếng Nhật ra khung chat ngay lập tức (hệ thống bên ngoài sẽ tự đếm ký tự thuần). Ở cuối cùng mới ghi khối `PART_{part_letter}_HANDOFF_LEDGER`."""
+4. Triển khai đầy đủ từng cảnh trong `PART_{part_letter}_SCENE_PLAN`: mỗi cảnh phải tạo ra thông tin mới (`new_info`), chuyển dịch trạng thái (`state_change`), kiểm soát chặt giới hạn biết của nhân vật (`knowledge_ids`) và nguồn gốc vật chứng (`PROOF_CHAIN`). Không tóm tắt, không nhảy cóc cảnh, không lặp lại độc thoại nội tâm cùng một ý.
+5. ⚠️ QUY TẮC TỐC ĐỘ & HIỂN THỊ: TUYỆT ĐỐI KHÔNG bật công cụ Python / Code Interpreter, KHÔNG đóng gói thành file tải về (.txt/.md/.docx). BẮT BUỘC in trực tiếp toàn bộ 100% văn bản kịch bản tiếng Nhật ra khung chat ngay lập tức. Sau khi kết thúc toàn bộ phần truyện tiếng Nhật, ở dưới cùng mới ghi khối `PART_{part_letter}_HANDOFF_LEDGER` (gồm `end_time`, `end_location`, `next_scene`, `characters`, `documents`, `open_loops`, `seed_ids`, `forbidden_contradictions`)."""
 
     def _build_step4_part_continue_prompt(
         self,
@@ -2874,21 +3065,24 @@ QUY TẮC BẮT BUỘC (04_longform_script_writer):
         step3_context: str = "",
     ) -> str:
         needed = max(1500, target_c - current_pure)
+        # Lấy ĐÚNG kế hoạch cảnh của Part đang viết (trước đây lấy đuôi STEP 3 = kế hoạch Part C,
+        # khiến Part A/B khi viết bù bị nhảy sang nội dung Part C).
+        part_plan = self._extract_part_scene_plan_only(step3_context, part_letter) if step3_context else ""
         ctx_reminder = (
             f"\n\n========== NHẮC LẠI KẾ HOẠCH CẢNH PART {part_letter} (STEP 3) ==========\n"
-            f"{step3_context[-12000:]}\n"
+            f"{part_plan}\n"
             f"========================================================================\n"
-            if step3_context
+            if part_plan
             else ""
         )
-        return f"""[KIỂM TRA ĐỘ DÀI CỨNG — PART {part_letter}]
+        return f"""[KIỂM TRA ĐỘ DÀI CỨNG ADAS V4.0.0 — PART {part_letter}]
 - Số ký tự thuần (PURE_CHARACTER_COUNT) hiện tại của PART {part_letter} mới đạt: {current_pure:,} ký tự thuần.
 - Ngưỡng bắt buộc của PART {part_letter}: {min_c:,}–{max_c:,} ký tự thuần (Còn thiếu khoảng {needed:,} ký tự thuần để đạt đích {target_c:,}).{ctx_reminder}
 YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 1. Hãy viết TIẾP NỐI NGAY LẬP TỨC từ đoạn kết vừa rồi:
    「...{last_tail_ja}」
-2. Triển khai tiếp các cảnh còn lại của `PART_{part_letter}_SCENE_PLAN` (hoặc mở rộng chiều sâu nhân-quả, bằng chứng cụ thể, đối thoại xung đột, chi phí quyết định và chuyển biến tâm lý trong phạm vi của PART {part_letter}).
-3. TUYỆT ĐỐI KHÔNG bật công cụ Python/Code Interpreter, KHÔNG tạo file tải về, KHÔNG lặp lại những đoạn đã viết ở trên, KHÔNG viết sang Part tiếp theo, KHÔNG chèn tiêu đề chương/cảnh. Chỉ xuất trực tiếp 100% văn bản truyện tiếng Nhật ra khung chat nối tiếp cho đủ thêm tối thiểu {needed:,} ký tự thuần, sau đó xuất `PART_{part_letter}_HANDOFF_LEDGER` ở cuối."""
+2. Triển khai tiếp các cảnh còn lại của `PART_{part_letter}_SCENE_PLAN` (hoặc mở rộng chiều sâu nhân-quả, chi tiết vật chứng trong `PROOF_CHAIN`, đối thoại xung đột, chi phí quyết định và chuyển biến tâm lý trong phạm vi của PART {part_letter}).
+3. TUYỆT ĐỐI KHÔNG bật công cụ Python/Code Interpreter, KHÔNG tạo file tải về, KHÔNG lặp lại những đoạn đã viết ở trên, KHÔNG viết sang Part tiếp theo, KHÔNG chèn tiêu đề chương/cảnh/metadata. Chỉ xuất trực tiếp 100% văn bản truyện tiếng Nhật ra khung chat nối tiếp cho đủ thêm tối thiểu {needed:,} ký tự thuần, sau đó xuất `PART_{part_letter}_HANDOFF_LEDGER` ở cuối."""
 
     def _build_step5_audit_prompt(
         self,
@@ -2904,37 +3098,65 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         step3_context: str = "",
     ) -> str:
         skill_md = self._load_skill_markdown("05_script_auditor_100")
-        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 05 (SCRIPT AUDITOR 100) ==========\n{skill_md}\n========================================================================" if skill_md else ""
-        arch_excerpt = f"\n\n========== TÓM TẮT STORY BIBLE & LOGIC LEDGER (STEP 3) ==========\n{step3_context[:3500]}\n=================================================================" if step3_context else ""
+        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 05 (ADAS V4.0.0 — SCRIPT AUDITOR 100) ==========\n{skill_md}\n======================================================================================" if skill_md else ""
+        arch_excerpt = f"\n\n========== TÓM TẮT STORY BIBLE, PROOF_CHAIN & LOGIC LEDGER (STEP 3) ==========\n{step3_context[:4000]}\n==============================================================================" if step3_context else ""
         script_payload = ""
         if part_a_text or part_b_text or part_c_text:
             script_payload = (
-                f"\n\n========== TOÀN BỘ VĂN BẢN KỊCH BẢN CẦN KIỂM TRA & VIẾT LẠI (NẾU LỖI) ==========\n"
+                f"\n\n========== TOÀN BỘ VĂN BẢN KỊCH BẢN CẦN KIỂM ĐỊNH 2 LỚP (PASS 1 & PASS 2) ==========\n"
                 f"--- [BẮT ĐẦU PART A ({count_a:,} pure chars)] ---\n{part_a_text}\n--- [KẾT THÚC PART A] ---\n\n"
                 f"--- [BẮT ĐẦU PART B ({count_b:,} pure chars)] ---\n{part_b_text}\n--- [KẾT THÚC PART B] ---\n\n"
                 f"--- [BẮT ĐẦU PART C ({count_c:,} pure chars)] ---\n{part_c_text}\n--- [KẾT THÚC PART C] ---\n"
-                f"================================================================================"
+                f"===================================================================================="
             )
-        return f"""CHẠY NGAY STEP 5 (TRÊN ĐOẠN CHAT ĐỘC LẬP MỚI) — KIỂM TRA ĐỘC LẬP & VIẾT LẠI KỊCH BẢN (05_script_auditor_100) CHO MÃ {ma_id}
+        total_ok = SCRIPT_MIN_TOTAL_PURE <= total_count <= SCRIPT_MAX_TOTAL_PURE
+        total_status = "PASS" if total_ok else "FAIL"
+        return f"""CHẠY NGAY STEP 5 (ADAS V4.0.0 — AUDIT CHẤM ĐIỂM NGẮN TRÊN ĐOẠN CHAT ĐỘC LẬP MỚI) CHO MÃ {ma_id}
 - LOCKED_TITLE: 「{locked_title}」
 - Đếm ký tự thuần xác thực (Deterministic Pure Character Count — ĐÃ XÁC THỰC BỞI HỆ THỐNG PYTHON BÊN NGOÀI):
-  + PART A: {count_a:,} pure chars (PASS — LOCKED)
-  + PART B: {count_b:,} pure chars (PASS — LOCKED)
-  + PART C: {count_c:,} pure chars (PASS — LOCKED)
-  + TOTAL : {total_count:,} pure chars (PASS 40.001–50.000 — LOCKED)
+  + PART A: {count_a:,} pure chars
+  + PART B: {count_b:,} pure chars
+  + PART C: {count_c:,} pure chars
+  + TOTAL : {total_count:,} pure chars (Hợp đồng {SCRIPT_MIN_TOTAL_PURE:,}–{SCRIPT_MAX_TOTAL_PURE:,} → {total_status})
   + READY_FOR_AUDIT: YES{arch_excerpt}{skill_block}{script_payload}
 
-⚠️ YÊU CẦU KIỂM TRA ĐỘC LẬP & VIẾT LẠI (TRÊN ĐOẠN CHAT MỚI):
-1. Bạn là Giám khảo Độc lập kiểm tra kịch bản từ đoạn chat khác chuyển sang. Hãy đọc kỹ toàn bộ PART A, PART B, PART C ở trên và chấm điểm Rubric 100đ (logic nhân-quả, vật chứng, cảm xúc gia đình Nhật Bản, văn phong tự nhiên, không lặp ý).
-2. KIỂM TRA & XÓA SẠCH RÒ RỈ `[LOCKED_TITLE]` / METADATA: Nếu phát hiện trong văn bản kịch bản có dính dòng `LOCKED_TITLE:`, `SELECTED_TITLE:`, `PART A/B/C — 日本語脚本`, `STEP 4`, `<CodeBlock>`, `<WritingBlock>`, `CONTINUITY:`, `ENDING:`, hãy ghi chú lại và loại bỏ hoàn toàn khỏi phần văn bản truyện để tránh tuyệt đối việc tạo Voice TTS và Render Video đọc nhầm các dòng này.
-3. NẾU PHÁT HIỆN BẤT KỲ PHẦN NÀO (PART A, PART B hoặc PART C) CÓ LỖI LOGIC, LẶP CÂU HOẶC ĐOẠN VĂN CHƯA ĐẠT CHUẨN (< 85 điểm):
-   - Hãy VIẾT LẠI / SỬA LẠI trực tiếp phần đó bằng tiếng Nhật thuần túy đặt trong cặp thẻ `<REWRITE_PART_A>...</REWRITE_PART_A>` (hoặc `<REWRITE_PART_B>...</REWRITE_PART_B>`, `<REWRITE_PART_C>...</REWRITE_PART_C>`), giữ nguyên độ dài chuẩn (~14.000–16.000 ký tự thuần/phần), tuyệt đối không chèn `LOCKED_TITLE:` vào trong thẻ `<REWRITE_PART_...>`, để hệ thống tự động cập nhật bản mới!
-4. NẾU CẢ 3 PHẦN ĐỀU ĐẠT CHUẨN TỐT (>= 85 điểm, mạch truyện cuốn hút, nhất quán):
-   - Không cần mở thẻ `<REWRITE_PART_...>`, chỉ cần xuất bảng chấm điểm chi tiết, `PART_STATUS_TABLE` (`PART_A: PASS_LOCKED`, `PART_B: PASS_LOCKED`, `PART_C: PASS_LOCKED`), `LOCK_MANIFEST` và chốt `AUDIT_RESULT: PASS_PUBLISH_READY`! TUYỆT ĐỐI KHÔNG dùng Python/Code Interpreter."""
+⚠️ CHẾ ĐỘ CHẠY TỰ ĐỘNG: CHỈ CHẤM ĐIỂM, KHÔNG VIẾT LẠI.
+- TUYỆT ĐỐI KHÔNG xuất thẻ `<REWRITE_PART_A/B/C>` và KHÔNG chép lại văn bản kịch bản (hệ thống tự động không xử lý được bản viết lại dài).
+- Báo cáo NGẮN GỌN (dưới 2.500 ký tự): bảng điểm A–L, `TOTAL_SCORE`, `P0_COUNT`, tối đa 5 lỗi quan trọng nhất (mỗi lỗi 1 dòng: part — vị trí — mô tả), `PART_STATUS_TABLE`, và dòng cuối `AUDIT_RESULT: PASS_PUBLISH_READY` hoặc `AUDIT_RESULT: PATCH_REQUIRED` hoặc `AUDIT_RESULT: FAIL`.
 
-    def _build_step6_seo_prompt(self, ma_id: str, locked_title: str, total_count: int, step2_context: str = "", script_excerpt: str = "") -> str:
+⚠️ YÊU CẦU KIỂM ĐỊNH ĐỘC LẬP 2 LỚP (ADAS V4.0.0 — `05_script_auditor_100`):
+1. Thực hiện **TWO-PASS AUDIT** trên toàn bộ `PART A`, `PART B`, `PART C`:
+   - **PASS 1 — LOGIC & DEPENDENCY AUDIT**: Kiểm tra tính liên tục tại điểm nối A->B và B->C, giới hạn biết của nhân vật (`knowledge_ids`), chuỗi nguồn gốc vật chứng (`PROOF_CHAIN`), 3 tầng tiết lộ có đủ `>= 2 seeds`, lời hứa của `LOCKED_TITLE` được giải quyết trọn vẹn tại `PART C`, và không có bất kỳ dòng metadata rò rỉ nào (`LOCKED_TITLE:`, `PART A/B/C`, `SCENE`, `<CodeBlock>`).
+   - **PASS 2 — GLOBAL HOLISTIC QUALITY RUBRIC (12 hạng mục A–L / 100 điểm)**:
+     + `A` Title promise & hook integrity `/8`
+     + `B` Narrative logic & causality `/18` (Tối thiểu `>= 16/18`)
+     + `C` Character motivation & consistency `/10` (Tối thiểu `>= 8/10`)
+     + `D` Evidence & domain plausibility `/10` (Tối thiểu `>= 8/10`)
+     + `E` Three-layer reveal architecture `/10` (Tối thiểu `>= 8/10`)
+     + `F` Emotional progression & payoff `/10`
+     + `G` Japanese prose naturalness `/10`
+     + `H` Pacing & retention `/7`
+     + `I` Anti-repetition & information density `/7` (Tối thiểu `>= 5/7`)
+     + `J` Dialogue distinctiveness `/4`
+     + `K` Ending resolution & callback `/3`
+     + `L` Publish readiness & clean text `/3`
+     + **Ngưỡng PASS chuẩn V4.0.0**: Tổng điểm `TOTAL_SCORE >= 95/100`, `P0_COUNT == 0`, và mọi hạng mục con đạt ngưỡng tối thiểu.
+2. CƠ CHẾ ĐÁNH DẤU (`PATCH_REQUIRED` vs `PASS_LOCKED`):
+   - Phần đạt chuẩn ghi `PASS_LOCKED`; phần có lỗi `P0` hoặc điểm thành phần chưa đạt ghi `PATCH_REQUIRED` kèm 1 dòng `REPAIR_TICKET` (`part`, `severity`, `vị trí`, `mô tả ngắn`).
+   - KHÔNG xuất văn bản sửa lỗi, KHÔNG mở thẻ `<REWRITE_PART_...>`.
+3. Chốt `AUDIT_RESULT: PASS_PUBLISH_READY` khi `TOTAL_SCORE >= 95/100` và `P0_COUNT == 0`; ngược lại chốt `AUDIT_RESULT: PATCH_REQUIRED` (lỗi sửa được) hoặc `AUDIT_RESULT: FAIL`. TUYỆT ĐỐI KHÔNG dùng Python/Code Interpreter."""
+
+    @staticmethod
+    def _parse_audit_result(step5_out: str) -> str:
+        """Đọc dòng `AUDIT_RESULT: ...` thật từ báo cáo STEP 5 (trả về "" nếu không có)."""
+        if not step5_out:
+            return ""
+        found = re.findall(r"AUDIT_RESULT\s*[:：]\s*`?\s*([A-Z_]+)", step5_out)
+        return found[-1].strip() if found else ""
+
+    def _build_step6_seo_prompt(self, ma_id: str, locked_title: str, total_count: int, step2_context: str = "", script_excerpt: str = "", audit_result: str = "") -> str:
         skill_md = self._load_skill_markdown("06_seo_publish_pack")
-        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 06 (SEO & THUMBNAIL PUBLISH PACK) ==========\n{skill_md}\n==================================================================================" if skill_md else ""
+        skill_block = f"\n\n========== HƯỚNG DẪN CHUYÊN SÂU SKILL 06 (ADAS V4.0.0 — SEO & THUMBNAIL PUBLISH PACK) ==========\n{skill_md}\n================================================================================================" if skill_md else ""
         # Lấy phần cuối của step2_context (nơi chứa TITLE MATRIX, THUMBNAIL 6 LAYERS và LOCKED_TITLE)
         step2_tail = step2_context[-14000:] if step2_context else ""
         step2_six_lines = self._extract_six_lines_from_single_source(step2_context or "")
@@ -2946,35 +3168,37 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             )
         ctx_block = f"\n\n========== DỮ LIỆU THUMBNAIL & CONCEPT TỪ STEP 2 ==========\n{step2_tail}\n===========================================================" if step2_tail else ""
         script_block = f"\n\n========== TRÍCH ĐOẠN MỞ ĐẦU & CAO TRÀO KỊCH BẢN ĐÃ KHÓA ==========\n{script_excerpt[:3000]}\n===================================================================" if script_excerpt else ""
-        return f"""CHẠY NGAY STEP 6 (TRÊN ĐOẠN CHAT SEO MỚI HOÀN TOÀN) — SEO / METADATA & 1 THUMBNAIL PROMPT (06_seo_publish_pack) CHO MÃ {ma_id}
-- PURE_CHARACTER_COUNT_VERIFIED: {total_count:,} (LENGTH_GATE: PASS)
-- AUDIT_RESULT: PASS_PUBLISH_READY (FINAL_VERIFY_PASS: YES — ĐÃ DUYỆT BỞI ĐOẠN CHAT KIỂM ĐỊNH ĐỘC LẬP)
-- LOCKED_TITLE (Giữ nguyên 100% verbatim): 「{locked_title}」{locked_6_lines_block}{ctx_block}{script_block}{skill_block}
+        length_gate = "PASS" if SCRIPT_MIN_TOTAL_PURE <= total_count <= SCRIPT_MAX_TOTAL_PURE else "OUT_OF_RANGE"
+        audit_txt = (audit_result or "NOT_AVAILABLE").strip()
+        return f"""CHẠY NGAY STEP 6 (ADAS V4.0.0 — TRÊN ĐOẠN CHAT SEO MỚI HOÀN TOÀN) — SEO / METADATA & 1 THUMBNAIL PROMPT (06_seo_publish_pack) CHO MÃ {ma_id}
+- PURE_CHARACTER_COUNT_VERIFIED: {total_count:,} (LENGTH_GATE: {length_gate})
+- AUDIT_RESULT (STEP 5, chỉ để tham khảo — người vận hành đã duyệt xuất bản): {audit_txt}
+- LOCKED_TITLE (IMMUTABLE — Giữ nguyên 100% verbatim, tuyệt đối không viết lại tiêu đề ở STEP 6): 「{locked_title}」{locked_6_lines_block}{ctx_block}{script_block}{skill_block}
 
-⚠️ LỆNH XUẤT BẢN TRÊN ĐOẠN CHAT SEO MỚI (FORCE_PUBLISH_PACK = TRUE):
-- Hệ thống đã xác thực hoàn tất 100% kịch bản ({total_count:,} ký tự thuần) trên đoạn chat kiểm tra độc lập.
+⚠️ LỆNH XUẤT BẢN TRÊN ĐOẠN CHAT SEO MỚI (ADAS V4.0.0 — FORCE_PUBLISH_PACK = TRUE):
+- Kịch bản đã hoàn tất ({total_count:,} ký tự thuần). Người vận hành đã quyết định xuất bản, kết quả STEP 5 không chặn bước này.
 - TUYỆT ĐỐI KHÔNG xuất trạng thái `BLOCKED — STEP_5_VERIFY_REQUIRED`!
-- BẮT BUỘC xuất ngay lập tức trọn bộ GÓI ĐĂNG TẢI YOUTUBE NHẬT BẢN (PUBLISH PACK) đầy đủ 7 mục dưới đây (trực tiếp ra khung chat, không dùng Code Interpreter):
-1. `FINAL_TITLE`: Giữ nguyên nguyên văn `LOCKED_TITLE` (kèm bản dịch nghĩa tiếng Việt bên dưới).
-2. `YOUTUBE_DESCRIPTION_JA`: Mô tả video tiếng Nhật chuẩn SEO tự nhiên, cuốn hút ở 2 dòng đầu, tóm tắt cảm xúc không spoil kết, kèm kêu gọi đăng ký kênh.
+- BẮT BUỘC xuất ngay lập tức trọn bộ GÓI ĐĂNG TẢI YOUTUBE NHẬT BẢN (PUBLISH PACK V4.0.0) đầy đủ 7 mục dưới đây (trực tiếp ra khung chat, không dùng Code Interpreter):
+1. `FINAL_TITLE`: Giữ nguyên nguyên văn 100% `LOCKED_TITLE` (kèm bản dịch nghĩa tiếng Việt bên dưới).
+2. `YOUTUBE_DESCRIPTION_JA`: Mô tả video tiếng Nhật chuẩn SEO tự nhiên (2 dòng đầu hook mạnh, tóm tắt cảm xúc không spoil kết, kêu gọi đăng ký kênh, kèm khung Chapters tham khảo).
 3. `HASHTAGS`: 3 core hashtags (`#感動する話 #朗読 #スカッとする話`) + 3 topic hashtags tiếng Nhật phù hợp nhất.
 4. `TAGS_CSV`: Danh sách 15–20 thẻ từ khóa tiếng Nhật phân cách bằng dấu phẩy để dán vào ô Tags YouTube.
 5. `PINNED_COMMENT_JA`: Bình luận ghim tiếng Nhật kích thích khán giả để lại cảm nghĩ.
-6. `FINAL_THUMBNAIL_6_LINES` (HARD OVERRIDE: SIX_LINES_ONLY — CHÍNH XÁC 6 DÒNG VẬT LÝ L1..L6) + `COLOR_PLAN` + `LINE_BREAK_PLAN`:
-   - BẮT BUỘC sử dụng đúng 6 dòng chữ Nhật ngắn gọn từ `LOCKED_THUMBNAIL_6_LINES` của STEP 2 (mỗi dòng L1..L5 ngắn gọn chỉ 5–9 ký tự tiếng Nhật, L6 gồm 2 cụm ngắn Cyan + Magenta trên cùng 1 hàng, giữ đúng ngôi kể `私` của LOCKED_TITLE, tuyệt đối không viết câu dài >9 ký tự/dòng và không tiết lộ kết cục!):
-     L1: <dòng 1 chữ Nhật ngắn gọn 5-9 ký tự>
-     L2: <dòng 2 chữ Nhật ngắn gọn 5-9 ký tự>
-     L3: <dòng 3 chữ Nhật ngắn gọn 5-9 ký tự>
-     L4: <dòng 4 chữ Nhật ngắn gọn 5-9 ký tự>
-     L5: <dòng 5 chữ Nhật ngắn gọn 5-9 ký tự>
-     L6: <dòng 6 chữ Nhật (2 cụm ngắn màu Cyan + Magenta trên cùng 1 hàng)>
+6. `FINAL_THUMBNAIL_6_LINES` (HARD OVERRIDE V4.0.0: SIX_LINES_ONLY — CHÍNH XÁC 6 DÒNG VẬT LÝ L1..L6) + `COLOR_PLAN` + `LINE_BREAK_PLAN`:
+   - BẮT BUỘC sử dụng đúng 6 dòng chữ Nhật ngắn gọn từ `LOCKED_THUMBNAIL_6_LINES` của STEP 2 theo bảng màu chuẩn V4.0.0 (`L1: yellow`, `L2: white`, `L3: magenta`, `L4: yellow`, `L5: cyan`, `L6: 2 cụm ngắn màu cyan + magenta trên CÙNG MỘT HÀNG NGANG / same_baseline=true`, giữ đúng ngôi kể `私` của LOCKED_TITLE, tuyệt đối không viết câu dài >9 ký tự/dòng và không tiết lộ kết cục!):
+     L1: <dòng 1 chữ Nhật ngắn gọn 5-9 ký tự — Yellow>
+     L2: <dòng 2 chữ Nhật ngắn gọn 5-9 ký tự — White>
+     L3: <dòng 3 chữ Nhật ngắn gọn 5-9 ký tự — Magenta>
+     L4: <dòng 4 chữ Nhật ngắn gọn 5-9 ký tự — Yellow>
+     L5: <dòng 5 chữ Nhật ngắn gọn 5-9 ký tự — Cyan>
+     L6: <dòng 6 chữ Nhật (2 cụm ngắn màu Cyan + Magenta trên cùng 1 hàng ngang)>
 7. `SINGLE_THUMBNAIL_GENERATION_PROMPT` (CHỈ XUẤT ĐÚNG 1 PROMPT TẠO ẢNH THUMBNAIL NGANG 1536x1024 DUY NHẤT):
    - ⚠️ QUY TẮC THUMBNAIL BẮT BUỘC:
      + **PHẦN CHỮ CÓ THỂ ĐÈ LÊN MỘT PHẦN ẢNH MẶT / VAI NHÂN VẬT CŨNG ĐƯỢC** (để mỗi hàng chữ có đủ chiều ngang, không bị bó hẹp), **NHƯNG TUYỆT ĐỐI BẮT BUỘC PHẢI ĐÚNG CHÍNH XÁC 6 DÒNG CHỮ VẬT LÝ (L1 đến L6)** — tuyệt đối không được 5 dòng hay 7-8 dòng!
      + Luôn ghi kích thước chuẩn của công cụ tạo ảnh OpenAI là `landscape size 1536x1024` với bố cục an toàn cho khung 16:9 YouTube (`1920x1080`).
      + Prompt phải là lệnh tạo ảnh mới hoàn toàn từ đầu (`Generate a brand-new image from scratch, text-to-image, size 1536x1024`), tuyệt đối KHÔNG đưa các câu hậu kiểm như `reject and regenerate`, `check the rendered image`, `edit/modify` vào bên trong thẻ `<THUMBNAIL_PROMPT_1>`.
    - Chỉ xuất duy nhất 1 bản Prompt tạo ảnh hoàn chỉnh trong cặp thẻ sau:
-     `<THUMBNAIL_PROMPT_1>` (Mô tả chi tiết cảnh, nhân vật, vật chứng, biểu cảm, ánh sáng + chèn nguyên văn 6 dòng chữ Nhật ngắn gọn L1..L6 + quy tắc chữ đè lên một phần mặt được phép nhưng tuyệt đối đúng 6 dòng) `</THUMBNAIL_PROMPT_1>`"""
+     `<THUMBNAIL_PROMPT_1>` (Mô tả chi tiết cảnh, nhân vật người lớn Nhật Bản 35-65 tuổi, vật chứng, biểu cảm, ánh sáng + chèn nguyên văn 6 dòng chữ Nhật ngắn gọn L1..L6 + quy tắc chữ đè lên một phần mặt được phép nhưng tuyệt đối đúng 6 dòng) `</THUMBNAIL_PROMPT_1>`"""
 
     def _extract_six_lines_from_single_source(self, src: str) -> List[str]:
         """Trích xuất chính xác 6 dòng chữ Nhật L1..L6 từ một văn bản (STEP 2 hoặc STEP 6), hỗ trợ bảng Markdown và khối nhiều dòng."""
@@ -3454,7 +3678,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                             mark_account_rate_limited(
                                 session.acc_id,
                                 reason=f"Lỗi tạo Thumbnail liên tiếp ({err_txt})",
-                                cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+                                cooldown_sec=ACCOUNT_SOFT_COOLDOWN_SEC,
                             )
                         switched = session.switch_to_another_account(extra_exclude=tried_thumb_accs)
                         if switched:
@@ -3728,11 +3952,11 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         base_progress: float,
         step3_context: str = "",
         prev_part_tail: str = "",
-        min_acceptable_chars: int = 9500,
+        min_acceptable_chars: int = SCRIPT_MIN_PART_ACCEPT,
     ) -> str:
         """
         Điều khiển ChatGPT viết 1 Part (A, B hoặc C) và tự động nối thêm cho đến khi đủ ngưỡng độ dài.
-        - BẮT BUỘC mỗi Part phải đạt tối thiểu `min_acceptable_chars` (mặc định >= 9.500–10.000 chữ thuần).
+        - BẮT BUỘC mỗi Part phải đạt tối thiểu `min_acceptable_chars` (mặc định SCRIPT_MIN_PART_ACCEPT = 11.000 chữ thuần).
         - Nếu một lượt chat bị nghẽn ngữ cảnh (trả về rỗng hoặc không tăng ký tự), tự động mở ĐOẠN CHAT MỚI
           kèm `step3_context` + đoạn kết hiện tại để viết tiếp thay vì dừng sớm (tránh lỗi thiếu Part như P16, P17).
         """
@@ -4304,8 +4528,8 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             clean_script_file = proj_dir / "script_clean.txt"
 
             # Ngưỡng chấp nhận khôi phục Part đã viết sẵn (tối thiểu >= 9.500 chữ thuần/Part)
-            accept_a = max(9500, int(min_a * 0.72))
-            accept_bc = max(9500, int(min_bc * 0.72))
+            accept_a = max(SCRIPT_MIN_PART_ACCEPT, int(min_a * 0.82))
+            accept_bc = max(SCRIPT_MIN_PART_ACCEPT, int(min_bc * 0.82))
 
             need_write_a = force_rewrite_script or not (
                 part_a_file.exists() and pure_char_count(part_a_file.read_text(encoding="utf-8", errors="ignore")) >= accept_a
@@ -4472,10 +4696,22 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             full_clean_script = "\n\n".join([part_a_clean, part_b_clean, part_c_clean]).strip()
             full_clean_script, rem_full = self._sanitize_and_note_script_text(ma_id, full_clean_script, source_label="FULL_SCRIPT")
             total_pure = pure_char_count(full_clean_script)
-            if total_pure < 35000:
+            if total_pure < SCRIPT_MIN_TOTAL_PURE:
+                # Nếu giữ nguyên 3 Part thì lần thử lại sẽ dùng lại đúng các Part cũ và lỗi y hệt (lặp vô tận).
+                # -> Chuyển Part ngắn nhất sang file dự phòng để lần chạy sau CHỈ viết lại Part đó.
+                shortest_let, shortest_file = min(
+                    (("A", part_a_file, count_a), ("B", part_b_file, count_b), ("C", part_c_file, count_c)),
+                    key=lambda t: t[2],
+                )[:2]
+                try:
+                    bak = proj_dir / f"part_{shortest_let.lower()}.short_backup.txt"
+                    if shortest_file.exists():
+                        shutil.move(str(shortest_file), str(bak))
+                except Exception:
+                    pass
                 raise RuntimeError(
-                    f"[{ma_id}] Tổng kịch bản 3 Part chỉ đạt {total_pure:,} chữ (< 35,000 chữ thuần tối thiểu). "
-                    f"Hệ thống từ chối đánh dấu hoàn tất để tránh kịch bản ngắn!"
+                    f"[{ma_id}] Tổng kịch bản 3 Part chỉ đạt {total_pure:,} chữ (< {SCRIPT_MIN_TOTAL_PURE:,} chữ thuần tối thiểu). "
+                    f"Đã tách PART {shortest_let} ngắn nhất ra để viết lại ở lần chạy sau."
                 )
 
             clean_script_file.write_text(full_clean_script, encoding="utf-8")
@@ -4528,11 +4764,19 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     step5_out = session.send_prompt_and_wait(
                         step5_prompt,
                         step_label="STEP_5",
-                        timeout_sec=720,
+                        timeout_sec=480,
                         progress_cb=lambda st, ch: self._emit(message=f"[{ma_id}] [Chat #4] STEP 5 đang kiểm tra & hiệu đính ({ch:,} ký tự)..."),
                         should_stop_cb=lambda: self.should_stop,
                     )
                     step5_file.write_text(step5_out, encoding="utf-8")
+
+                audit_res_now = self._parse_audit_result(step5_out)
+                if audit_res_now:
+                    self._update_idea_record(ma_id, audit_result=audit_res_now)
+                    if audit_res_now != "PASS_PUBLISH_READY":
+                        self._emit(
+                            message=f"[{ma_id}] 📋 STEP 5 chấm: {audit_res_now} — Xem chi tiết lỗi trong step5_audit_report.txt (kịch bản vẫn được giữ để xuất bản)."
+                        )
 
                 rewritten_any = False
                 for p_let, p_file, min_req in (("A", part_a_file, min_a), ("B", part_b_file, min_bc), ("C", part_c_file, min_bc)):
@@ -4599,6 +4843,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         total_pure,
                         step2_context=step2_out,
                         script_excerpt=script_excerpt,
+                        audit_result=self._parse_audit_result(step5_out),
                     )
                     step6_out = session.send_prompt_and_wait(
                         step6_prompt,
@@ -4765,11 +5010,18 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 pass
             # Nếu kịch bản đã kịp viết xong đủ 3 Part trước khi lỗi, giữ trạng thái SCRIPT_DONE thay vì ERROR
             has_sc_now, _, sc_chars_now = self.has_valid_script_on_disk(ma_id)
-            if not (self.should_stop or "Đã dừng theo yêu cầu" in str(e)) and not has_sc_now and failed_acc:
+            err_kind = classify_script_error(e)
+            try:
+                setattr(e, "script_err_kind", err_kind)
+            except Exception:
+                pass
+            # Chỉ khóa nick khi nick thật sự không dùng được. Limit thật đã được khóa 30 phút ngay lúc phát hiện;
+            # lỗi tạm thời (Part ngắn, gửi trượt...) không khóa nick để tránh cả 3 nick cùng bị treo 30 phút.
+            if not self.should_stop and not has_sc_now and failed_acc and err_kind == "account":
                 mark_account_rate_limited(
                     failed_acc,
                     reason=f"[{ma_id}] {str(e)[:120]}",
-                    cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
+                    cooldown_sec=ACCOUNT_SOFT_COOLDOWN_SEC,
                 )
             if has_sc_now:
                 self._update_idea_record(
@@ -4941,6 +5193,52 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             "message": f"Đã đẩy {len(queued_ids)} kịch bản sang tạo Voice & Render Video MP4!",
         }
 
+    def _ensure_run_queue_attrs(self) -> None:
+        """Khởi tạo hàng đợi CHẠY TIẾP (an toàn cả khi engine được hot-reload từ bản cũ)."""
+        if not hasattr(self, "_run_queue"):
+            self._run_queue: List[str] = []
+            self._run_queued_ids: Set[str] = set()
+            self._run_active_ids: Set[str] = set()
+            self._run_item_opts: Dict[str, Dict[str, Any]] = {}
+            self._run_worker_active = False
+
+    def _queue_run_items_locked(self, ma_ids: List[str], opts: Dict[str, Any]) -> Tuple[List[str], List[str], List[str]]:
+        """
+        (Phải giữ self.lock) Nạp mã vào hàng đợi đang chạy.
+        Trả về (mã mới thêm, mã đã có sẵn trong dây chuyền, mã được nâng cấp sang Render luôn).
+        """
+        added: List[str] = []
+        existed: List[str] = []
+        upgraded: List[str] = []
+        for raw_mid in ma_ids or []:
+            mid = str(raw_mid or "").strip()
+            if not mid or mid in added:
+                continue
+            if mid in self._run_queued_ids or mid in self._run_active_ids:
+                cur = self._run_item_opts.get(mid)
+                # Mã đang chạy ở chế độ "Chỉ viết" mà người dùng bấm lại ở chế độ "Viết + Render" -> viết xong sẽ Render luôn
+                if cur is not None and opts.get("auto_produce_video") and not cur.get("auto_produce_video"):
+                    cur["auto_produce_video"] = True
+                    if opts.get("video_settings"):
+                        cur["video_settings"] = opts.get("video_settings")
+                    upgraded.append(mid)
+                existed.append(mid)
+                continue
+            self._run_item_opts[mid] = dict(opts)
+            self._run_queue.append(mid)
+            self._run_queued_ids.add(mid)
+            added.append(mid)
+        return added, existed, upgraded
+
+    def get_run_queue_info(self) -> Dict[str, Any]:
+        self._ensure_run_queue_attrs()
+        with self.lock:
+            return {
+                "worker_active": bool(self._run_worker_active),
+                "queued_ids": list(self._run_queue),
+                "active_ids": sorted(self._run_active_ids),
+            }
+
     def start_run_ideas_async(
         self,
         ma_ids: List[str],
@@ -4951,15 +5249,18 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         ai_provider: str = "chatgpt_web",
         force_rewrite_script: bool = False,
         max_retries: int = 3,
-    ) -> bool:
+    ) -> Dict[str, Any]:
         """
         KIẾN TRÚC LUỒNG ĐÔI SONG SONG (STREAMING PRODUCER–CONSUMER PIPELINE):
         - LUỒNG 1 (AI VIẾT KỊCH BẢN — PRODUCER):
-          + Các mã đã có sẵn kịch bản (`already_scripted_ids`) được đẩy NGAY LẬP TỨC vào Hàng Đợi Tạo Voice & Render MP4 từ giây đầu tiên.
-          + Các mã chưa có kịch bản (`need_script_ids`) được chia tải đa luồng trên các tài khoản Chrome để AI viết liên tục (tự động Retry tối đa `max_retries = 3` lần).
-          + Ngay khi BẤT KỲ 1 kịch bản nào vừa viết xong (`script_clean.txt` + SEO + Thumbnail), nếu `auto_produce_video=True`, hệ thống đẩy NGAY kịch bản đó sang Hàng Đợi Render MP4 rồi luồng AI lập tức viết tiếp kịch bản sau mà không đứng chờ!
-        - LUỒNG 2 (VOICE GPU & RENDER VIDEO MP4 — CONSUMER):
-          + Hoạt động độc lập song song ở hậu trường: cứ có kịch bản viết xong là tự động tạo Voice GPU & ghép MP4 cuốn chiếu liên tục.
+          + Các mã đã có sẵn kịch bản được đẩy NGAY LẬP TỨC vào Hàng Đợi Tạo Voice & Render MP4.
+          + Các mã chưa có kịch bản được chia tải đa luồng trên các tài khoản Chrome để AI viết liên tục.
+          + Viết xong kịch bản nào (nếu mã đó bật Render) thì đẩy NGAY sang Hàng Đợi Render MP4 rồi viết tiếp mã sau.
+        - LUỒNG 2 (VOICE GPU & RENDER VIDEO MP4 — CONSUMER): chạy song song ở hậu trường.
+        - CHẠY TIẾP: Nếu dây chuyền ĐANG CHẠY, các mã mới (VD: vừa thêm Tiêu đề) được nạp thẳng vào hàng đợi
+          đang chạy thay vì bị từ chối. Mỗi mã giữ chế độ riêng (Chỉ viết / Viết + Render).
+
+        Trả về dict: {"ok", "mode": "started" | "added", "added", "existed", "upgraded", "message"}.
         """
         if isinstance(video_settings, dict) and self.video_pipeline is not None:
             pm_val = video_settings.get("performance_mode") or (video_settings.get("voice_config") or {}).get("performance_mode")
@@ -4968,15 +5269,83 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     self.video_pipeline.set_performance_mode(pm_val, persist=True)
                 except Exception:
                     pass
+
+        self._ensure_run_queue_attrs()
+        item_opts = {
+            "preferred_acc_id": preferred_acc_id,
+            "auto_produce_video": bool(auto_produce_video),
+            "video_settings": video_settings,
+            "target_part_min": target_part_min,
+            "force_rewrite_script": bool(force_rewrite_script),
+        }
+
         with self.lock:
-            if self.is_running:
-                return False
-            self.is_running = True
-            self.should_stop = False
-            self.live_auto_produce_video = bool(auto_produce_video)
+            if self.is_running and not self._run_worker_active:
+                return {
+                    "ok": False,
+                    "message": "Đang chạy tác vụ tạo Thumbnail riêng — Vui lòng đợi tác vụ đó xong rồi bấm chạy lại.",
+                }
+            if self._run_worker_active and self.should_stop:
+                return {
+                    "ok": False,
+                    "message": "Dây chuyền đang dừng theo lệnh DỪNG — Đợi vài giây cho dừng hẳn rồi bấm chạy lại.",
+                }
+            hot_add = bool(self._run_worker_active)
+            if not hot_add:
+                self._run_queue.clear()
+                self._run_queued_ids.clear()
+                self._run_active_ids.clear()
+                self._run_item_opts.clear()
+            added, existed, upgraded = self._queue_run_items_locked(ma_ids, item_opts)
+            if hot_add:
+                if auto_produce_video and (added or upgraded):
+                    self.live_auto_produce_video = True
+            elif added:
+                self.is_running = True
+                self._run_worker_active = True
+                self.should_stop = False
+                self.live_auto_produce_video = bool(auto_produce_video)
+
+        if not added and not upgraded:
+            if existed:
+                msg = f"Các mã {', '.join(existed)} đã nằm sẵn trong dây chuyền đang chạy — không cần thêm lại."
+                return {"ok": True, "mode": "added", "added": [], "existed": existed, "upgraded": [], "message": msg}
+            return {"ok": False, "message": "Không có Mã ý tưởng hợp lệ để chạy!"}
+
+        if hot_add:
+            parts_msg = []
+            if added:
+                mode_txt = "Viết + Render" if auto_produce_video else "Chỉ viết KB + SEO + Thumb"
+                parts_msg.append(f"nạp thêm {len(added)} mã ({mode_txt}): {', '.join(added)}")
+            if upgraded:
+                parts_msg.append(f"chuyển {len(upgraded)} mã sang Render luôn khi viết xong: {', '.join(upgraded)}")
+            if existed and not upgraded:
+                parts_msg.append(f"bỏ qua {len(existed)} mã đã có trong dây chuyền")
+            msg = "▶️ [CHẠY TIẾP] Dây chuyền đang chạy -> " + "; ".join(parts_msg) + "."
+            for mid in added:
+                try:
+                    self._update_idea_record(mid, current_step="⏳ Đã nạp vào hàng đợi Chạy Tiếp — chờ tới lượt...")
+                except Exception:
+                    pass
+            log_info("SCRIPT", msg)
+            self._emit(status="running", message=msg)
+            return {"ok": True, "mode": "added", "added": added, "existed": existed, "upgraded": upgraded, "message": msg}
+
+        provider_norm = (ai_provider or "chatgpt_web").strip().lower()
+        provider_tag = (
+            "GEMINI 3.8 HIGH (FLASH CAO)"
+            if provider_norm in ("gemini_4_pro", "gemini_3_8_high")
+            else ("KẾT HỢP GEMINI 3.8 HIGH + CHATGPT THUMB" if provider_norm == "hybrid_gemini_chatgpt" else "CHATGPT WEB (MEDIUM)")
+        )
+
+        def _opts(mid: str) -> Dict[str, Any]:
+            return self._run_item_opts.get(mid) or item_opts
+
+        def _item_auto(mid: str) -> bool:
+            return bool(_opts(mid).get("auto_produce_video"))
 
         def _worker():
-            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from concurrent.futures import ThreadPoolExecutor, wait as futures_wait, FIRST_COMPLETED
             from .chatgpt_web_client import (
                 check_all_web_accounts_status,
                 ensure_all_saved_chatgpt_accounts_open,
@@ -4984,17 +5353,301 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 MAX_THREADS_PER_ACCOUNT,
             )
 
-            try:
-                self._sync_projects_disk_state()
-                clean_ids = [mid for mid in ma_ids if mid]
-                if not clean_ids:
+            acct_ctx: Dict[str, Any] = {"ready": False, "active_accs": ["acc_1"], "max_workers": 1}
+            processed_ids: List[str] = []   # Toàn bộ mã đã nhận trong phiên (kể cả mã nạp thêm khi Chạy Tiếp)
+            swept_ids: Set[str] = set()     # Mã đã quét vét Thumbnail/Render cuối phiên
+            executor_box: Dict[str, Any] = {"ex": None}
+            futs: Dict[Any, str] = {}
+            counters = {"submitted": 0, "done": 0}
+
+            def _setup_accounts() -> None:
+                if acct_ctx["ready"]:
                     return
+                if provider_norm in ("gemini_4_pro", "gemini_3_8_high", "hybrid_gemini_chatgpt"):
+                    st_gem = check_all_gemini_accounts_status().get("accounts", {})
+                    logged_accs = [aid for aid, a in st_gem.items() if a.get("logged_in")]
+                    if preferred_acc_id and preferred_acc_id in ("acc_1", "acc_2", "acc_3"):
+                        active_accs = [preferred_acc_id]
+                        pool_size = MAX_THREADS_PER_ACCOUNT
+                    else:
+                        active_accs = logged_accs if logged_accs else ["acc_1"]
+                        pool_size = max(1, len(active_accs)) * MAX_THREADS_PER_ACCOUNT
+                else:
+                    if not preferred_acc_id:
+                        ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
+                    st_all = check_all_web_accounts_status(force_refresh=True).get("accounts", {})
+                    logged_accs = [aid for aid, a in st_all.items() if a.get("logged_in")]
+                    if preferred_acc_id and preferred_acc_id in st_all:
+                        active_accs = [preferred_acc_id]
+                        pool_size = MAX_THREADS_PER_ACCOUNT
+                    else:
+                        active_accs = logged_accs if logged_accs else ["acc_1"]
+                        pool_size = max(1, len(active_accs)) * MAX_THREADS_PER_ACCOUNT
+
+                # Chức năng 2: Chạy 70% công suất (work_70) -> Giới hạn cứng tối đa 3 luồng tổng cộng!
+                perf_mode_now = (os.environ.get("STUDIO_PERF_MODE") or "").strip().lower()
+                if not perf_mode_now:
+                    try:
+                        cfg_p = self.root_dir / "config.json"
+                        if cfg_p.exists():
+                            perf_mode_now = str(json.loads(cfg_p.read_text(encoding="utf-8")).get("performance_mode", "full_100")).strip().lower()
+                    except Exception:
+                        perf_mode_now = "full_100"
+                if perf_mode_now == "work_70":
+                    pool_size = min(pool_size, 3)
+
+                acct_ctx.update({"ready": True, "active_accs": active_accs, "max_workers": max(1, pool_size)})
+
+            active_slot_lock = threading.Lock()
+            active_slot_state = {"count": 0}
+            cfg_perf_file = self.root_dir / "config.json"
+
+            def _get_live_perf_mode() -> str:
+                env_pm = (os.environ.get("STUDIO_PERF_MODE") or "").strip().lower()
+                if env_pm in ("work_70", "full_100"):
+                    return env_pm
+                try:
+                    if cfg_perf_file.exists():
+                        m = str(json.loads(cfg_perf_file.read_text(encoding="utf-8")).get("performance_mode", "full_100")).strip().lower()
+                        if m in ("work_70", "full_100"):
+                            return m
+                except Exception:
+                    pass
+                return "full_100"
+
+            def _acquire_perf_slot():
+                while not self.should_stop:
+                    pm = _get_live_perf_mode()
+                    limit_slots = 3 if pm == "work_70" else 9
+                    with active_slot_lock:
+                        if active_slot_state["count"] < limit_slots:
+                            active_slot_state["count"] += 1
+                            return True
+                    time.sleep(1.0)
+                return False
+
+            def _release_perf_slot():
+                with active_slot_lock:
+                    active_slot_state["count"] = max(0, active_slot_state["count"] - 1)
+
+            def _only_unrendered() -> bool:
+                return len(processed_ids) > 1
+
+            def _run_one_with_auto_retry(mid_item: str, acc_item: Optional[str]):
+                if not _acquire_perf_slot():
+                    return
+                active_accs = acct_ctx["active_accs"]
+                opts_item = _opts(mid_item)
+                force_rw_item = bool(opts_item.get("force_rewrite_script"))
+                target_min_item = opts_item.get("target_part_min") or target_part_min
+                try:
+                    # Tổng số lần chạy = 1 lần chạy chính + tối đa `max_retries` (tối thiểu 4 lượt để xoay vòng đủ các nick + chờ nếu cần)
+                    total_attempts = 1 + max(4, int(max_retries))
+                    failed_accs_for_mid: set = set()
+                    # Khi đổi nick sẽ VIẾT TIẾP từ phần đã lưu (STEP 2/3, Part A/B/C đã xong),
+                    # không xóa làm lại từ đầu như trước -> không mất hàng giờ đã viết.
+                    switched_to_other_acc = False
+
+                    for attempt_idx in range(total_attempts):
+                        if self.should_stop:
+                            return
+                        is_first_try = (attempt_idx == 0)
+                        # Chỉ xóa viết lại khi người dùng bấm "Viết Lại" (và chỉ ở lần chạy đầu tiên)
+                        use_force_rw = bool(force_rw_item and is_first_try)
+                        try_acc = acc_item if is_first_try else None
+                        if attempt_idx > 0 and provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") and len(active_accs) > 1:
+                            try_acc = active_accs[attempt_idx % len(active_accs)]
+                        # Đọc chế độ Render "sống" (có thể đã được nâng cấp khi người dùng bấm Chạy Tiếp ở chế độ Viết + Render)
+                        auto_vid_item = _item_auto(mid_item)
+                        vs_item = _opts(mid_item).get("video_settings") or video_settings
+                        try:
+                            if attempt_idx > 0:
+                                retry_msg = (
+                                    f"🔄 [{mid_item}] Đẩy kịch bản sang nick khác VIẾT TIẾP từ phần đã lưu (Lần {attempt_idx}/{total_attempts - 1} — Tránh nick lỗi: {sorted(failed_accs_for_mid)})..."
+                                    if switched_to_other_acc
+                                    else f"🔄 [{mid_item}] Tự động Retry lần {attempt_idx}/{total_attempts - 1}..."
+                                )
+                                self._update_idea_record(
+                                    mid_item,
+                                    status="RUNNING",
+                                    retry_count=attempt_idx,
+                                    current_step=f"🔄 Đang chuyển sang nick khác viết tiếp ({attempt_idx}/{total_attempts - 1})...",
+                                )
+                                self._emit(
+                                    status="running",
+                                    current_ma_id=mid_item,
+                                    current_step=f"🔄 Đổi nick viết tiếp ({attempt_idx}/{total_attempts - 1})",
+                                    message=retry_msg,
+                                )
+                                log_warn("SCRIPT", retry_msg, project_id=mid_item)
+
+                            res_single = self.run_single_idea_pipeline_sync(
+                                mid_item,
+                                try_acc,
+                                auto_vid_item,                  # Viết xong kịch bản nào đẩy sang Render ngay kịch bản đó!
+                                vs_item,
+                                target_min_item,
+                                not auto_vid_item,              # defer_video_handoff=False khi bật Render
+                                use_force_rw,                   # Chỉ True khi người dùng bấm "Viết Lại" (lần đầu); đổi nick thì viết tiếp
+                                ai_provider,
+                                exclude_accs=set(failed_accs_for_mid),
+                            )
+                            has_sc_ok, _, _ = self.has_valid_script_on_disk(mid_item)
+                            if has_sc_ok:
+                                # Kiểm tra lại Thumbnail ngay sau khi xong kịch bản: nếu thiếu thì tạo lại trên nick khác
+                                has_th_ok, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
+                                if not has_th_ok and not self.should_stop:
+                                    self.ensure_project_thumbnail_with_failover_sync(
+                                        ma_id=mid_item,
+                                        preferred_acc_id=None,
+                                        exclude_accs=set(failed_accs_for_mid),
+                                    )
+                                if _item_auto(mid_item) and not (isinstance(res_single, dict) and res_single.get("video_triggered")):
+                                    self.start_render_video_for_ideas_async(
+                                        ma_ids=[mid_item],
+                                        video_settings=_opts(mid_item).get("video_settings") or video_settings,
+                                        only_unrendered=_only_unrendered(),
+                                    )
+                                return
+                            raise RuntimeError("Chưa ghép đủ 3 Part kịch bản chuẩn trên ổ cứng.")
+                        except Exception as exc_try:
+                            if self.should_stop or "Đã dừng theo yêu cầu" in str(exc_try):
+                                return
+                            err_kind = getattr(exc_try, "script_err_kind", None) or classify_script_error(exc_try)
+                            if err_kind == "fatal":
+                                # Lỗi thử lại cũng vô ích (VD: không còn ý tưởng trong danh sách) -> dừng ngay, không Retry 5 lần
+                                log_error(
+                                    "SCRIPT",
+                                    f"[{mid_item}] ❌ Lỗi không thể tự khắc phục, dừng Retry: {exc_try}",
+                                    project_id=mid_item,
+                                )
+                                try:
+                                    self._update_idea_record(
+                                        mid_item,
+                                        status="ERROR",
+                                        current_step=f"❌ {str(exc_try)[:80]}",
+                                    )
+                                except Exception:
+                                    pass
+                                raise
+                            failed_acc = getattr(exc_try, "failed_acc_id", None) or try_acc
+                            if failed_acc:
+                                failed_accs_for_mid.add(failed_acc)
+                            log_warn(
+                                "SCRIPT",
+                                f"[{mid_item}] Lỗi loại '{err_kind}' trên nick '{failed_acc or '?'}': {str(exc_try)[:160]}",
+                                project_id=mid_item,
+                            )
+
+                            # Nếu kịch bản 3 Part đã kịp viết xong trên ổ cứng -> Kiểm tra tạo bù Thumbnail trên nick khác rồi đẩy vào Render!
+                            has_sc_now, _, _ = self.has_valid_script_on_disk(mid_item)
+                            if has_sc_now:
+                                has_th_now, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
+                                if not has_th_now and not self.should_stop:
+                                    self.ensure_project_thumbnail_with_failover_sync(
+                                        ma_id=mid_item,
+                                        preferred_acc_id=None,
+                                        exclude_accs=set(failed_accs_for_mid),
+                                    )
+                                if _item_auto(mid_item):
+                                    self.start_render_video_for_ideas_async(
+                                        ma_ids=[mid_item],
+                                        video_settings=_opts(mid_item).get("video_settings") or video_settings,
+                                        only_unrendered=_only_unrendered(),
+                                    )
+                                return
+
+                            # Kịch bản chưa xong -> Đẩy sang nick khác VIẾT TIẾP (giữ nguyên STEP 2/3 và các Part đã xong)
+                            switched_to_other_acc = True
+
+                            if attempt_idx < total_attempts - 1:
+                                # Kiểm tra xem còn nick nào đang rảnh (không bị khóa) không
+                                free_accs_now = [
+                                    aid for aid in active_accs
+                                    if not is_account_in_cooldown(aid)[0] and aid not in failed_accs_for_mid
+                                ]
+                                if not free_accs_now:
+                                    # Mở rộng sang toàn bộ tài khoản chưa bị cooldown
+                                    free_accs_now = [
+                                        aid for aid in ("acc_1", "acc_2", "acc_3")
+                                        if not is_account_in_cooldown(aid)[0] and aid not in failed_accs_for_mid
+                                    ]
+                                if free_accs_now:
+                                    wait_s = 3.0
+                                    log_warn(
+                                        "SCRIPT",
+                                        f"[{mid_item}] 🚫 Nick '{failed_acc}' gặp lỗi ({err_kind}) -> Đẩy '{mid_item}' sang nick khác ({free_accs_now[0]}) viết tiếp sau {wait_s:.0f}s!",
+                                        project_id=mid_item,
+                                    )
+                                    self._update_idea_record(
+                                        mid_item,
+                                        status="RUNNING",
+                                        retry_count=attempt_idx + 1,
+                                        current_step=f"🔄 Nick {failed_acc} lỗi -> Đang đẩy sang {free_accs_now[0]} viết tiếp...",
+                                    )
+                                    time.sleep(wait_s)
+                                else:
+                                    # Không còn nick rảnh cho mã này. Nếu có nick đang nghỉ thì chờ tới khi nick sớm nhất mở lại;
+                                    # nếu không nick nào bị khóa (chỉ là lỗi tạm thời) thì chỉ nghỉ 30 giây rồi thử lại.
+                                    rem_cooldown = int(get_earliest_cooldown_remaining_sec() or 0)
+                                    wait_s = max(10, rem_cooldown) if rem_cooldown > 0 else 30
+                                    log_warn(
+                                        "SCRIPT",
+                                        f"[{mid_item}] ⏳ Các nick đều vừa lỗi/đang nghỉ -> Chờ {wait_s // 60}p{wait_s % 60:02d}s rồi tự động viết tiếp '{mid_item}'!",
+                                        project_id=mid_item,
+                                    )
+                                    waited = 0
+                                    while waited < wait_s and not self.should_stop:
+                                        rem_now = max(0, int(wait_s - waited))
+                                        if waited % 15 == 0:
+                                            self._update_idea_record(
+                                                mid_item,
+                                                status="RUNNING",
+                                                retry_count=attempt_idx + 1,
+                                                current_step=f"⏳ Các nick đang nghỉ — Tự viết tiếp sau {rem_now // 60}p{rem_now % 60:02d}s...",
+                                            )
+                                            self._emit(
+                                                status="running",
+                                                current_ma_id=mid_item,
+                                                current_step=f"⏳ Chờ nick mở lại ({rem_now // 60}p{rem_now % 60:02d}s)",
+                                                message=f"[{mid_item}] ⏳ Các nick đang nghỉ — Còn {rem_now // 60} phút {rem_now % 60} giây sẽ tự động viết tiếp...",
+                                            )
+                                        time.sleep(1.0)
+                                        waited += 1
+                                    # Sau khi chờ xong, cho phép thử lại trên tất cả các nick đã hết hạn cooldown
+                                    failed_accs_for_mid.clear()
+                            else:
+                                log_error(
+                                    "SCRIPT",
+                                    f"[{mid_item}] ❌ Đã thử tự động tối đa {total_attempts - 1} lần nhưng vẫn gặp lỗi: {exc_try}",
+                                    project_id=mid_item,
+                                )
+                                self._update_idea_record(
+                                    mid_item,
+                                    status="ERROR",
+                                    retry_count=total_attempts - 1,
+                                    current_step=f"❌ Lỗi sau {total_attempts - 1} lần Retry — Bấm '🔁 Viết Lại' để chạy lại ({str(exc_try)[:55]})",
+                                )
+                                raise
+                finally:
+                    _release_perf_slot()
+
+            def _release_active(mid: str) -> None:
+                with self.lock:
+                    self._run_active_ids.discard(mid)
+
+            def _process_new_batch(batch: List[str], is_hot: bool) -> None:
+                """Phân loại & khởi chạy 1 lô mã mới lấy từ hàng đợi (lô đầu hoặc lô nạp thêm khi Chạy Tiếp)."""
+                self._sync_projects_disk_state()
+                for mid in batch:
+                    if mid not in processed_ids:
+                        processed_ids.append(mid)
 
                 # Phân loại: Mã nào ĐÃ CÓ đủ bộ (Kịch bản + SEO + Thumbnail) vs Mã nào CẦN VIẾT / BỔ SUNG / VIẾT LẠI
                 already_scripted_ids: List[str] = []
                 need_script_ids: List[str] = []
-                for mid in clean_ids:
-                    if force_rewrite_script:
+                for mid in batch:
+                    if _opts(mid).get("force_rewrite_script"):
                         need_script_ids.append(mid)
                         continue
                     has_sc, _, _ = self.has_valid_script_on_disk(mid)
@@ -5004,39 +5657,48 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     else:
                         need_script_ids.append(mid)
 
-                mode_label_log = "VỪA VIẾT KỊCH BẢN VỪA RENDER MP4 SONG SONG" if auto_produce_video else "CHỈ VIẾT KỊCH BẢN + SEO + THUMBNAIL (KHÔNG RENDER)"
+                n_auto = sum(1 for m in batch if _item_auto(m))
+                if n_auto == len(batch):
+                    mode_label_log = "VỪA VIẾT KỊCH BẢN VỪA RENDER MP4 SONG SONG"
+                elif n_auto == 0:
+                    mode_label_log = "CHỈ VIẾT KỊCH BẢN + SEO + THUMBNAIL (KHÔNG RENDER)"
+                else:
+                    mode_label_log = f"HỖN HỢP: {n_auto} mã Viết + Render, {len(batch) - n_auto} mã Chỉ viết"
                 log_info(
                     "SCRIPT",
-                    f"Khởi chạy {len(clean_ids)} dự án [{mode_label_log}{', FORCE_REWRITE=True' if force_rewrite_script else ''}]: "
+                    f"{'▶️ [CHẠY TIẾP] Nạp thêm' if is_hot else 'Khởi chạy'} {len(batch)} dự án [{mode_label_log}]: "
                     f"Cần xử lý Chrome AI = {len(need_script_ids)}, "
                     f"Đã có sẵn kịch bản = {len(already_scripted_ids)}.",
                 )
 
                 # Xử lý đóng gói nhanh (không mở Chrome) cho các mã đã có sẵn kịch bản
+                ready_to_render: List[str] = []
                 for mid in already_scripted_ids:
                     if self.should_stop:
                         break
                     try:
                         self.run_single_idea_pipeline_sync(
                             ma_id=mid,
-                            preferred_acc_id=preferred_acc_id,
+                            preferred_acc_id=_opts(mid).get("preferred_acc_id") or preferred_acc_id,
                             auto_produce_video=False,
-                            video_settings=video_settings,
-                            target_part_min=target_part_min,
+                            video_settings=_opts(mid).get("video_settings") or video_settings,
+                            target_part_min=_opts(mid).get("target_part_min") or target_part_min,
                             defer_video_handoff=True,
                             force_rewrite_script=False,
                             ai_provider=ai_provider,
                         )
                     except Exception as e_fast:
                         log_error("SCRIPT", f"[{mid}] Lỗi đóng gói kịch bản có sẵn: {e_fast}", project_id=mid)
+                    if _item_auto(mid):
+                        ready_to_render.append(mid)
+                    _release_active(mid)
 
-                # NẾU ĐÃ CÓ SẴN CÁC KỊCH BẢN TRÊN Ổ CỨNG -> ĐẨY NGAY VÀO HÀNG ĐỢI RENDER TỪ GIÂY ĐẦU TIÊN!
-                if auto_produce_video and already_scripted_ids and not self.should_stop:
-                    only_unren_init = len(clean_ids) > 1
+                # NẾU ĐÃ CÓ SẴN CÁC KỊCH BẢN TRÊN Ổ CỨNG -> ĐẨY NGAY VÀO HÀNG ĐỢI RENDER
+                if ready_to_render and not self.should_stop:
                     res_init_ren = self.start_render_video_for_ideas_async(
-                        ma_ids=already_scripted_ids,
-                        video_settings=video_settings,
-                        only_unrendered=only_unren_init,
+                        ma_ids=ready_to_render,
+                        video_settings=_opts(ready_to_render[0]).get("video_settings") or video_settings,
+                        only_unrendered=_only_unrendered(),
                     )
                     if res_init_ren.get("queued_count", 0) > 0:
                         log_info(
@@ -5044,371 +5706,191 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                             f"🎬 [RENDER SONG SONG] Đã đẩy ngay {res_init_ren.get('queued_count')} kịch bản có sẵn vào Hàng Đợi Render MP4 trong lúc AI viết tiếp {len(need_script_ids)} kịch bản mới!",
                         )
 
-                # ==============================================================
+                if not need_script_ids or self.should_stop:
+                    for mid in need_script_ids:
+                        _release_active(mid)
+                    return
+
                 # LUỒNG AI VIẾT KỊCH BẢN ĐA LUỒNG (VIẾT XONG MÃ NÀO -> ĐẨY SANG RENDER NGAY MÃ ĐÓ)
-                # ==============================================================
-                provider_norm = (ai_provider or "chatgpt_web").strip().lower()
-                provider_tag = (
-                    "GEMINI 3.8 HIGH (FLASH CAO)"
-                    if provider_norm in ("gemini_4_pro", "gemini_3_8_high")
-                    else ("KẾT HỢP GEMINI 3.8 HIGH + CHATGPT THUMB" if provider_norm == "hybrid_gemini_chatgpt" else "CHATGPT WEB (MEDIUM)")
-                )
-                if need_script_ids and not self.should_stop:
-                    if provider_norm in ("gemini_4_pro", "gemini_3_8_high", "hybrid_gemini_chatgpt"):
-                        st_gem = check_all_gemini_accounts_status().get("accounts", {})
-                        logged_accs = [aid for aid, a in st_gem.items() if a.get("logged_in")]
-                        if preferred_acc_id and preferred_acc_id in ("acc_1", "acc_2", "acc_3"):
-                            active_accs = [preferred_acc_id]
-                            max_workers = min(len(need_script_ids), MAX_THREADS_PER_ACCOUNT)
-                        else:
-                            active_accs = logged_accs if logged_accs else ["acc_1"]
-                            max_workers = min(len(need_script_ids), max(1, len(active_accs)) * MAX_THREADS_PER_ACCOUNT)
-                    else:
-                        if not preferred_acc_id:
-                            ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
-                        st_all = check_all_web_accounts_status(force_refresh=True).get("accounts", {})
-                        logged_accs = [aid for aid, a in st_all.items() if a.get("logged_in")]
-                        if preferred_acc_id and preferred_acc_id in st_all:
-                            active_accs = [preferred_acc_id]
-                            max_workers = min(len(need_script_ids), MAX_THREADS_PER_ACCOUNT)
-                        else:
-                            active_accs = logged_accs if logged_accs else ["acc_1"]
-                            max_workers = min(len(need_script_ids), max(1, len(active_accs)) * MAX_THREADS_PER_ACCOUNT)
+                _setup_accounts()
+                active_accs = acct_ctx["active_accs"]
+                if executor_box["ex"] is None:
+                    executor_box["ex"] = ThreadPoolExecutor(max_workers=acct_ctx["max_workers"])
+                n_auto_need = sum(1 for m in need_script_ids if _item_auto(m))
+                prefix = "▶️ [CHẠY TIẾP] " if is_hot else ""
+                if n_auto_need == 0:
+                    self._emit(
+                        status="running",
+                        current_step=f"📝 Chỉ viết Kịch bản + SEO + Thumb ({len(need_script_ids)} mã • {provider_tag})",
+                        message=(
+                            f"{prefix}📝 [CHẾ ĐỘ CHỈ VIẾT KỊCH BẢN + SEO + THUMB — {provider_tag}] Kích hoạt {len(need_script_ids)} dự án "
+                            f"(tối đa {acct_ctx['max_workers']} luồng trên {len(active_accs)} Acc: {active_accs}, tự động Retry tối đa {max_retries} lần nếu lỗi)!"
+                        ),
+                    )
+                else:
+                    self._emit(
+                        status="running",
+                        current_step=f"⚡ Vừa Viết Kịch Bản ({len(need_script_ids)} mã) Vừa Render Video ({provider_tag})",
+                        message=(
+                            f"{prefix}⚡ [VỪA VIẾT VỪA RENDER SONG SONG — {provider_tag}] AI đang viết {len(need_script_ids)} kịch bản "
+                            f"(tối đa {acct_ctx['max_workers']} luồng trên {len(active_accs)} Acc: {active_accs}) — Cứ xong kịch bản nào sẽ tự động tạo Voice & Render MP4 ngay kịch bản đó!"
+                        ),
+                    )
 
-                    max_workers = max(1, max_workers)
+                for idx, mid in enumerate(need_script_ids):
+                    if self.should_stop:
+                        _release_active(mid)
+                        continue
+                    pref_item = _opts(mid).get("preferred_acc_id") or preferred_acc_id
+                    assigned_acc = (
+                        (pref_item or active_accs[(counters["submitted"] + idx) % len(active_accs)])
+                        if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt")
+                        else pref_item
+                    )
+                    fut = executor_box["ex"].submit(_run_one_with_auto_retry, mid, assigned_acc)
+                    futs[fut] = mid
+                    if len(need_script_ids) > 1:
+                        time.sleep(1.8 if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") else 0.55)
+                counters["submitted"] += len(need_script_ids)
 
-                    # Nếu đang chọn Chức năng 2: Chạy 70% công suất (work_70) -> Giới hạn cứng tối đa 3 luồng tổng cộng!
-                    perf_mode_now = (os.environ.get("STUDIO_PERF_MODE") or "").strip().lower()
-                    if not perf_mode_now:
-                        try:
-                            cfg_p = self.root_dir / "config.json"
-                            if cfg_p.exists():
-                                perf_mode_now = str(json.loads(cfg_p.read_text(encoding="utf-8")).get("performance_mode", "full_100")).strip().lower()
-                        except Exception:
-                            perf_mode_now = "full_100"
-                    if perf_mode_now == "work_70":
-                        max_workers = min(max_workers, 3)
-
-                    if not auto_produce_video:
-                        self._emit(
-                            status="running",
-                            current_step=f"📝 Chỉ viết Kịch bản + SEO + Thumb ({len(need_script_ids)} mã • {provider_tag})",
-                            message=(
-                                f"📝 [CHẾ ĐỘ CHỈ VIẾT KỊCH BẢN + SEO + THUMB — {provider_tag}] Kích hoạt {len(need_script_ids)} dự án "
-                                f"({max_workers} luồng trên {len(active_accs)} Acc: {active_accs}, tự động Retry tối đa {max_retries} lần nếu lỗi)!"
-                            ),
-                        )
-                    else:
-                        self._emit(
-                            status="running",
-                            current_step=f"⚡ Vừa Viết Kịch Bản ({len(need_script_ids)} mã) Vừa Render Video ({provider_tag})",
-                            message=(
-                                f"⚡ [VỪA VIẾT VỪA RENDER SONG SONG — {provider_tag}] AI đang viết {len(need_script_ids)} kịch bản "
-                                f"({max_workers} luồng trên {len(active_accs)} Acc: {active_accs}) — Cứ xong kịch bản nào sẽ tự động tạo Voice & Render MP4 ngay kịch bản đó!"
-                            ),
-                        )
-
-                    active_slot_lock = threading.Lock()
-                    active_slot_state = {"count": 0}
-                    cfg_perf_file = self.root_dir / "config.json"
-
-                    def _get_live_perf_mode() -> str:
-                        env_pm = (os.environ.get("STUDIO_PERF_MODE") or "").strip().lower()
-                        if env_pm in ("work_70", "full_100"):
-                            return env_pm
-                        try:
-                            if cfg_perf_file.exists():
-                                m = str(json.loads(cfg_perf_file.read_text(encoding="utf-8")).get("performance_mode", "full_100")).strip().lower()
-                                if m in ("work_70", "full_100"):
-                                    return m
-                        except Exception:
-                            pass
-                        return "full_100"
-
-                    def _acquire_perf_slot():
-                        while not self.should_stop:
-                            pm = _get_live_perf_mode()
-                            limit_slots = 3 if pm == "work_70" else 9
-                            with active_slot_lock:
-                                if active_slot_state["count"] < limit_slots:
-                                    active_slot_state["count"] += 1
-                                    return True
-                            time.sleep(1.0)
-                        return False
-
-                    def _release_perf_slot():
-                        with active_slot_lock:
-                            active_slot_state["count"] = max(0, active_slot_state["count"] - 1)
-
-                    def _run_one_with_auto_retry(mid_item: str, acc_item: Optional[str]):
-                        if not _acquire_perf_slot():
-                            return
-                        try:
-                            # Tổng số lần chạy = 1 lần chạy chính + tối đa `max_retries` (tối thiểu 4 lượt để xoay vòng đủ các nick + chờ 30p nếu cần)
-                            total_attempts = 1 + max(4, int(max_retries))
-                            last_err: Optional[Exception] = None
-                            failed_accs_for_mid: set = set()
-                            restart_from_scratch_on_other_acc = False
-
-                            for attempt_idx in range(total_attempts):
-                                if self.should_stop:
-                                    return
-                                is_first_try = (attempt_idx == 0)
-                                use_force_rw = bool((force_rewrite_script and is_first_try) or restart_from_scratch_on_other_acc)
-                                try_acc = acc_item if is_first_try else None
-                                if attempt_idx > 0 and provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") and len(active_accs) > 1:
-                                    try_acc = active_accs[attempt_idx % len(active_accs)]
-                                try:
-                                    if attempt_idx > 0:
-                                        retry_msg = (
-                                            f"🔄 [{mid_item}] Tự động đẩy kịch bản sang tài khoản (nick) khác để làm lại từ đầu (Lần {attempt_idx}/{total_attempts - 1} — Đã tránh nick bị Limit 30p: {sorted(failed_accs_for_mid)})..."
-                                            if restart_from_scratch_on_other_acc
-                                            else f"🔄 [{mid_item}] Tự động Retry lần {attempt_idx}/{total_attempts - 1}..."
-                                        )
-                                        self._update_idea_record(
-                                            mid_item,
-                                            status="RUNNING",
-                                            retry_count=attempt_idx,
-                                            current_step=f"🔄 Đang chuyển sang nick khác làm lại từ đầu ({attempt_idx}/{total_attempts - 1})...",
-                                        )
-                                        self._emit(
-                                            status="running",
-                                            current_ma_id=mid_item,
-                                            current_step=f"🔄 Đổi sang nick khác làm lại ({attempt_idx}/{total_attempts - 1})",
-                                            message=retry_msg,
-                                        )
-                                        log_warn("SCRIPT", retry_msg, project_id=mid_item)
-
-                                    res_single = self.run_single_idea_pipeline_sync(
-                                        mid_item,
-                                        try_acc,
-                                        bool(auto_produce_video),       # Viết xong kịch bản nào đẩy sang Render ngay kịch bản đó!
-                                        video_settings,
-                                        target_part_min,
-                                        not bool(auto_produce_video),   # defer_video_handoff=False khi auto_produce_video=True
-                                        use_force_rw,                   # Làm lại từ đầu (Step 2) khi đổi sang nick khác do nick cũ bị Limit
-                                        ai_provider,
-                                        exclude_accs=set(failed_accs_for_mid),
-                                    )
-                                    has_sc_ok, _, _ = self.has_valid_script_on_disk(mid_item)
-                                    if has_sc_ok:
-                                        # Kiểm tra lại Thumbnail ngay sau khi xong kịch bản: nếu thiếu thì tạo lại trên nick khác
-                                        has_th_ok, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
-                                        if not has_th_ok and not self.should_stop:
-                                            self.ensure_project_thumbnail_with_failover_sync(
-                                                ma_id=mid_item,
-                                                preferred_acc_id=None,
-                                                exclude_accs=set(failed_accs_for_mid),
-                                            )
-                                        if auto_produce_video and not (isinstance(res_single, dict) and res_single.get("video_triggered")):
-                                            self.start_render_video_for_ideas_async(
-                                                ma_ids=[mid_item],
-                                                video_settings=video_settings,
-                                                only_unrendered=(len(clean_ids) > 1),
-                                            )
-                                        return
-                                    last_err = RuntimeError("Chưa ghép đủ 3 Part kịch bản chuẩn trên ổ cứng.")
-                                except Exception as exc_try:
-                                    last_err = exc_try
-                                    if self.should_stop or "Đã dừng theo yêu cầu" in str(exc_try):
-                                        return
-                                    failed_acc = getattr(exc_try, "failed_acc_id", None) or try_acc
-                                    if failed_acc:
-                                        failed_accs_for_mid.add(failed_acc)
-                                        mark_account_rate_limited(
-                                            failed_acc,
-                                            reason=f"[{mid_item}] {str(exc_try)[:120]}",
-                                            cooldown_sec=ACCOUNT_LIMIT_COOLDOWN_SEC,
-                                        )
-
-                                    # Nếu kịch bản 3 Part đã kịp viết xong trên ổ cứng -> Kiểm tra tạo bù Thumbnail trên nick khác rồi đẩy vào Render!
-                                    has_sc_now, _, _ = self.has_valid_script_on_disk(mid_item)
-                                    if has_sc_now:
-                                        has_th_now, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
-                                        if not has_th_now and not self.should_stop:
-                                            self.ensure_project_thumbnail_with_failover_sync(
-                                                ma_id=mid_item,
-                                                preferred_acc_id=None,
-                                                exclude_accs=set(failed_accs_for_mid),
-                                            )
-                                        if auto_produce_video:
-                                            self.start_render_video_for_ideas_async(
-                                                ma_ids=[mid_item],
-                                                video_settings=video_settings,
-                                                only_unrendered=(len(clean_ids) > 1),
-                                            )
-                                        return
-
-                                    # Nếu kịch bản chưa xong mà nick bị limit/lỗi -> Đẩy kịch bản qua nick khác làm lại từ đầu!
-                                    restart_from_scratch_on_other_acc = True
-
-                                    if attempt_idx < total_attempts - 1:
-                                        # Kiểm tra xem còn nick nào đang rảnh (không bị khóa 30p) không
-                                        free_accs_now = [
-                                            aid for aid in active_accs
-                                            if not is_account_in_cooldown(aid)[0] and aid not in failed_accs_for_mid
-                                        ]
-                                        if not free_accs_now:
-                                            # Mở rộng sang toàn bộ tài khoản chưa bị cooldown 30p
-                                            free_accs_now = [
-                                                aid for aid in ("acc_1", "acc_2", "acc_3")
-                                                if not is_account_in_cooldown(aid)[0] and aid not in failed_accs_for_mid
-                                            ]
-                                        if free_accs_now:
-                                            wait_s = 3.0
-                                            log_warn(
-                                                "SCRIPT",
-                                                f"[{mid_item}] 🚫 Nick '{failed_acc}' bị Limit/Lỗi -> Đã tạm dừng '{failed_acc}' 30 phút và đẩy ngay '{mid_item}' sang nick khác ({free_accs_now[0]}) làm lại từ đầu sau {wait_s:.0f}s!",
-                                                project_id=mid_item,
-                                            )
-                                            self._update_idea_record(
-                                                mid_item,
-                                                status="RUNNING",
-                                                retry_count=attempt_idx + 1,
-                                                current_step=f"🔄 Nick {failed_acc} tạm dừng 30p -> Đang đẩy sang {free_accs_now[0]} làm lại từ đầu...",
-                                            )
-                                            time.sleep(wait_s)
-                                        else:
-                                            # Tất cả các nick đều đang trong thời gian nghỉ 30 phút -> Chờ đúng tới khi nick sớm nhất hết 30 phút rồi tự động thử lại!
-                                            rem_cooldown = get_earliest_cooldown_remaining_sec()
-                                            wait_s = max(10, rem_cooldown if rem_cooldown > 0 else ACCOUNT_LIMIT_COOLDOWN_SEC)
-                                            log_warn(
-                                                "SCRIPT",
-                                                f"[{mid_item}] ⏳ Tất cả các tài khoản đều đang bị Limit tạm dừng 30 phút -> Hệ thống chờ {wait_s // 60}p{wait_s % 60:02d}s rồi tự động chạy lại '{mid_item}' từ đầu!",
-                                                project_id=mid_item,
-                                            )
-                                            waited = 0
-                                            while waited < wait_s and not self.should_stop:
-                                                rem_now = max(0, int(wait_s - waited))
-                                                if waited % 15 == 0:
-                                                    self._update_idea_record(
-                                                        mid_item,
-                                                        status="RUNNING",
-                                                        retry_count=attempt_idx + 1,
-                                                        current_step=f"⏳ Các nick đang nghỉ Limit 30p — Tự chạy lại sau {rem_now // 60}p{rem_now % 60:02d}s...",
-                                                    )
-                                                    self._emit(
-                                                        status="running",
-                                                        current_ma_id=mid_item,
-                                                        current_step=f"⏳ Tạm dừng 30p chờ mở Limit ({rem_now // 60}p{rem_now % 60:02d}s)",
-                                                        message=f"[{mid_item}] ⏳ Nick bị Limit đang tạm nghỉ 30 phút — Còn {rem_now // 60} phút {rem_now % 60} giây sẽ tự động thử lại...",
-                                                    )
-                                                time.sleep(1.0)
-                                                waited += 1
-                                            # Sau khi hết 30 phút chờ, cho phép thử lại trên tất cả các nick đã hết hạn cooldown
-                                            failed_accs_for_mid.clear()
-                                    else:
-                                        log_error(
-                                            "SCRIPT",
-                                            f"[{mid_item}] ❌ Đã thử tự động tối đa {total_attempts - 1} lần nhưng vẫn gặp lỗi: {exc_try}",
-                                            project_id=mid_item,
-                                        )
-                                        self._update_idea_record(
-                                            mid_item,
-                                            status="ERROR",
-                                            retry_count=total_attempts - 1,
-                                            current_step=f"❌ Lỗi sau {total_attempts - 1} lần Retry — Bấm '🔁 Viết Lại' để chạy lại ({str(exc_try)[:55]})",
-                                        )
-                                        raise
-                        finally:
-                            _release_perf_slot()
-
-                    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                        futs = {}
-                        for idx, mid in enumerate(need_script_ids):
-                            if self.should_stop:
-                                break
-                            assigned_acc = (
-                                (preferred_acc_id or active_accs[idx % len(active_accs)])
-                                if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt")
-                                else preferred_acc_id
-                            )
-                            fut = executor.submit(_run_one_with_auto_retry, mid, assigned_acc)
-                            futs[fut] = mid
-                            if len(need_script_ids) > 1:
-                                time.sleep(1.8 if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt") else 0.55)
-
-                        done_cnt = 0
-                        for fut in as_completed(futs):
-                            mid_done = futs[fut]
-                            done_cnt += 1
-                            try:
-                                fut.result()
-                                suffix_ren = " -> Đã đẩy ngay sang Hàng Đợi Render MP4!" if auto_produce_video else ""
-                                self._emit(
-                                    message=f"✅ Đã hoàn thành kịch bản [{done_cnt}/{len(need_script_ids)}]: {mid_done}{suffix_ren}"
-                                )
-                            except Exception as exc:
-                                log_error(
-                                    "SCRIPT",
-                                    f"[{mid_done}] Lỗi luồng kịch bản sau {max_retries} lần Retry ({done_cnt}/{len(need_script_ids)}): {exc}",
-                                    project_id=mid_done,
-                                )
-
-                    # Dọn dẹp tab Chrome sau khi kết thúc toàn bộ luồng AI để giải phóng RAM cho Voice & Render Video
+            def _collect_done(done_set) -> None:
+                for fut in done_set:
+                    mid_done = futs.pop(fut, None)
+                    if mid_done is None:
+                        continue
+                    counters["done"] += 1
                     try:
-                        sweep_completed_and_idle_tabs_across_all_accounts()
-                    except Exception:
-                        pass
+                        fut.result()
+                        suffix_ren = " -> Đã đẩy ngay sang Hàng Đợi Render MP4!" if _item_auto(mid_done) else ""
+                        self._emit(
+                            message=f"✅ Đã hoàn thành kịch bản [{counters['done']}/{counters['submitted']}]: {mid_done}{suffix_ren}"
+                        )
+                    except Exception as exc:
+                        log_error(
+                            "SCRIPT",
+                            f"[{mid_done}] Lỗi luồng kịch bản sau {max_retries} lần Retry ({counters['done']}/{counters['submitted']}): {exc}",
+                            project_id=mid_done,
+                        )
+                    finally:
+                        _release_active(mid_done)
 
-                # ==============================================================
-                # KIỂM TRA LẠI TOÀN BỘ KỊCH BẢN ĐÃ XONG: NẾU KỊCH BẢN NÀO CHƯA CÓ THUMBNAIL THÌ TẠO BÙ NGAY (ĐỔI NICK NẾU LIMIT)
-                # ==============================================================
+            def _final_sweep(ids: List[str]) -> None:
+                # Dọn dẹp tab Chrome để giải phóng RAM cho Voice & Render Video
+                try:
+                    sweep_completed_and_idle_tabs_across_all_accounts()
+                except Exception:
+                    pass
+                # KIỂM TRA LẠI: NẾU KỊCH BẢN NÀO CHƯA CÓ THUMBNAIL THÌ TẠO BÙ NGAY (ĐỔI NICK NẾU LIMIT)
                 if not self.should_stop:
                     try:
-                        self.ensure_all_projects_have_thumbnails_sync(target_ids=clean_ids)
+                        self.ensure_all_projects_have_thumbnails_sync(target_ids=ids)
                         sweep_completed_and_idle_tabs_across_all_accounts()
                     except Exception as e_ens_th:
                         log_warn("SCRIPT", f"Cảnh báo khi quét tạo bù Thumbnail cuối phiên: {e_ens_th}")
-
-                # ==============================================================
-                # QUÉT VÉT LẦN CUỐI ĐẢM BẢO MỌI KỊCH BẢN ĐÃ XONG ĐỀU ĐƯỢC RENDER MP4
-                # ==============================================================
-                if auto_produce_video and not self.should_stop:
-                    only_unrendered = len(clean_ids) > 1
+                # QUÉT VÉT LẦN CUỐI ĐẢM BẢO MỌI KỊCH BẢN (CỦA MÃ BẬT RENDER) ĐÃ XONG ĐỀU ĐƯỢC RENDER MP4
+                render_ids = [m for m in ids if _item_auto(m)]
+                if render_ids and not self.should_stop:
+                    only_unrendered = _only_unrendered()
                     res_render = self.start_render_video_for_ideas_async(
-                        ma_ids=clean_ids,
-                        video_settings=video_settings,
+                        ma_ids=render_ids,
+                        video_settings=_opts(render_ids[0]).get("video_settings") or video_settings,
                         only_unrendered=only_unrendered,
                     )
-                    if not res_render.get("started") and only_unrendered and len(clean_ids) == 1:
+                    if not res_render.get("started") and only_unrendered and len(render_ids) == 1:
                         self.start_render_video_for_ideas_async(
-                            ma_ids=clean_ids,
-                            video_settings=video_settings,
+                            ma_ids=render_ids,
+                            video_settings=_opts(render_ids[0]).get("video_settings") or video_settings,
                             only_unrendered=False,
                         )
-                    self._emit(
-                        status="completed",
-                        current_step="✅ Đã viết xong toàn bộ Kịch bản — Hàng đợi Render MP4 đang hoàn tất",
-                        progress=100.0,
-                        message=(
-                            f"🎉 Đã hoàn tất viết Kịch bản và đẩy toàn bộ vào Hàng Đợi Voice & Render MP4!"
-                        ),
-                    )
-                elif not auto_produce_video and not self.should_stop:
-                    self._sync_projects_disk_state()
-                    self._emit(
-                        status="completed",
-                        current_step="✅ Hoàn tất Kịch Bản + SEO + Thumbnail (Không Render Video)",
-                        progress=100.0,
-                        message=(
-                            f"🎉 [CHẾ ĐỘ CHỈ VIẾT KỊCH BẢN + SEO + THUMBNAIL] Đã hoàn tất {len(clean_ids)} dự án "
-                            f"tại thư mục projects/ (Không tạo Voice & Không Render MP4 — Sẵn sàng Render hoặc Copy sang máy khác)!"
-                        ),
-                    )
+
+            finished_cleanly = False
+            try:
+                is_hot_batch = False
+                while True:
+                    # 1) Lấy các mã mới trong hàng đợi (lô đầu, hoặc mã nạp thêm khi bấm Chạy Tiếp)
+                    with self.lock:
+                        batch = list(self._run_queue)
+                        self._run_queue.clear()
+                        self._run_queued_ids.difference_update(batch)
+                        self._run_active_ids.update(batch)
+                    if batch and not self.should_stop:
+                        _process_new_batch(batch, is_hot_batch)
+                    is_hot_batch = True
+
+                    # 2) Chờ các luồng viết; cứ 1 giây quay lại kiểm tra hàng đợi để nhận mã mới ngay
+                    if futs:
+                        done_set, _ = futures_wait(list(futs), timeout=1.0, return_when=FIRST_COMPLETED)
+                        _collect_done(done_set)
+                        continue
+
+                    if self.should_stop:
+                        break
+                    with self.lock:
+                        if self._run_queue:
+                            continue
+
+                    # 3) Hết việc -> quét vét Thumbnail / Render cho các mã chưa quét
+                    to_sweep = [m for m in processed_ids if m not in swept_ids]
+                    if to_sweep:
+                        _final_sweep(to_sweep)
+                        swept_ids.update(to_sweep)
+
+                    with self.lock:
+                        if self._run_queue and not self.should_stop:
+                            continue  # Có mã mới nạp vào trong lúc quét vét -> chạy tiếp
+                        self.is_running = False
+                        self._run_worker_active = False
+                    finished_cleanly = not self.should_stop
+                    break
+
+                if finished_cleanly:
+                    any_auto = any(_item_auto(m) for m in processed_ids)
+                    if any_auto:
+                        self._emit(
+                            status="completed",
+                            current_step="✅ Đã viết xong toàn bộ Kịch bản — Hàng đợi Render MP4 đang hoàn tất",
+                            progress=100.0,
+                            message="🎉 Đã hoàn tất viết Kịch bản và đẩy toàn bộ vào Hàng Đợi Voice & Render MP4!",
+                        )
+                    else:
+                        self._sync_projects_disk_state()
+                        self._emit(
+                            status="completed",
+                            current_step="✅ Hoàn tất Kịch Bản + SEO + Thumbnail (Không Render Video)",
+                            progress=100.0,
+                            message=(
+                                f"🎉 [CHẾ ĐỘ CHỈ VIẾT KỊCH BẢN + SEO + THUMBNAIL] Đã hoàn tất {len(processed_ids)} dự án "
+                                f"tại thư mục projects/ (Không tạo Voice & Không Render MP4 — Sẵn sàng Render hoặc Copy sang máy khác)!"
+                            ),
+                        )
             except Exception as e:
                 log_error("SCRIPT", f"Lỗi nghiêm trọng trong start_run_ideas_async: {e}", include_trace=True)
             finally:
+                ex = executor_box["ex"]
+                if ex is not None:
+                    try:
+                        ex.shutdown(wait=True, cancel_futures=True)
+                    except TypeError:
+                        ex.shutdown(wait=True)
                 with self.lock:
                     self.is_running = False
+                    self._run_worker_active = False
+                    self._run_queue.clear()
+                    self._run_queued_ids.clear()
+                    self._run_active_ids.clear()
 
         t = threading.Thread(target=_worker, daemon=True)
         t.start()
-        return True
+        msg = f"Đã bắt đầu chạy dây chuyền Step 2 -> Step 6 cho {len(added)} dự án!"
+        return {"ok": True, "mode": "started", "added": added, "existed": existed, "upgraded": [], "message": msg}
 
     def stop(self):
+        self._ensure_run_queue_attrs()
         with self.lock:
             self.should_stop = True
+            # Bỏ các mã đang xếp hàng Chạy Tiếp (chưa bắt đầu)
+            self._run_queue.clear()
+            self._run_queued_ids.clear()
         self._emit(status="stopped", message="🛑 Đã gửi tín hiệu dừng dây chuyền viết kịch bản.")
 
     def get_project_outputs(self, ma_id: str) -> Dict[str, Any]:
@@ -5448,6 +5930,9 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         if not thumb_files and (final_proj_dir / "renders").exists():
             thumb_files = sorted((final_proj_dir / "renders").glob(f"{ma_id}_THUMBNAIL_*.png"))
 
+        has_srt_ok, srt_path_obj, has_srt_seo_ok = self.has_srt_on_disk(ma_id)
+        ts_txt = _read_safe("assets/TIMESTAMPS.txt") or _read_safe("TIMESTAMPS.txt")
+
         return {
             "ma_id": ma_id,
             "idea": idea,
@@ -5461,6 +5946,10 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             "step5_output": _read_safe("step5_audit_report.txt"),
             "seo_pack": _read_safe("00_TIEU_DE_VA_SEO_YOUTUBE.txt") or _read_safe("seo_publish_pack.txt") or _read_safe(f"{ma_id}_SEO.txt"),
             "thumbnails": [str(p) for p in thumb_files],
+            "has_srt": has_srt_ok,
+            "srt_path": str(srt_path_obj) if srt_path_obj else "",
+            "has_srt_seo": has_srt_seo_ok,
+            "timestamps_txt": ts_txt,
         }
 
     def start_generate_thumbnails_only_async(
@@ -5475,7 +5964,9 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 return False
             self.is_running = True
             self.should_stop = False
-            self.live_auto_produce_video = bool(auto_produce_video)
+            # Chỉ tạo Thumbnail -> không tự đẩy sang Render (trước đây dùng biến không tồn tại gây NameError
+            # ngay sau khi đặt is_running=True, khiến engine kẹt "đang chạy" và từ chối mọi lệnh viết kịch bản).
+            self.live_auto_produce_video = False
 
         def _thumb_worker():
             session = ChatGPTWebSession(project_id=f"{ma_id}_THUMB", acc_id=preferred_acc_id)
@@ -5543,3 +6034,194 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
         threading.Thread(target=_thumb_worker, daemon=True).start()
         return True
+
+    def _get_srt_seo_state_store(self) -> Dict[str, Any]:
+        if not hasattr(self, "_srt_seo_lock") or self._srt_seo_lock is None:
+            self._srt_seo_lock = threading.Lock()
+        if not hasattr(self, "_srt_seo_state") or not isinstance(getattr(self, "_srt_seo_state", None), dict):
+            self._srt_seo_state = {
+                "running": False,
+                "completed": False,
+                "progress": 0.0,
+                "status_text": "Sẵn sàng phân tích SRT → SEO qua ChatGPT.",
+                "total": 0,
+                "processed": 0,
+                "updated_ids": [],
+                "failed_ids": [],
+                "error": None,
+                "logs": [],
+            }
+        return self._srt_seo_state
+
+    def get_srt_to_seo_status(self) -> Dict[str, Any]:
+        st = self._get_srt_seo_state_store()
+        with self._srt_seo_lock:
+            return {
+                **st,
+                "updated_ids": list(st.get("updated_ids", [])),
+                "failed_ids": list(st.get("failed_ids", [])),
+                "logs": list(st.get("logs", [])),
+            }
+
+    def start_srt_to_seo_async(
+        self,
+        ma_ids: Optional[List[str]] = None,
+        preferred_acc_id: Optional[str] = None,
+        force: bool = True,
+        allow_fallback: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Chuyển file `subtitles.srt` của 1 hoặc nhiều dự án sang ChatGPT phân tích,
+        nâng cấp Mô tả tiếng Nhật (`YOUTUBE_DESCRIPTION_JA`) và bổ sung Timestamps chuẩn xác vào File SEO.
+        """
+        st = self._get_srt_seo_state_store()
+        with self._srt_seo_lock:
+            if st.get("running"):
+                return {
+                    "started": False,
+                    "message": "Đang có tiến trình ChatGPT phân tích SRT → SEO chạy ngầm. Vui lòng đợi hoàn tất!",
+                    **self.get_srt_to_seo_status(),
+                }
+
+        self._sync_projects_disk_state()
+        ideas = self.load_saved_ideas()
+        ideas_map = {str(it.get("ma_id", "")).strip(): it for it in ideas if it.get("ma_id")}
+
+        req_ids = [str(m).strip() for m in ma_ids if str(m).strip()] if ma_ids else list(ideas_map.keys())
+        target_entries: List[Tuple[str, Path, Path, Path, Optional[Dict[str, Any]]]] = []
+        already_done_cnt = 0
+        for mid in req_ids:
+            has_srt_ok, srt_p, has_srt_seo_ok = self.has_srt_on_disk(mid)
+            if not has_srt_ok or srt_p is None:
+                continue
+            if not force and has_srt_seo_ok and ma_ids is None:
+                already_done_cnt += 1
+                continue
+            p_dir = self._get_effective_project_dir(mid)
+            f_dir = getattr(self, "final_video_dir", None)
+            final_p_dir = (Path(f_dir) / mid) if f_dir else p_dir
+            target_entries.append((mid, p_dir, final_p_dir, srt_p, ideas_map.get(mid)))
+
+        if not target_entries:
+            empty_msg = (
+                f"Tất cả {already_done_cnt} dự án có file .srt đã được phân tích SRT → SEO qua ChatGPT rồi!"
+                if already_done_cnt > 0
+                else "Chưa tìm thấy dự án nào có sẵn file subtitles.srt để phân tích!"
+            )
+            return {
+                "started": False,
+                "count": 0,
+                "target_ids": [],
+                "message": empty_msg,
+            }
+
+        target_ids = [x[0] for x in target_entries]
+        with self._srt_seo_lock:
+            st["running"] = True
+            st["completed"] = False
+            st["progress"] = 2.0
+            st["total"] = len(target_entries)
+            st["processed"] = 0
+            st["updated_ids"] = []
+            st["failed_ids"] = []
+            st["error"] = None
+            st["logs"] = [f"🚀 Bắt đầu chuyển {len(target_entries)} file SRT sang ChatGPT phân tích Mô tả & Timestamps..."]
+            st["status_text"] = f"⏳ Đang chuẩn bị phân tích {len(target_entries)} file SRT..."
+
+        def _append_log(msg_line: str):
+            with self._srt_seo_lock:
+                logs = st.setdefault("logs", [])
+                logs.append(msg_line)
+                if len(logs) > 200:
+                    st["logs"] = logs[-200:]
+                st["status_text"] = msg_line
+
+        def _worker():
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            from .srt_seo_analyzer import analyze_project_srt_with_chatgpt_sync
+
+            try:
+                max_workers = min(3, max(1, len(target_entries)))
+
+                def _run_one(entry: Tuple[str, Path, Path, Path, Optional[Dict[str, Any]]]):
+                    mid_x, p_dir_x, final_p_dir_x, srt_p_x, idea_x = entry
+                    _append_log(f"[{mid_x}] 💬 Đang mở ChatGPT phân tích subtitles.srt & cập nhật File SEO...")
+                    self._emit(
+                        current_ma_id=mid_x,
+                        current_step="💬 ChatGPT phân tích SRT → Mô tả SEO & Timestamps",
+                        message=f"[{mid_x}] 💬 Đang gửi subtitles.srt sang ChatGPT phân tích Mô tả & Timestamps...",
+                    )
+                    res_one = analyze_project_srt_with_chatgpt_sync(
+                        proj_dir=p_dir_x,
+                        ma_id=mid_x,
+                        srt_path=srt_p_x,
+                        final_proj_dir=final_p_dir_x,
+                        locked_title=str((idea_x or {}).get("locked_title") or ""),
+                        idea=idea_x,
+                        preferred_acc_id=preferred_acc_id,
+                        force=force,
+                        allow_fallback=allow_fallback,
+                        progress_cb=lambda m: _append_log(m),
+                        should_stop_cb=lambda: bool(self.should_stop),
+                    )
+                    self._update_idea_record(
+                        mid_x,
+                        has_srt=True,
+                        has_seo=True,
+                        has_srt_seo=bool(res_one.get("source") == "chatgpt_web"),
+                    )
+                    return mid_x, res_one
+
+                with ThreadPoolExecutor(max_workers=max_workers) as pool:
+                    fut_map = {pool.submit(_run_one, item): item[0] for item in target_entries}
+                    for fut in as_completed(fut_map):
+                        mid_done = fut_map[fut]
+                        try:
+                            _, r_done = fut.result()
+                            ch_cnt = int(r_done.get("chapters_count") or 0)
+                            with self._srt_seo_lock:
+                                st["processed"] += 1
+                                st["updated_ids"].append(mid_done)
+                                st["progress"] = round(5.0 + 95.0 * (st["processed"] / max(1, st["total"])), 1)
+                            _append_log(f"✅ [{mid_done}] Đã cập nhật Mô tả + {ch_cnt} Timestamps tiếng Nhật vào File SEO!")
+                            self._emit(
+                                current_ma_id=mid_done,
+                                message=f"[{mid_done}] ✅ ChatGPT đã phân tích xong SRT & bổ sung {ch_cnt} Timestamps vào Mô tả SEO!",
+                            )
+                        except Exception as e_one:
+                            with self._srt_seo_lock:
+                                st["processed"] += 1
+                                st["failed_ids"].append(f"{mid_done}: {e_one}")
+                                st["progress"] = round(5.0 + 95.0 * (st["processed"] / max(1, st["total"])), 1)
+                            _append_log(f"❌ [{mid_done}] Lỗi phân tích SRT: {e_one}")
+                            log_error("SEO", f"[{mid_done}] Lỗi phân tích SRT → SEO: {e_one}", project_id=mid_done)
+
+                self._last_disk_sync_ts = 0.0
+                self._sync_projects_disk_state()
+                with self._srt_seo_lock:
+                    upd_cnt = len(st["updated_ids"])
+                    fail_cnt = len(st["failed_ids"])
+                    st["progress"] = 100.0
+                    st["completed"] = True
+                    st["running"] = False
+                    st["status_text"] = f"🎉 Hoàn tất: Đã cập nhật {upd_cnt}/{st['total']} dự án (Lỗi: {fail_cnt})."
+                self._emit(
+                    current_step="✅ Hoàn tất ChatGPT phân tích SRT → File SEO",
+                    progress=100.0,
+                    message=f"🎉 Hoàn tất phân tích SRT → ChatGPT SEO: Đã cập nhật {upd_cnt}/{len(target_entries)} dự án!",
+                )
+            except Exception as e_batch:
+                with self._srt_seo_lock:
+                    st["error"] = str(e_batch)
+                    st["completed"] = True
+                    st["running"] = False
+                    st["status_text"] = f"❌ Lỗi phân tích SRT → SEO: {e_batch}"
+                log_error("SEO", f"Lỗi luồng ChatGPT phân tích SRT → SEO: {e_batch}", exc=e_batch)
+
+        threading.Thread(target=_worker, daemon=True).start()
+        return {
+            "started": True,
+            "count": len(target_ids),
+            "target_ids": target_ids,
+            "message": f"Đã bắt đầu gửi {len(target_ids)} file SRT sang ChatGPT phân tích & bổ sung Mô tả + Timestamps!",
+        }

@@ -1,1 +1,2 @@
-Length Lock v2.0 — HARD PURE_CHARACTER_COUNT 40,001–50,000 — target 44,000–47,000
+ADAS SKILLS V4.0.0 — 2026-11-10
+Compatible with 00_CONTROLLER_V4 runtime v4.0.0; original reference corpus retained.
