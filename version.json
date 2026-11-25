@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.6",
-  "build_number": 119,
-  "released_at": "2026-11-25 12:38:32",
+  "version": "V1.0.7",
+  "build_number": 120,
+  "released_at": "2026-11-25 14:07:20",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Viết kịch bản cùng lúc trên 5 nick ChatGPT (thêm Nick 4 cổng 9228, Nick 5 cổng 9229 — bấm ACC 4/ACC 5 để đăng nhập lần đầu). 2. Video đã sản xuất xong được đánh dấu vĩnh viễn (VIDEO_DONE.json): dù chuyển hoặc xóa MP4, ứng dụng vẫn nhận biết và không render lại; muốn làm lại phải xác nhận Render Lại. 3. Tự dọn file thừa: viết xong xóa part_a/b/c và bản sao kịch bản; render xong xóa Voice WAV, file render dở và bản sao trùng; thư mục video cuối chỉ giữ MP4 + SEO + Thumbnail."
+  "changelog": "1. Sửa chế độ viết kịch bản bằng Gemini (đã chạy thử thật trọn quy trình: kịch bản 45.576 chữ + SEO + Thumbnail 6 dòng): chọn đúng model Gemini mới (4 Neon + tư duy Cao), gửi được lệnh vẽ Thumbnail, nhận biết đúng trạng thái đăng nhập Gemini. 2. Sửa lỗi tạo bù Thumbnail khi đổi nick luôn bị hỏng (ảnh hưởng cả ChatGPT). 3. Tiêu đề khóa không còn dính dấu ':' ở đầu; lỗi Gemini không còn làm nghỉ nhầm nick ChatGPT."
 }
