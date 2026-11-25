@@ -3698,8 +3698,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         idea: Dict[str, Any],
         proj_dir: Path,
         renders_dir: Path,
+        single_attempt: bool = False,
+        should_yield_cb: Optional[Callable[[], bool]] = None,
     ) -> List[str]:
         """
+        - single_attempt=True (dùng trong lúc đang viết kịch bản): chỉ vẽ ĐÚNG 1 LẦN trên nick hiện tại, không QA,
+          không đổi nick. Lỗi thì bỏ qua ngay để nick quay về viết kịch bản tiếp; Thumbnail sẽ được tạo bù sau.
+        - should_yield_cb() trả True -> dừng tạo lại (nhường nick cho kịch bản mới vừa được nạp thêm).
         BƯỚC MỚI (STEP 7): Mở đoạn chat mới, dùng Prompt Thumbnail từ SEO tạo ĐÚNG 1 THUMBNAIL DUY NHẤT cho mỗi kịch bản,
         đánh giá QA Thumbnail (đúng 6 dòng chữ, cho phép chữ đè lên mặt, ảnh rõ nét).
         Nếu đạt -> tải về đưa vào thư mục renders (`{ma_id}_THUMBNAIL_1.png`); nếu chưa đạt 6 dòng -> tự động tạo lại!
@@ -3721,13 +3726,18 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 continue
 
             base_prompt = prompts_list[0]
-            max_attempts = 1 if isinstance(session, GeminiWebSession) else 5
+            max_attempts = 1 if (single_attempt or isinstance(session, GeminiWebSession)) else 5
             best_fallback_bytes: Optional[bytes] = None
             tried_thumb_accs: set = {getattr(session, "acc_id", "acc_1")}
 
             for attempt in range(1, max_attempts + 1):
                 if self.should_stop:
                     raise RuntimeError("Đã dừng theo yêu cầu người dùng.")
+                if attempt > 1 and should_yield_cb is not None and should_yield_cb():
+                    self._emit(
+                        message=f"[{ma_id}] ⏭️ Có kịch bản mới cần viết -> Tạm dừng tạo lại Thumbnail, sẽ tạo bù sau."
+                    )
+                    break
 
                 acc_lbl = getattr(session, "cfg", {}).get("label", getattr(session, "acc_id", "AI"))
                 self._update_idea_record(
@@ -3768,7 +3778,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         message=f"[{ma_id}] ⚠️ Lượt {attempt} ({acc_lbl}): Chưa thu được ảnh Thumbnail ({err_txt}) -> {'Tài khoản bị Limit 30p, đang đổi sang nick khác...' if is_rl else 'Đang đổi nick / tạo lại...'}"
                     )
                     # Nếu tài khoản bị limit hoặc lỗi tạo ảnh -> Chuyển ngay sang tài khoản (nick) khác để tạo lại!
-                    if isinstance(session, ChatGPTWebSession) and hasattr(session, "switch_to_another_account"):
+                    # (Chế độ chỉ vẽ 1 lần: không đổi nick, để nick quay về viết kịch bản tiếp)
+                    if (
+                        not single_attempt
+                        and attempt < max_attempts
+                        and isinstance(session, ChatGPTWebSession)
+                        and hasattr(session, "switch_to_another_account")
+                    ):
                         if not is_rl and attempt >= 2:
                             mark_account_rate_limited(
                                 session.acc_id,
@@ -3793,6 +3809,10 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     continue
 
                 best_fallback_bytes = img_bytes
+
+                if max_attempts == 1:
+                    # Chỉ có 1 lượt vẽ: dù QA đạt hay không cũng giữ ảnh này -> bỏ qua bước QA cho đỡ tốn ~1-2 phút
+                    break
 
                 # Đánh giá QA Thumbnail ngay trên đoạn chat bằng Vision của ChatGPT
                 self._emit(
@@ -3855,8 +3875,12 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         ma_id: str,
         preferred_acc_id: Optional[str] = None,
         exclude_accs: Optional[set] = None,
+        should_yield_cb: Optional[Callable[[], bool]] = None,
+        open_accounts: bool = True,
     ) -> List[str]:
         """
+        open_accounts=False: bên gọi đã tự mở Chrome các nick (tránh nhiều luồng cùng mở Chrome 1 lúc).
+        should_yield_cb() trả True -> dừng giữa chừng (nhường nick cho kịch bản mới), trả về [] để tạo bù lần sau.
         Đảm bảo 100% dự án `ma_id` có Thumbnail (`{ma_id}_THUMBNAIL_1.png` > 20KB).
         Nếu chưa có hoặc tạo lỗi / tài khoản bị limit:
         - Tự động xoay vòng qua tất cả các tài khoản ChatGPT đang có (`acc_1`, `acc_2`, `acc_3`),
@@ -3872,7 +3896,8 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
 
         target_thumb = renders_dir / f"{ma_id}_THUMBNAIL_1.png"
         if target_thumb.exists() and target_thumb.stat().st_size > 20000:
-            self._update_idea_record(ma_id, has_thumbnail=True)
+            self._update_idea_record(ma_id, has_thumbnail=True, thumb_pending=False)
+            self._copy_thumbnail_to_final_video_dir(ma_id)
             return [str(target_thumb)]
 
         # Chuẩn bị dữ liệu Idea + Step 2 + Step 6 để tạo Thumbnail
@@ -3892,16 +3917,19 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             step6_out = self._build_fallback_seo_pack(ma_id, locked_title, sc_chars or 45000, idea, step2_out)
             step6_file.write_text(step6_out, encoding="utf-8")
 
-        try:
-            ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
-        except Exception:
-            pass
+        if open_accounts:
+            try:
+                ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
+            except Exception:
+                pass
 
         tried_accs: set = set(exclude_accs or set())
         total_acc_slots = len(CHATGPT_ACCOUNTS) + 1
 
         for round_idx in range(total_acc_slots):
             if self.should_stop:
+                break
+            if should_yield_cb is not None and should_yield_cb():
                 break
             if target_thumb.exists() and target_thumb.stat().st_size > 20000:
                 self._update_idea_record(ma_id, has_thumbnail=True)
@@ -3938,9 +3966,11 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     idea=idea,
                     proj_dir=proj_dir,
                     renders_dir=renders_dir,
+                    should_yield_cb=should_yield_cb,
                 )
                 if res_paths and target_thumb.exists() and target_thumb.stat().st_size > 20000:
-                    self._update_idea_record(ma_id, has_thumbnail=True)
+                    self._update_idea_record(ma_id, has_thumbnail=True, thumb_pending=False)
+                    self._copy_thumbnail_to_final_video_dir(ma_id)
                     log_info(
                         "SCRIPT",
                         f"[{ma_id}] ✅ Đã tạo bù thành công Thumbnail trên {sess.cfg['label']}: {target_thumb.name}",
@@ -3960,15 +3990,37 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     pass
 
         if target_thumb.exists() and target_thumb.stat().st_size > 20000:
-            self._update_idea_record(ma_id, has_thumbnail=True)
+            self._update_idea_record(ma_id, has_thumbnail=True, thumb_pending=False)
+            self._copy_thumbnail_to_final_video_dir(ma_id)
             return [str(target_thumb)]
         return []
+
+    def _copy_thumbnail_to_final_video_dir(self, ma_id: str) -> None:
+        """Thumbnail được tạo bù SAU khi video đã render xong -> chép thêm sang thư mục chứa Video cuối (nếu tách riêng)."""
+        try:
+            renders_dir = self.projects_dir / ma_id / "renders"
+            loc_file = renders_dir / "video_location.json"
+            if not loc_file.exists():
+                return
+            loc = json.loads(loc_file.read_text(encoding="utf-8"))
+            final_dir = Path(str(loc.get("final_renders_dir") or ""))
+            if not str(final_dir) or not final_dir.is_dir() or final_dir.resolve() == renders_dir.resolve():
+                return
+            for th_f in renders_dir.glob(f"{ma_id}_THUMBNAIL_*.png"):
+                dst = final_dir / th_f.name
+                if not dst.exists() or dst.stat().st_size != th_f.stat().st_size:
+                    shutil.copy2(th_f, dst)
+        except Exception as e_cp:
+            log_warn("SCRIPT", f"[{ma_id}] Không chép được Thumbnail sang thư mục Video: {e_cp}", project_id=ma_id)
 
     def ensure_all_projects_have_thumbnails_sync(
         self,
         target_ids: Optional[List[str]] = None,
+        should_yield_cb: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         """
+        Chạy SAU KHI đã viết xong các kịch bản (ưu tiên sản xuất kịch bản tối đa). Tạo bù song song trên các nick ChatGPT.
+        should_yield_cb() trả True (có kịch bản mới nạp thêm) -> dừng sớm, trả về interrupted=True để tạo bù lần sau.
         Quét toàn bộ các kịch bản đã hoàn thành (trong `target_ids` và trên ổ cứng):
         Bất kỳ kịch bản nào chưa có Thumbnail (`{ma_id}_THUMBNAIL_1.png`) đều được tự động
         chạy tạo lại (tự động chuyển sang nick khác nếu nick hiện tại lỗi/limit).
@@ -4008,22 +4060,58 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             message=f"🔍 Phát hiện {len(missing_ids)} kịch bản thiếu Thumbnail ({', '.join(missing_ids)}) -> Đang tự động tạo lại (Tự động đổi nick nếu limit)...",
         )
 
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _yield() -> bool:
+            return bool(self.should_stop or (should_yield_cb is not None and should_yield_cb()))
+
+        # Tạo bù SONG SONG: mỗi nick ChatGPT rảnh nhận 1 mã (tối đa số nick đang không bị khóa)
+        try:
+            from .chatgpt_web_client import ensure_all_saved_chatgpt_accounts_open
+            ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
+        except Exception:
+            pass
+        free_accs = [a for a in CHATGPT_ACC_IDS if not is_account_in_cooldown(a)[0]] or list(CHATGPT_ACC_IDS)
+        n_workers = max(1, min(len(missing_ids), len(free_accs)))
         fixed_ids: List[str] = []
         still_missing: List[str] = []
-        for idx, mid in enumerate(missing_ids, 1):
-            if self.should_stop:
-                break
+        interrupted = False
+        done_box = {"n": 0}
+
+        def _one(idx: int, mid: str) -> Tuple[str, bool]:
+            if _yield():
+                return mid, False
             self._emit(
                 current_ma_id=mid,
                 current_step=f"🎨 Tạo bù Thumbnail [{idx}/{len(missing_ids)}]: {mid}",
-                progress=95.0 + min(4.0, (idx / max(1, len(missing_ids))) * 4.0),
-                message=f"🎨 [{idx}/{len(missing_ids)}] Đang tạo bù Thumbnail cho kịch bản {mid}...",
+                message=f"🎨 [{idx}/{len(missing_ids)}] Đang tạo bù Thumbnail cho kịch bản {mid} ({n_workers} luồng song song)...",
             )
-            paths = self.ensure_project_thumbnail_with_failover_sync(mid)
-            if paths:
-                fixed_ids.append(mid)
-            else:
-                still_missing.append(mid)
+            paths = self.ensure_project_thumbnail_with_failover_sync(
+                mid,
+                preferred_acc_id=free_accs[(idx - 1) % len(free_accs)],
+                should_yield_cb=should_yield_cb,
+                open_accounts=False,
+            )
+            return mid, bool(paths)
+
+        with ThreadPoolExecutor(max_workers=n_workers) as ex_th:
+            futs_th = [ex_th.submit(_one, i, m) for i, m in enumerate(missing_ids, 1)]
+            for f_th in as_completed(futs_th):
+                try:
+                    mid_r, ok_r = f_th.result()
+                except Exception as e_th:
+                    log_warn("SCRIPT", f"Lỗi luồng tạo bù Thumbnail: {e_th}")
+                    continue
+                done_box["n"] += 1
+                (fixed_ids if ok_r else still_missing).append(mid_r)
+                self._emit(progress=95.0 + min(4.0, (done_box["n"] / max(1, len(missing_ids))) * 4.0))
+
+        if _yield():
+            interrupted = True
+            if not self.should_stop:
+                self._emit(
+                    message=f"⏭️ Có kịch bản mới được nạp -> Tạm dừng tạo bù Thumbnail ({len(still_missing)} mã còn thiếu sẽ tạo bù sau) để ưu tiên viết kịch bản!"
+                )
 
         self._sync_projects_disk_state()
         return {
@@ -4031,6 +4119,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             "missing_before": len(missing_ids),
             "fixed": fixed_ids,
             "still_missing": still_missing,
+            "interrupted": interrupted,
         }
 
     # ==========================================================================
@@ -4383,22 +4472,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             (renders_dir / f"{ma_id}_KICH_BAN.txt").write_text(existing_script_text, encoding="utf-8")
             thumb_files = [str(p) for p in sorted(renders_dir.glob(f"{ma_id}_THUMBNAIL_*.png")) if p.stat().st_size > 20000]
 
-            # BẮT BUỘC MỌI KỊCH BẢN PHẢI CÓ THUMBNAIL: Nếu dự án đã có kịch bản nhưng chưa có Thumbnail -> Tự động tạo bù (kèm đổi nick nếu limit/lỗi)!
-            if len(thumb_files) == 0 and not self.should_stop:
-                try:
-                    self._emit(
-                        current_ma_id=ma_id,
-                        current_step="STEP 7 — Đang tạo bổ sung Thumbnail 16:9 (6 dòng chữ)",
-                        progress=92.0,
-                        message=f"[{ma_id}] 🎨 Kịch bản ({existing_pure_chars:,} chữ) & SEO đã có sẵn nhưng chưa có Thumbnail -> Đang tạo bổ sung 1 Thumbnail 16:9...",
-                    )
-                    thumb_files = self.ensure_project_thumbnail_with_failover_sync(
-                        ma_id=ma_id,
-                        preferred_acc_id=preferred_acc_id,
-                        exclude_accs=exclude_accs,
-                    )
-                except Exception as e_th_ex:
-                    log_warn("SCRIPT", f"[{ma_id}] Không thể tạo bổ sung Thumbnail: {e_th_ex}", project_id=ma_id)
+            # ƯU TIÊN KỊCH BẢN: kịch bản có sẵn nhưng thiếu Thumbnail -> KHÔNG tạo ngay (tránh giữ nick/luồng),
+            # đánh dấu chờ tạo bù; Thumbnail sẽ được tạo bù sau khi đã viết xong các kịch bản trong phiên.
+            if len(thumb_files) == 0:
+                self._update_idea_record(ma_id, thumb_pending=True)
+                self._emit(
+                    message=f"[{ma_id}] ⏭️ Kịch bản ({existing_pure_chars:,} chữ) đã có nhưng thiếu Thumbnail -> Sẽ tạo bù sau khi viết xong các kịch bản."
+                )
 
             video_triggered = False
             if auto_produce_video and not defer_video_handoff and self.video_pipeline is not None:
@@ -5019,12 +5099,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     idea=idea,
                     proj_dir=proj_dir,
                     renders_dir=renders_dir,
+                    single_attempt=True,
                 )
             except Exception as e_thumb:
                 if self.should_stop:
                     raise
                 self._emit(
-                    message=f"[{ma_id}] ⚠️ Tạo Thumbnail trên {session.cfg['label']} gặp gián đoạn ({e_thumb}) -> Sẽ chuyển sang tài khoản khác để tạo lại!"
+                    message=f"[{ma_id}] ⚠️ Tạo Thumbnail trên {session.cfg['label']} gặp gián đoạn ({e_thumb})."
                 )
             finally:
                 if hybrid_chat_session is not None:
@@ -5033,28 +5114,19 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     except Exception:
                         pass
 
-            # KIỂM TRA LẠI SAU KHI XONG: Nếu chưa có Thumbnail -> Chuyển sang nick khác tạo lại ngay lập tức (Không thể để thiếu Thumbnail)
+            # ƯU TIÊN KỊCH BẢN: Thumbnail chỉ vẽ 1 lần. Lỗi -> bỏ qua, nick quay về viết kịch bản tiếp theo;
+            # Thumbnail sẽ được tạo bù (đổi nick, nhiều lượt) sau khi đã viết xong các kịch bản trong phiên.
             if not thumbnail_paths and not self.should_stop:
                 self._emit(
                     current_ma_id=ma_id,
-                    current_step="STEP 7 — Đổi sang nick khác tạo lại Thumbnail",
-                    progress=95.0,
-                    message=f"[{ma_id}] 🔄 Kiểm tra thấy chưa có Thumbnail trên {session.cfg['label']} -> Đang chuyển sang tài khoản (nick) khác để tạo lại Thumbnail!",
-                )
-                try:
-                    session.close_session_tab(keep_open=False)
-                except Exception:
-                    pass
-                thumbnail_paths = self.ensure_project_thumbnail_with_failover_sync(
-                    ma_id=ma_id,
-                    preferred_acc_id=None,
-                    exclude_accs={getattr(session, "acc_id", "")},
+                    message=f"[{ma_id}] ⏭️ Vẽ Thumbnail 1 lần chưa được -> Bỏ qua, chuyển sang viết kịch bản tiếp theo (Thumbnail sẽ tạo bù sau)!",
                 )
 
             self._update_idea_record(
                 ma_id,
                 has_seo=True,
                 has_thumbnail=bool(thumbnail_paths),
+                thumb_pending=not bool(thumbnail_paths),
             )
 
             # ------------------------------------------------------------------
@@ -5078,7 +5150,11 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     ma_id,
                     status="SCRIPT_DONE",
                     has_script=True,
-                    current_step=f"📝 Đã xong Kịch bản ({total_pure:,} chữ) & {len(thumbnail_paths)}/1 Thumbnail — Sẵn sàng Render MP4",
+                    current_step=(
+                        f"📝 Đã xong Kịch bản ({total_pure:,} chữ) & {len(thumbnail_paths)}/1 Thumbnail — Sẵn sàng Render MP4"
+                        if thumbnail_paths
+                        else f"📝 Đã xong Kịch bản ({total_pure:,} chữ) — Thumbnail chờ tạo bù — Sẵn sàng Render MP4"
+                    ),
                 )
 
             if not video_triggered:
@@ -5615,14 +5691,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                             )
                             has_sc_ok, _, _ = self.has_valid_script_on_disk(mid_item)
                             if has_sc_ok:
-                                # Kiểm tra lại Thumbnail ngay sau khi xong kịch bản: nếu thiếu thì tạo lại trên nick khác
-                                has_th_ok, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
-                                if not has_th_ok and not self.should_stop:
-                                    self.ensure_project_thumbnail_with_failover_sync(
-                                        ma_id=mid_item,
-                                        preferred_acc_id=None,
-                                        exclude_accs=set(failed_accs_for_mid),
-                                    )
+                                # Thiếu Thumbnail -> KHÔNG tạo lại ngay (nick về viết kịch bản tiếp); tạo bù cuối phiên
                                 # Viết xong -> dọn part_a/b/c.txt & bản sao kịch bản (đã gộp vào script_clean.txt)
                                 try:
                                     th_now, seo_now, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
@@ -5670,13 +5739,7 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                             # Nếu kịch bản 3 Part đã kịp viết xong trên ổ cứng -> Kiểm tra tạo bù Thumbnail trên nick khác rồi đẩy vào Render!
                             has_sc_now, _, _ = self.has_valid_script_on_disk(mid_item)
                             if has_sc_now:
-                                has_th_now, _, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
-                                if not has_th_now and not self.should_stop:
-                                    self.ensure_project_thumbnail_with_failover_sync(
-                                        ma_id=mid_item,
-                                        preferred_acc_id=None,
-                                        exclude_accs=set(failed_accs_for_mid),
-                                    )
+                                # Thiếu Thumbnail -> tạo bù cuối phiên (ưu tiên viết kịch bản)
                                 if _item_auto(mid_item):
                                     self.start_render_video_for_ideas_async(
                                         ma_ids=[mid_item],
@@ -5908,19 +5971,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     finally:
                         _release_active(mid_done)
 
-            def _final_sweep(ids: List[str]) -> None:
+            def _final_sweep(ids: List[str]) -> bool:
+                """Trả về True nếu đã quét xong; False nếu dừng sớm tạo bù Thumbnail vì có kịch bản mới nạp vào."""
                 # Dọn dẹp tab Chrome để giải phóng RAM cho Voice & Render Video
                 try:
                     sweep_completed_and_idle_tabs_across_all_accounts()
                 except Exception:
                     pass
-                # KIỂM TRA LẠI: NẾU KỊCH BẢN NÀO CHƯA CÓ THUMBNAIL THÌ TẠO BÙ NGAY (ĐỔI NICK NẾU LIMIT)
-                if not self.should_stop:
-                    try:
-                        self.ensure_all_projects_have_thumbnails_sync(target_ids=ids)
-                        sweep_completed_and_idle_tabs_across_all_accounts()
-                    except Exception as e_ens_th:
-                        log_warn("SCRIPT", f"Cảnh báo khi quét tạo bù Thumbnail cuối phiên: {e_ens_th}")
                 # QUÉT VÉT LẦN CUỐI ĐẢM BẢO MỌI KỊCH BẢN (CỦA MÃ BẬT RENDER) ĐÃ XONG ĐỀU ĐƯỢC RENDER MP4
                 render_ids = [m for m in ids if _item_auto(m)]
                 if render_ids and not self.should_stop:
@@ -5936,6 +5993,20 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                             video_settings=_opts(render_ids[0]).get("video_settings") or video_settings,
                             only_unrendered=False,
                         )
+                # TẠO BÙ THUMBNAIL SAU CÙNG (sau khi đã viết xong kịch bản & đẩy Render): song song trên các nick,
+                # dừng ngay nếu người dùng nạp thêm kịch bản mới (ưu tiên viết kịch bản), phần còn thiếu tạo bù lần sau.
+                if not self.should_stop:
+                    try:
+                        res_th = self.ensure_all_projects_have_thumbnails_sync(
+                            target_ids=ids,
+                            should_yield_cb=lambda: bool(self._run_queue),
+                        )
+                        sweep_completed_and_idle_tabs_across_all_accounts()
+                        if res_th.get("interrupted"):
+                            return False
+                    except Exception as e_ens_th:
+                        log_warn("SCRIPT", f"Cảnh báo khi quét tạo bù Thumbnail cuối phiên: {e_ens_th}")
+                return True
 
             finished_cleanly = False
             try:
@@ -5966,8 +6037,9 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                     # 3) Hết việc -> quét vét Thumbnail / Render cho các mã chưa quét
                     to_sweep = [m for m in processed_ids if m not in swept_ids]
                     if to_sweep:
-                        _final_sweep(to_sweep)
-                        swept_ids.update(to_sweep)
+                        if _final_sweep(to_sweep):
+                            swept_ids.update(to_sweep)
+                        # Dừng sớm vì có mã mới -> chưa đánh dấu đã quét, lần quét sau sẽ tạo bù Thumbnail tiếp
 
                     with self.lock:
                         if self._run_queue and not self.should_stop:
