@@ -1,8 +1,8 @@
 {
-  "version": "V1.0.4",
-  "build_number": 117,
-  "released_at": "2026-11-06 22:51:57",
+  "version": "V1.0.5",
+  "build_number": 118,
+  "released_at": "2026-11-25 11:34:30",
   "repo": "phamngocthu661-lang/drama-nhat-studio",
   "branch": "main",
-  "changelog": "1. Tự động tạm dừng 30 phút khi tài khoản (nick) bị Limit và đẩy ngay kịch bản sang nick khác để làm lại từ đầu (STEP 2); sau 30 phút tự động mở khóa nick bị Limit để chạy tiếp. 2. Chốt chặn 100% kịch bản phải có Thumbnail: kiểm tra lại sau khi xong kịch bản và cuối lô, nếu thiếu hoặc lỗi tự động chuyển qua nick khác để tạo lại cho tới khi đủ Thumbnail. 3. Giữ đúng trạng thái RUNNING khi đang chạy STEP 5 (Kiểm toán), STEP 6 (SEO) và STEP 7 (Thumbnail), chỉ báo xong 100% khi toàn bộ các luồng trong lô đã hoàn tất."
+  "changelog": "1. Chỉ khóa nick 30 phút khi ChatGPT báo Limit thật; lỗi tạm thời chỉ cho nick nghỉ 5 phút hoặc chuyển nick ngay. 2. Đổi nick là VIẾT TIẾP từ phần đã lưu (STEP 2/3 và các Part đã xong), không làm lại từ đầu. 3. Nút ▶ CHẠY TIẾP: đang chạy vẫn thêm được mã mới, vừa viết kịch bản vừa Render song song. 4. Gửi lệnh ChatGPT ổn định hơn, không gửi trùng. 5. STEP 5 chỉ chấm điểm, STEP 6 ghi đúng kết quả chấm và độ dài thật. 6. Nâng cấp bộ skill ADAS V4."
 }
