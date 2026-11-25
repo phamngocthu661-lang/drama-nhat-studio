@@ -37,6 +37,16 @@ GEMINI_APP_URL = "https://gemini.google.com/app"
 # giúp bảo vệ toàn bộ 3 Tab Gemini không bao giờ bị các tiến trình dọn tab ngầm đóng nhầm.
 GEMINI_APP_URL_GUARDED = "https://gemini.google.com/app#studio_login_guard"
 
+
+def _is_gemini_url(url: str) -> bool:
+    """True chỉ khi tab đang ở đúng tên miền gemini.google.com (trang đăng nhập accounts.google.com chứa
+    'gemini.google.com' trong tham số continue= nên KHÔNG được tính là đang ở Gemini)."""
+    try:
+        from urllib.parse import urlparse
+        return (urlparse(str(url or "")).hostname or "").lower() == "gemini.google.com"
+    except Exception:
+        return False
+
 # Cấu hình 3 Cổng & Profile Chrome Độc Lập dành riêng cho Google Gemini Web (9225, 9226, 9227)
 GEMINI_ACCOUNTS_CONFIG: Dict[str, Dict[str, Any]] = {
     "acc_1": {
@@ -284,7 +294,7 @@ def open_gemini_tab_on_account(acc_id: str = "acc_1") -> Dict[str, Any]:
 
     gemini_tab = None
     for t in tabs:
-        if t.get("type") == "page" and "gemini.google.com" in (t.get("url") or ""):
+        if t.get("type") == "page" and _is_gemini_url(t.get("url")):
             gemini_tab = t
             break
 
@@ -352,7 +362,7 @@ def check_gemini_account_pro_status(acc_id: str = "acc_1") -> Dict[str, Any]:
         }
 
     gemini_tab = next(
-        (t for t in tabs if t.get("type") == "page" and "gemini.google.com" in (t.get("url") or "")),
+        (t for t in tabs if t.get("type") == "page" and _is_gemini_url(t.get("url"))),
         None,
     )
     if not gemini_tab or not gemini_tab.get("webSocketDebuggerUrl"):
@@ -496,7 +506,7 @@ class GeminiWebSession:
                 for t in page_tabs:
                     tid = t.get("id")
                     t_url = (t.get("url") or "").strip()
-                    if tid and tid not in busy_other_tabs and "gemini.google.com" in t_url:
+                    if tid and tid not in busy_other_tabs and _is_gemini_url(t_url):
                         chosen_tab = t
                         break
 
@@ -512,7 +522,7 @@ class GeminiWebSession:
                 self.tab_id = chosen_tab.get("id")
                 self.ws_url = chosen_tab.get("webSocketDebuggerUrl")
                 t_url = (chosen_tab.get("url") or "").strip()
-                if "gemini.google.com" not in t_url:
+                if not _is_gemini_url(t_url):
                     _cdp_navigate(self.ws_url, GEMINI_APP_URL_GUARDED, timeout=3.5)
                     time.sleep(0.8)
                 _install_tab_protection_js(self.ws_url)
@@ -567,7 +577,7 @@ class GeminiWebSession:
                 f"""
                 (() => {{
                     const href = window.location.href || '';
-                    if (href.startsWith('about:blank') || !href.includes('gemini.google.com')) {{
+                    if (href.startsWith('about:blank') || (location.hostname || '') !== 'gemini.google.com') {{
                         return {{ blank: true, ready: false }};
                     }}
                     if (!location.hash.includes('login')) {{
@@ -740,7 +750,8 @@ class GeminiWebSession:
             const combinedLabel = (beforeTxt + ' ' + beforeAria).trim();
 
             // FAST-PATH: Nếu nút hiện tại đã là "Flash Cao" / "Flash High" / "3.8 Flash Cao" (và không phải Flash-Lite) -> giữ nguyên ngay lập tức!
-            if (/flash/i.test(combinedLabel) && !/lite/i.test(combinedLabel) && /\b(cao|high)\b/i.test(combinedLabel)) {
+            // (Giao diện Gemini mới: "Neon Cao" = model 4 Neon "Phân tích sâu hơn" + Cấp độ tư duy Cao)
+            if (/(flash|neon)/i.test(combinedLabel) && !/lite/i.test(combinedLabel) && /\b(cao|high)\b/i.test(combinedLabel)) {
                 return {
                     ok: true,
                     isPro: true,
@@ -758,6 +769,7 @@ class GeminiWebSession:
                 document.querySelectorAll('gem-menu-item, [data-test-id^="bard-mode-option"], .mat-mdc-menu-panel [role="menuitem"], .mat-mdc-menu-panel [role="menuitemradio"]')
             ).map(el => ({
                 el,
+                isUpsell: /upsell/i.test(el.getAttribute('data-test-id') || ''),
                 txt: (el.innerText || '').trim().replace(/\s+/g, ' '),
                 isSelected: el.classList.contains('selected') || el.getAttribute('aria-checked') === 'true',
                 isDisabled: (
@@ -780,8 +792,12 @@ class GeminiWebSession:
             }
 
             // 3. Chọn model "3.8 Flash" (Trợ giúp toàn diện / All-round help)
-            let flash38Item = parsedItems.find(x => /(3\.8\s*flash|trợ giúp toàn diện|all-round help)/i.test(x.txt) && !/lite/i.test(x.txt))
-                || parsedItems.find(x => /\bflash\b/i.test(x.txt) && !/lite/i.test(x.txt));
+            // Ưu tiên: 3.8 Flash (giao diện cũ) -> 4 Neon "Phân tích sâu hơn" (giao diện mới) -> Flash bất kỳ.
+            // Bỏ qua mục quảng cáo gói Ultra (upsell, VD: 4 Carbon) vì tài khoản thường không dùng được.
+            const usable = parsedItems.filter(x => !x.isUpsell && !/lite/i.test(x.txt));
+            let flash38Item = usable.find(x => /(3\.8\s*flash|trợ giúp toàn diện|all-round help)/i.test(x.txt))
+                || usable.find(x => /(\bneon\b|phân tích sâu hơn|deeper analysis)/i.test(x.txt))
+                || usable.find(x => /\bflash\b/i.test(x.txt));
 
             let chosenMenuLabel = '';
             if (flash38Item && !flash38Item.isDisabled) {
@@ -892,7 +908,7 @@ class GeminiWebSession:
                 f"""
                 (() => {{
                     const href = window.location.href || '';
-                    if (href.startsWith('about:blank') || !href.includes('gemini.google.com')) {{
+                    if (href.startsWith('about:blank') || (location.hostname || '') !== 'gemini.google.com') {{
                         return {{ blank: true, ready: false }};
                     }}
                     const ed = document.querySelector('{GEMINI_COMPOSER_SELECTOR}');
@@ -925,40 +941,10 @@ class GeminiWebSession:
             time.sleep(0.45)
         return False
 
-    def send_prompt_and_wait(
-        self,
-        prompt_text: str,
-        step_label: str = "STEP",
-        timeout_sec: int = 900,
-        progress_cb: Optional[Callable[[str, int], None]] = None,
-        should_stop_cb: Optional[Callable[[], bool]] = None,
-    ) -> str:
-        """
-        Bơm lệnh Prompt dài vào khung `<rich-textarea>` trên Tab riêng của luồng này:
-        - Bước bơm lệnh được khóa tuần tự theo cổng (`_GEMINI_PORT_INJECT_LOCKS`) kèm độ trễ lệch nhịp `2.2s`
-          để 3 Tab song song không bao giờ bấm gửi trùng 1 mili-giây (chống Google check bot).
-        - Bước chờ Gemini suy nghĩ & gõ phản hồi chạy **SONG SONG ĐỒNG THỜI 100%** trên cả 3 Tab!
-        """
-        if should_stop_cb and should_stop_cb():
-            raise RuntimeError("Đã dừng theo yêu cầu của người dùng.")
-
-        if not self.ws_url:
-            if not self.open_session_tab(force_new_chat=True):
-                raise RuntimeError(f"[{self.project_id}] Không thể mở Tab Gemini Web trên {self.cfg['label']}!")
-
-        self.ensure_gemini_pro_and_model_4()
-
-        prev_counts = _cdp_eval_js(
-            self.ws_url,
-            "({ resp: document.querySelectorAll('model-response').length, query: document.querySelectorAll('user-query, .user-query-container').length })",
-            await_promise=False,
-            timeout=3.0,
-        )
-        prev_count = int(prev_counts.get("resp", 0)) if isinstance(prev_counts, dict) else 0
-        prev_query_count = int(prev_counts.get("query", 0)) if isinstance(prev_counts, dict) else 0
-
+    def _build_inject_and_send_js(self, prompt_text: str) -> str:
+        """JS bơm lệnh vào khung soạn thảo Gemini rồi bấm Gửi (dùng chung cho chat văn bản và tạo ảnh)."""
         prompt_json = json.dumps(prompt_text, ensure_ascii=False)
-        js_inject_and_send = f"""
+        return f"""
         (async () => {{
             const text = {prompt_json};
             let editor = null;
@@ -1049,6 +1035,15 @@ class GeminiWebSession:
         }})()
         """
 
+    def _inject_and_send(
+        self,
+        prompt_text: str,
+        prev_count: int,
+        prev_query_count: int,
+        should_stop_cb: Optional[Callable[[], bool]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Bơm lệnh + gửi (thử lại 3 lần, nhận biết lệnh đã gửi dù JS báo lỗi). Trả về dict có ok=True nếu đã gửi."""
+        js_inject_and_send = self._build_inject_and_send_js(prompt_text)
         port_lock = _GEMINI_PORT_INJECT_LOCKS.setdefault(self.port, threading.Lock())
         send_res = None
         for _ in range(3):
@@ -1075,8 +1070,48 @@ class GeminiWebSession:
             self._recover_or_allocate_tab_ws()
             time.sleep(1.0)
 
+        return send_res
+
+    def send_prompt_and_wait(
+        self,
+        prompt_text: str,
+        step_label: str = "STEP",
+        timeout_sec: int = 900,
+        progress_cb: Optional[Callable[[str, int], None]] = None,
+        should_stop_cb: Optional[Callable[[], bool]] = None,
+    ) -> str:
+        """
+        Bơm lệnh Prompt dài vào khung `<rich-textarea>` trên Tab riêng của luồng này:
+        - Bước bơm lệnh được khóa tuần tự theo cổng (`_GEMINI_PORT_INJECT_LOCKS`) kèm độ trễ lệch nhịp `2.2s`
+          để 3 Tab song song không bao giờ bấm gửi trùng 1 mili-giây (chống Google check bot).
+        - Bước chờ Gemini suy nghĩ & gõ phản hồi chạy **SONG SONG ĐỒNG THỜI 100%** trên cả 3 Tab!
+        """
+        if should_stop_cb and should_stop_cb():
+            raise RuntimeError("Đã dừng theo yêu cầu của người dùng.")
+
+        if not self.ws_url:
+            if not self.open_session_tab(force_new_chat=True):
+                raise RuntimeError(f"[{self.project_id}] Không thể mở Tab Gemini Web trên {self.cfg['label']}!")
+
+        self.ensure_gemini_pro_and_model_4()
+
+        prev_counts = _cdp_eval_js(
+            self.ws_url,
+            "({ resp: document.querySelectorAll('model-response').length, query: document.querySelectorAll('user-query, .user-query-container').length })",
+            await_promise=False,
+            timeout=3.0,
+        )
+        prev_count = int(prev_counts.get("resp", 0)) if isinstance(prev_counts, dict) else 0
+        prev_query_count = int(prev_counts.get("query", 0)) if isinstance(prev_counts, dict) else 0
+
+        send_res = self._inject_and_send(prompt_text, prev_count, prev_query_count, should_stop_cb)
+
         if not isinstance(send_res, dict) or not send_res.get("ok"):
             raise RuntimeError(f"[{self.project_id}] Không thể bơm lệnh vào Gemini Web ({send_res}).")
+
+        # Dùng lại khi cần bơm lệnh lần nữa (Gemini chưa nhận lệnh sau vài nhịp chờ)
+        port_lock = _GEMINI_PORT_INJECT_LOCKS.setdefault(self.port, threading.Lock())
+        js_inject_and_send = self._build_inject_and_send_js(prompt_text)
 
         start_ts = time.time()
         stable_ticks = 0
@@ -1223,12 +1258,13 @@ class GeminiWebSession:
 
         prev_counts = _cdp_eval_js(
             self.ws_url,
-            "({ imgs: document.querySelectorAll('model-response img').length, resps: document.querySelectorAll('model-response').length })",
+            "({ imgs: document.querySelectorAll('model-response img').length, resps: document.querySelectorAll('model-response').length, query: document.querySelectorAll('user-query, .user-query-container').length })",
             await_promise=False,
             timeout=3.0,
         )
         prev_img_count = int(prev_counts.get("imgs", 0)) if isinstance(prev_counts, dict) else 0
         prev_resp_count = int(prev_counts.get("resps", 0)) if isinstance(prev_counts, dict) else 0
+        prev_query_count = int(prev_counts.get("query", 0)) if isinstance(prev_counts, dict) else 0
 
         full_img_prompt = (
             "Generate a brand-new 16:9 widescreen image from scratch based on this specification:\n\n"
@@ -1236,34 +1272,15 @@ class GeminiWebSession:
         )
         start_t = time.time()
 
-        prompt_json = json.dumps(full_img_prompt, ensure_ascii=False)
-        js_send_img = f"""
-        (async () => {{
-            const text = {prompt_json};
-            const editor = document.querySelector('{GEMINI_COMPOSER_SELECTOR}');
-            if (!editor) return {{ ok: false }};
-            editor.focus();
-            editor.innerHTML = '<p></p>';
-            const pNode = editor.querySelector('p') || editor;
-            pNode.textContent = text;
-            document.execCommand('insertText', false, ' ');
-            editor.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertFromPaste' }}));
-            await new Promise(r => setTimeout(r, 450));
-            const sendBtn = document.querySelector(
-                'button.send-button:not([disabled]):not(.stop), button[aria-label*="Gửi" i]:not([disabled]), button[aria-label*="Send" i]:not([disabled])'
-            );
-            if (sendBtn) {{ sendBtn.click(); return {{ ok: true }}; }}
-            editor.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }}));
-            return {{ ok: true }};
-        }})()
-        """
-        port_lock = _GEMINI_PORT_INJECT_LOCKS.setdefault(self.port, threading.Lock())
-        with port_lock:
-            _wait_staggered_inject_gap(self.port, min_gap_sec=2.0)
-            _cdp_eval_js(self.ws_url, js_send_img, await_promise=True, timeout=25.0)
+        # Gửi lệnh vẽ ảnh bằng ĐÚNG cơ chế đang chạy tốt cho STEP 2..6 (bản cũ tự bơm lệnh riêng và không kiểm tra
+        # đã gửi được chưa -> lệnh vẽ không bao giờ được gửi, chờ 120s rồi báo 'chưa xuất ảnh').
+        send_res = self._inject_and_send(full_img_prompt, prev_resp_count, prev_query_count, should_stop_cb)
+        if not isinstance(send_res, dict) or not send_res.get("ok"):
+            return {"success": False, "error": f"Không gửi được lệnh vẽ Thumbnail vào Gemini ({send_res})."}
 
         text_only_done_ticks = 0
-        max_wait = min(timeout_sec, 120)
+        # Model Neon Cao suy nghĩ trước khi vẽ -> chờ đủ timeout_sec (mặc định 260s) thay vì cắt cứng 120s
+        max_wait = max(120, int(timeout_sec))
         while (time.time() - start_t) < max_wait:
             if should_stop_cb and should_stop_cb():
                 raise RuntimeError("Đã dừng tiến trình theo yêu cầu người dùng.")

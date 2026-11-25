@@ -686,13 +686,13 @@ def extract_locked_title_from_step2(step2_text: str, fallback_title: str = "") -
             # Nếu có thẻ <title>...</title> ngay bên dưới
             mt = re.search(r"<title[^>]*>([^<]+)</title>", tail, flags=re.IGNORECASE)
             if mt:
-                cand = mt.group(1).strip().strip("`*'\"「」 ")
+                cand = mt.group(1).strip().strip("`*'\"「」 ").lstrip(":：-—=").strip()
                 if len(jp_re.findall(cand)) >= 12 and not vi_re.search(cand):
                     return cand
             for raw_ln in tail.splitlines()[:10]:
                 ln = re.sub(r"<[^>]+>", "", raw_ln).strip()
                 ln = re.sub(r"^(?:LOCKED_TITLE|SELECTED\s+TITLE|TITLE\s+[ABC])[\s:：\-—]*", "", ln, flags=re.IGNORECASE).strip()
-                ln = ln.strip("`*'\" ")
+                ln = ln.strip("`*'\" ").lstrip(":：-—=").strip().strip("`*'\" ")
                 if not ln or len(ln) < 15:
                     continue
                 if len(jp_re.findall(ln)) >= 12 and not vi_re.search(ln):
@@ -706,7 +706,7 @@ def extract_locked_title_from_step2(step2_text: str, fallback_title: str = "") -
     for pat in patterns:
         m = re.search(pat, step2_text, flags=re.IGNORECASE)
         if m:
-            candidate = re.sub(r"<[^>]+>", "", m.group(1)).strip().strip("`*'\" ")
+            candidate = re.sub(r"<[^>]+>", "", m.group(1)).strip().strip("`*'\" ").lstrip(":：-—=").strip()
             if len(jp_re.findall(candidate)) >= 12 and not vi_re.search(candidate):
                 return candidate
     return fallback_title
@@ -3862,7 +3862,8 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         - Tự động xoay vòng qua tất cả các tài khoản ChatGPT đang có (`acc_1`, `acc_2`, `acc_3`),
         - Nếu tài khoản nào bị limit thì tạm dừng tài khoản đó 30 phút và chuyển sang nick khác tạo ngay.
         """
-        from .chatgpt_web_client import ensure_all_saved_chatgpt_accounts_open, CHATGPT_ACCOUNTS
+        # (Trước đây import nhầm tên CHATGPT_ACCOUNTS không tồn tại -> bước đổi nick tạo lại Thumbnail luôn bị lỗi ImportError)
+        from .chatgpt_web_client import ensure_all_saved_chatgpt_accounts_open, ACCOUNTS_CONFIG as CHATGPT_ACCOUNTS
 
         proj_dir = self.projects_dir / ma_id
         proj_dir.mkdir(parents=True, exist_ok=True)
@@ -5118,7 +5119,9 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 pass
             # Chỉ khóa nick khi nick thật sự không dùng được. Limit thật đã được khóa 30 phút ngay lúc phát hiện;
             # lỗi tạm thời (Part ngắn, gửi trượt...) không khóa nick để tránh cả 3 nick cùng bị treo 30 phút.
-            if not self.should_stop and not has_sc_now and failed_acc and err_kind == "account":
+            # Nick Gemini (acc_1..3, cổng 9225–9227) trùng TÊN với nick ChatGPT nhưng là tài khoản khác:
+            # lỗi trên Gemini tuyệt đối không được cho nick ChatGPT cùng tên nghỉ.
+            if not self.should_stop and not has_sc_now and failed_acc and err_kind == "account" and not use_gemini_for_script:
                 mark_account_rate_limited(
                     failed_acc,
                     reason=f"[{ma_id}] {str(e)[:120]}",
@@ -5871,6 +5874,8 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         _release_active(mid)
                         continue
                     pref_item = _opts(mid).get("preferred_acc_id") or preferred_acc_id
+                    if provider_norm in ("gemini_4_pro", "gemini_3_8_high", "hybrid_gemini_chatgpt") and pref_item not in ("acc_1", "acc_2", "acc_3"):
+                        pref_item = None
                     assigned_acc = (
                         (pref_item or active_accs[(counters["submitted"] + idx) % len(active_accs)])
                         if provider_norm in ("gemini_4_pro", "hybrid_gemini_chatgpt")
