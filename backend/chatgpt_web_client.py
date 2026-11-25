@@ -8,7 +8,7 @@ import ctypes
 import threading
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Tuple
 
 import requests
 from websockets.sync.client import connect as ws_connect
@@ -106,38 +106,34 @@ ACCOUNTS_CONFIG: Dict[str, Dict[str, Any]] = {
         "port": 9224,
         "profile_dir": _resolve_persistent_profile_dir("acc_3", "BROWSER_PROFILE_3"),
     },
+    # Acc #4 / #5 dùng cổng 9228 / 9229 (9225–9227 đã dành cho Gemini)
+    "acc_4": {
+        "acc_id": "acc_4",
+        "label": "Acc #4",
+        "port": 9228,
+        "profile_dir": _resolve_persistent_profile_dir("acc_4", "BROWSER_PROFILE_4"),
+    },
+    "acc_5": {
+        "acc_id": "acc_5",
+        "label": "Acc #5",
+        "port": 9229,
+        "profile_dir": _resolve_persistent_profile_dir("acc_5", "BROWSER_PROFILE_5"),
+    },
 }
 
+# Danh sách toàn bộ tài khoản ChatGPT (dùng chung cho mọi vòng lặp thay vì ghi cứng acc_1..acc_3)
+CHATGPT_ACC_IDS: Tuple[str, ...] = tuple(ACCOUNTS_CONFIG.keys())
+
 _STATE_LOCK = threading.Lock()
-_CHROME_HIDDEN_STATE: Dict[str, bool] = {
-    "acc_1": False,
-    "acc_2": False,
-    "acc_3": False,
-}
-_ACTIVE_JOBS_BY_ACC: Dict[str, Dict[str, str]] = {
-    "acc_1": {},  # tab_id -> project_id
-    "acc_2": {},
-    "acc_3": {},
-}
-_PENDING_PROJECTS_BY_ACC: Dict[str, set] = {
-    "acc_1": set(),
-    "acc_2": set(),
-    "acc_3": set(),
-}
+_CHROME_HIDDEN_STATE: Dict[str, bool] = {aid: False for aid in CHATGPT_ACC_IDS}
+_ACTIVE_JOBS_BY_ACC: Dict[str, Dict[str, str]] = {aid: {} for aid in CHATGPT_ACC_IDS}  # tab_id -> project_id
+_PENDING_PROJECTS_BY_ACC: Dict[str, set] = {aid: set() for aid in CHATGPT_ACC_IDS}
 ACCOUNT_LIMIT_COOLDOWN_SEC = 1800  # Tạm dừng 30 phút (1800 giây) khi tài khoản bị Limit THẬT
 # Lỗi tạm thời (quá thời gian chờ, nghẽn mạng, gửi lệnh trượt...) chỉ nghỉ ngắn 5 phút,
 # tránh trường hợp vài lỗi lặt vặt khóa cả 3 nick 30 phút khiến mọi luồng đứng chờ.
 ACCOUNT_SOFT_COOLDOWN_SEC = 300
-_ACCOUNT_COOLDOWN_UNTIL: Dict[str, float] = {
-    "acc_1": 0.0,
-    "acc_2": 0.0,
-    "acc_3": 0.0,
-}
-_ACCOUNT_COOLDOWN_REASON: Dict[str, str] = {
-    "acc_1": "",
-    "acc_2": "",
-    "acc_3": "",
-}
+_ACCOUNT_COOLDOWN_UNTIL: Dict[str, float] = {aid: 0.0 for aid in CHATGPT_ACC_IDS}
+_ACCOUNT_COOLDOWN_REASON: Dict[str, str] = {aid: "" for aid in CHATGPT_ACC_IDS}
 
 
 class AccountRateLimitError(RuntimeError):
@@ -298,16 +294,8 @@ _LAST_VERIFIED_LOGIN_BY_PORT: Dict[int, Dict[str, Any]] = {}
 _LAST_BLANK_NAV_TS_BY_PORT: Dict[int, float] = {}
 _KNOWN_EMAILS: Dict[str, str] = {}
 _WS_LOCKS: Dict[str, threading.Lock] = {}
-_ACC_TAB_LOCKS: Dict[str, threading.RLock] = {
-    "acc_1": threading.RLock(),
-    "acc_2": threading.RLock(),
-    "acc_3": threading.RLock(),
-}
-_PORT_INJECT_LOCKS: Dict[int, threading.Lock] = {
-    9222: threading.Lock(),
-    9223: threading.Lock(),
-    9224: threading.Lock(),
-}
+_ACC_TAB_LOCKS: Dict[str, threading.RLock] = {aid: threading.RLock() for aid in CHATGPT_ACC_IDS}
+_PORT_INJECT_LOCKS: Dict[int, threading.Lock] = {cfg["port"]: threading.Lock() for cfg in ACCOUNTS_CONFIG.values()}
 _ROUND_ROBIN_IDX = 0
 
 
@@ -666,7 +654,7 @@ def ensure_chrome_debug_browser_open(
     fast_if_already_open: bool = False,
 ) -> Dict[str, Any]:
     """
-    Đảm bảo trình duyệt Chrome của tài khoản (acc_1 | acc_2 | acc_3) đã mở với cổng CDP.
+    Đảm bảo trình duyệt Chrome của tài khoản (acc_1 … acc_5) đã mở với cổng CDP.
     Nếu chưa mở sẽ khởi chạy Chrome với Profile riêng biệt.
     Chuẩn API #2 trong Master Blueprint V6.0.
     """
@@ -1084,10 +1072,10 @@ def _profile_has_saved_chatgpt_login(profile_dir: str) -> bool:
 
 def ensure_all_saved_chatgpt_accounts_open(run_hidden: bool = False) -> List[str]:
     """
-    Tự động mở trình duyệt Chrome cho toàn bộ các tài khoản (Acc #1, Acc #2, Acc #3)
+    Tự động mở trình duyệt Chrome cho toàn bộ các tài khoản (Acc #1 → Acc #5)
     đã có phiên đăng nhập ChatGPT lưu trên ổ cứng, sau đó xác thực và trả về danh sách acc_id đã đăng nhập.
     """
-    for aid in ["acc_1", "acc_2", "acc_3"]:
+    for aid in list(CHATGPT_ACC_IDS):
         cfg = ACCOUNTS_CONFIG[aid]
         port = cfg["port"]
         prof = cfg["profile_dir"]
@@ -1113,13 +1101,13 @@ def ensure_all_saved_chatgpt_accounts_open(run_hidden: bool = False) -> List[str
                 )
 
     st_all = check_all_web_accounts_status(force_refresh=True).get("accounts", {})
-    logged = [aid for aid in ["acc_1", "acc_2", "acc_3"] if st_all.get(aid, {}).get("logged_in")]
+    logged = [aid for aid in list(CHATGPT_ACC_IDS) if st_all.get(aid, {}).get("logged_in")]
     return logged
 
 
 def check_all_web_accounts_status(force_refresh: bool = False) -> Dict[str, Any]:
     """
-    Kiểm tra trạng thái cả 3 tài khoản (Acc #1, Acc #2, Acc #3).
+    Kiểm tra trạng thái toàn bộ tài khoản (Acc #1 → Acc #5).
     Chuẩn API #1 trong Master Blueprint V6.0.
     """
     now = time.time()
@@ -1129,7 +1117,7 @@ def check_all_web_accounts_status(force_refresh: bool = False) -> Dict[str, Any]
     accounts = {}
     any_hidden = False
     any_open = False
-    for aid in ["acc_1", "acc_2", "acc_3"]:
+    for aid in list(CHATGPT_ACC_IDS):
         st = _inspect_account_login_state(aid)
         accounts[aid] = st
         if st["browser_open"]:
@@ -1261,9 +1249,9 @@ def select_best_available_account(
             return preferred_acc_id
 
     status_all = check_all_web_accounts_status(force_refresh=False).get("accounts", {})
-    logged_in_accs = [aid for aid in ["acc_1", "acc_2", "acc_3"] if status_all.get(aid, {}).get("logged_in")]
+    logged_in_accs = [aid for aid in list(CHATGPT_ACC_IDS) if status_all.get(aid, {}).get("logged_in")]
     if len(logged_in_accs) < 2 or excl:
-        # Tự động kiểm tra và bật đủ các tài khoản ChatGPT đã lưu trên ổ cứng (Acc #1, Acc #2, Acc #3)
+        # Tự động kiểm tra và bật đủ các tài khoản ChatGPT đã lưu trên ổ cứng (Acc #1 → Acc #5)
         logged_in_accs = ensure_all_saved_chatgpt_accounts_open(run_hidden=False)
 
     # Ưu tiên 1: Các tài khoản đã đăng nhập, KHÔNG nằm trong danh sách loại trừ (excl) và KHÔNG bị tạm dừng 30p (cooldown)
@@ -1302,11 +1290,11 @@ def select_best_available_account(
 
     # Nếu chưa tài khoản nào xác nhận đăng nhập, ưu tiên tài khoản đang mở trình duyệt (ngoài excl và không cooldown)
     open_accs = [
-        aid for aid in ["acc_1", "acc_2", "acc_3"]
+        aid for aid in list(CHATGPT_ACC_IDS)
         if status_all.get(aid, {}).get("browser_open") and aid not in excl and not is_account_in_cooldown(aid)[0]
     ]
     if not open_accs:
-        open_accs = [aid for aid in ["acc_1", "acc_2", "acc_3"] if aid not in excl and not is_account_in_cooldown(aid)[0]]
+        open_accs = [aid for aid in list(CHATGPT_ACC_IDS) if aid not in excl and not is_account_in_cooldown(aid)[0]]
     fallback = open_accs[0] if open_accs else ("acc_2" if "acc_1" in excl else "acc_1")
     ensure_chrome_debug_browser_open(
         open_chatgpt_home=True,

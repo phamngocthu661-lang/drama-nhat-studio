@@ -195,6 +195,7 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
     class RenderOnlyRequest(BaseModel):
         ma_ids: Optional[list[str]] = None
         only_unrendered: bool = False
+        force_rerender: bool = False
         video_settings: Optional[Dict[str, Any]] = None
 
     # ==========================================================================
@@ -349,7 +350,8 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
 
         import socket
         cdp_ports = []
-        for idx, port in enumerate((9222, 9223, 9224), start=1):
+        from .chatgpt_web_client import ACCOUNTS_CONFIG as _CG_ACCS
+        for idx, port in enumerate([c["port"] for c in _CG_ACCS.values()], start=1):
             alive = False
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -421,7 +423,7 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
             elif "cdp" in low or "chrome" in low:
                 tel = api_get_telemetry()
                 ports_str = ", ".join(f"{p['id']}:{p['port']}={'ONLINE' if p['active'] else 'OFFLINE'}" for p in tel["cdp_ports"])
-                out_text = f"Chrome CDP Nodes ({tel['cdp_active_count']}/3): {ports_str}"
+                out_text = f"Chrome CDP Nodes ({tel['cdp_active_count']}/{len(tel.get('cdp_ports') or [])}): {ports_str}"
             elif low in ("diag", "diagnostics", "check", "status"):
                 rep = run_system_diagnostics(base_dir, pipeline=pipeline, adas_engine=adas_engine)
                 out_text = f"Chẩn đoán hệ thống hoàn tất: {rep.get('summary_text', 'OK')}"
@@ -429,7 +431,7 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
                 tel = api_get_telemetry()
                 out_text = (
                     f"[TELEMETRY] GPU: {tel['gpu_name']} ({tel['gpu_load_pct']}% | {tel['gpu_temp_c']}°C | VRAM {tel['vram_used_gb']}/{tel['vram_total_gb']}GB) | "
-                    f"RAM: {tel['ram_used_gb']}/{tel['ram_total_gb']}GB ({tel['ram_pct']}%) | CDP: {tel['cdp_active_count']}/3 Active. "
+                    f"RAM: {tel['ram_used_gb']}/{tel['ram_total_gb']}GB ({tel['ram_pct']}%) | CDP: {tel['cdp_active_count']}/{len(tel.get('cdp_ports') or [])} Active. "
                     f"(Hỗ trợ lệnh: nvidia-smi, ffmpeg -hwaccels, test-directml, check-cdp, check-stocks, status)"
                 )
         except Exception as e:
@@ -625,6 +627,7 @@ def create_app(root_dir: Optional[Path] = None) -> FastAPI:
             ma_ids=req.ma_ids,
             video_settings=req.video_settings,
             only_unrendered=req.only_unrendered,
+            force_rerender=req.force_rerender,
         )
         if not res.get("started") and res.get("queued_count", 0) == 0:
             raise HTTPException(status_code=400, detail=res.get("message", "Không có kịch bản nào sẵn sàng Render MP4!"))

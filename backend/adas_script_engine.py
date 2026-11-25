@@ -24,6 +24,15 @@ from .chatgpt_web_client import (
     is_real_rate_limit_error,
     ACCOUNT_LIMIT_COOLDOWN_SEC,
     ACCOUNT_SOFT_COOLDOWN_SEC,
+    CHATGPT_ACC_IDS,
+)
+from .project_cleanup import (
+    read_video_done_marker,
+    write_video_done_marker,
+    has_legacy_video_done_evidence,
+    clear_video_done_marker,
+    cleanup_after_script,
+    cleanup_after_render,
 )
 
 
@@ -1840,13 +1849,24 @@ class ADASScriptEngine:
                         except Exception:
                             pass
 
-        mp4_file = self.resolve_project_mp4_path(ma_id)
-        if mp4_file is None or not mp4_file.exists():
-            self._mp4_valid_cache.pop(ma_id, None)
-            return False, None, "rendering_in_progress" if is_actively_rendering else "missing"
+        # DẤU "ĐÃ SẢN XUẤT XONG" (VIDEO_DONE.json trong Folder Project): MP4 đã từng render xong & qua kiểm định.
+        # Dù MP4 đã bị chuyển đi / xóa, dự án vẫn được tính là ĐÃ XONG và không bao giờ bị render lại.
+        marker_dir = self.projects_dir / ma_id if (self.projects_dir / ma_id).exists() else p_dir
+        done_marker = read_video_done_marker(marker_dir)
+        if done_marker is None and not is_actively_rendering and has_legacy_video_done_evidence(marker_dir, ma_id):
+            write_video_done_marker(marker_dir, ma_id, legacy_detected=True)
+            done_marker = read_video_done_marker(marker_dir)
 
         if is_actively_rendering:
             return False, None, "rendering_in_progress"
+
+        mp4_file = self.resolve_project_mp4_path(ma_id)
+        if mp4_file is None or not mp4_file.exists():
+            if done_marker is not None:
+                self._mp4_valid_cache[ma_id] = (0, 0, True, "done_marker")
+                return True, None, "done_marker"
+            self._mp4_valid_cache.pop(ma_id, None)
+            return False, None, "missing"
 
         try:
             st = mp4_file.stat()
@@ -1873,9 +1893,16 @@ class ADASScriptEngine:
 
         if val.get("valid"):
             self._mp4_valid_cache[ma_id] = (mtime_ns, st_size, True, "ok")
+            if done_marker is None and marker_dir.exists():
+                # Video render từ trước khi có VIDEO_DONE.json -> ghi dấu ngay để sau này chuyển/xóa MP4 vẫn nhận biết được
+                write_video_done_marker(marker_dir, ma_id, mp4_path=mp4_file, backfilled=True)
             return True, mp4_file, "ok"
 
         reason = str(val.get("reason") or "Video MP4 bị lỗi hoặc ngắt giữa chừng")
+        if done_marker is not None:
+            # Đã từng xong: file MP4 hiện tại có thể đang được chép/di chuyển -> KHÔNG xóa, KHÔNG render lại
+            self._mp4_valid_cache[ma_id] = (mtime_ns, st_size, True, "done_marker")
+            return True, None, "done_marker"
         self._mp4_valid_cache.pop(ma_id, None)
         log_warn(
             "RENDER",
@@ -1888,6 +1915,65 @@ class ADASScriptEngine:
             except Exception:
                 pass
         return False, None, reason
+
+    def _is_project_busy(self, ma_id: str) -> bool:
+        """Dự án đang được viết (hàng đợi Chạy Tiếp) hoặc đang/chờ Voice & Render -> không được dọn file."""
+        self._ensure_run_queue_attrs()
+        with self.lock:
+            if ma_id in self._run_active_ids or ma_id in self._run_queued_ids:
+                return True
+        vp = self.video_pipeline
+        if vp is not None and getattr(vp, "is_running", False):
+            if ma_id in set(getattr(vp, "active_projects", set())):
+                return True
+            if any(isinstance(j, dict) and j.get("name") == ma_id for j in list(getattr(vp, "pending_jobs", []))):
+                return True
+        return False
+
+    def cleanup_project_files(
+        self,
+        ma_id: str,
+        has_script: Optional[bool] = None,
+        has_thumb_and_seo: Optional[bool] = None,
+    ) -> int:
+        """
+        Dọn file thừa để tiết kiệm bộ nhớ (chỉ khi dự án KHÔNG đang chạy):
+        - Đã sản xuất xong Video (VIDEO_DONE.json): xóa Voice WAV, file render dở, bản sao trùng giữa 2 thư mục (1 lần).
+        - Đã viết xong Kịch bản + SEO + Thumbnail: xóa part_a/b/c.txt (đã gộp vào script_clean.txt) và bản sao _KICH_BAN.txt.
+        Trả về số byte đã giải phóng.
+        """
+        p_main = self.projects_dir / ma_id
+        if not p_main.exists() or self._is_project_busy(ma_id):
+            return 0
+        freed = 0
+        removed: List[str] = []
+        try:
+            marker = read_video_done_marker(p_main)
+            if marker is not None:
+                if marker.get("cleaned_at"):
+                    return 0
+                f_dir = getattr(self, "final_video_dir", None)
+                final_p = (Path(f_dir) / ma_id) if f_dir else None
+                freed, removed = cleanup_after_render(p_main, ma_id, SCRIPT_MIN_TOTAL_PURE, final_proj_dir=final_p)
+                write_video_done_marker(p_main, ma_id, cleaned_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+            else:
+                if has_script is None:
+                    has_script = self.has_valid_script_on_disk(ma_id)[0]
+                if has_thumb_and_seo is None:
+                    th_ok, seo_ok, _ = self.has_thumbnail_and_seo_on_disk(ma_id)
+                    has_thumb_and_seo = bool(th_ok and seo_ok)
+                if has_script and has_thumb_and_seo:
+                    freed, removed = cleanup_after_script(p_main, ma_id, SCRIPT_MIN_TOTAL_PURE)
+        except Exception as e_cl:
+            log_warn("SCRIPT", f"[{ma_id}] Lưu ý khi dọn file thừa: {e_cl}", project_id=ma_id)
+            return 0
+        if removed:
+            log_info(
+                "SCRIPT",
+                f"🧹 [{ma_id}] Đã dọn {len(removed)} file/thư mục thừa (Giải phóng {freed / 1024 / 1024:,.1f} MB).",
+                project_id=ma_id,
+            )
+        return freed
 
     def _reconstruct_idea_from_project_dir(self, p_dir: Path) -> Optional[Dict[str, Any]]:
         """
@@ -2233,9 +2319,14 @@ class ADASScriptEngine:
 
                 curr_st = str(it.get("status") or "")
                 if has_mp4:
-                    if curr_st != "COMPLETED_VIDEO":
+                    done_step = (
+                        f"✅ Đã xuất Video MP4 ({effective_chars:,} chữ)"
+                        if mp4_file is not None
+                        else "✅ Đã sản xuất xong Video (MP4 đã được chuyển/xóa khỏi máy) — Không render lại"
+                    )
+                    if curr_st != "COMPLETED_VIDEO" or (mp4_file is None and it.get("current_step") != done_step):
                         it["status"] = "COMPLETED_VIDEO"
-                        it["current_step"] = f"✅ Đã xuất Video MP4 ({effective_chars:,} chữ)"
+                        it["current_step"] = done_step
                         changed = True
                         item_changed = True
                 elif has_sc and not has_mp4:
@@ -2318,6 +2409,10 @@ class ADASScriptEngine:
                             info_f.write_text(json.dumps(it, ensure_ascii=False, indent=2), encoding="utf-8")
                         except Exception:
                             pass
+
+                # Dọn file thừa cho dự án đã xong (bỏ qua nếu dự án đang viết / đang render)
+                if (has_mp4 or (has_sc and has_thumb and has_seo)) and not is_vp_busy_for_mid:
+                    self.cleanup_project_files(mid, has_script=has_sc, has_thumb_and_seo=bool(has_thumb and has_seo))
 
             if changed:
                 self.save_ideas_list(ideas)
@@ -4093,13 +4188,17 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         has_valid_mp4, mp4_file, _ = self.has_valid_video_mp4_on_disk(
             ma_id, sc_chars=len(script_text), auto_delete_corrupted=True
         )
-        if has_valid_mp4 and mp4_file is not None:
+        if has_valid_mp4:
             self._update_idea_record(
                 ma_id,
                 has_script=True,
                 has_video_mp4=True,
                 status="COMPLETED_VIDEO",
-                current_step=f"✅ Đã có sẵn Video MP4 ({mp4_file.name})",
+                current_step=(
+                    f"✅ Đã có sẵn Video MP4 ({mp4_file.name})"
+                    if mp4_file is not None
+                    else "✅ Đã sản xuất xong Video (MP4 đã được chuyển đi) — Không render lại"
+                ),
             )
             return True
 
@@ -4201,6 +4300,8 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                         old_fp.unlink()
                     except Exception:
                         pass
+            # Viết lại kịch bản => video cũ không còn khớp -> gỡ dấu "đã sản xuất xong" để render lại video mới
+            clear_video_done_marker(proj_dir, ma_id)
             for old_ren in (
                 renders_dir / f"{ma_id}_KICH_BAN.txt",
                 renders_dir / f"{ma_id}_SEO.txt",
@@ -5069,10 +5170,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
         ma_ids: Optional[List[str]] = None,
         video_settings: Optional[Dict[str, Any]] = None,
         only_unrendered: bool = False,
+        force_rerender: bool = False,
     ) -> Dict[str, Any]:
         """
         Đẩy trực tiếp 1 hoặc nhiều dự án ĐÃ CÓ KỊCH BẢN sang chạy Voice & Render Video MP4
         mà TUYỆT ĐỐI KHÔNG MỞ CHROME và KHÔNG VIẾT LẠI KỊCH BẢN.
+        - Dự án ĐÃ SẢN XUẤT XONG (có MP4 hợp lệ hoặc dấu VIDEO_DONE.json, kể cả khi MP4 đã bị chuyển/xóa)
+          luôn được bỏ qua, trừ khi người dùng chủ động xác nhận Render Lại (`force_rerender=True`).
         """
         self._sync_projects_disk_state()
         ideas = self.load_saved_ideas()
@@ -5098,9 +5202,17 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             has_valid_mp4, _, _ = self.has_valid_video_mp4_on_disk(
                 mid, sc_chars=sc_chars, auto_delete_corrupted=True
             )
-            if only_unrendered and has_valid_mp4:
+            if has_valid_mp4 and not force_rerender:
                 skipped_already_mp4.append(mid)
+                if mid in ideas_map and ideas_map[mid].get("status") != "COMPLETED_VIDEO":
+                    ideas_map[mid]["status"] = "COMPLETED_VIDEO"
+                    ideas_map[mid]["has_video_mp4"] = True
                 continue
+            if force_rerender:
+                # Người dùng chủ động Render Lại -> gỡ dấu đã xong để kết quả mới được công nhận lại từ đầu
+                clear_video_done_marker(proj_dir, mid)
+                if hasattr(self, "_mp4_valid_cache"):
+                    self._mp4_valid_cache.pop(mid, None)
 
             idea = ideas_map.get(mid) or {"ma_id": mid}
             step2_file = proj_dir / "step2_title_thumbnail.txt"
@@ -5118,11 +5230,8 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 master_seo_file.write_text(seo_text, encoding="utf-8")
 
             seo_ren = renders_dir / f"{mid}_SEO.txt"
-            kb_ren = renders_dir / f"{mid}_KICH_BAN.txt"
             if not seo_ren.exists():
                 seo_ren.write_text(seo_text, encoding="utf-8")
-            if not kb_ren.exists():
-                kb_ren.write_text(sc_text, encoding="utf-8")
 
             if mid in ideas_map:
                 ideas_map[mid]["has_script"] = True
@@ -5142,7 +5251,15 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                 self.save_ideas_list(ideas)
 
         if not jobs_to_push:
-            msg = "Không có dự án nào đủ điều kiện Render MP4 (Cần viết xong kịch bản trước)."
+            if skipped_already_mp4 and not skipped_no_script:
+                msg = (
+                    f"Các dự án đã sản xuất xong Video nên không render lại: {', '.join(skipped_already_mp4)}. "
+                    f"(Muốn làm lại thì bấm 🎬 Render MP4 trên từng mã và xác nhận Render Lại.)"
+                )
+                with self.ideas_io_lock:
+                    self.save_ideas_list(ideas)
+            else:
+                msg = "Không có dự án nào đủ điều kiện Render MP4 (Cần viết xong kịch bản trước)."
             log_warn("VIDEO", msg)
             return {
                 "started": False,
@@ -5418,7 +5535,8 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
             def _acquire_perf_slot():
                 while not self.should_stop:
                     pm = _get_live_perf_mode()
-                    limit_slots = 3 if pm == "work_70" else 9
+                    # 100%: tối đa 3 luồng/nick trên số nick đang đăng nhập (5 nick = 15 luồng); 70%: tối đa 3 luồng
+                    limit_slots = 3 if pm == "work_70" else max(9, int(acct_ctx.get("max_workers") or 9))
                     with active_slot_lock:
                         if active_slot_state["count"] < limit_slots:
                             active_slot_state["count"] += 1
@@ -5502,6 +5620,13 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                                         preferred_acc_id=None,
                                         exclude_accs=set(failed_accs_for_mid),
                                     )
+                                # Viết xong -> dọn part_a/b/c.txt & bản sao kịch bản (đã gộp vào script_clean.txt)
+                                try:
+                                    th_now, seo_now, _ = self.has_thumbnail_and_seo_on_disk(mid_item)
+                                    if th_now and seo_now:
+                                        cleanup_after_script(self.projects_dir / mid_item, mid_item, SCRIPT_MIN_TOTAL_PURE)
+                                except Exception:
+                                    pass
                                 if _item_auto(mid_item) and not (isinstance(res_single, dict) and res_single.get("video_triggered")):
                                     self.start_render_video_for_ideas_async(
                                         ma_ids=[mid_item],
@@ -5569,7 +5694,11 @@ YÊU CẦU VIẾT TIẾP NỐI PART {part_letter}:
                                 if not free_accs_now:
                                     # Mở rộng sang toàn bộ tài khoản chưa bị cooldown
                                     free_accs_now = [
-                                        aid for aid in ("acc_1", "acc_2", "acc_3")
+                                        aid for aid in (
+                                            ("acc_1", "acc_2", "acc_3")
+                                            if provider_norm in ("gemini_4_pro", "gemini_3_8_high", "hybrid_gemini_chatgpt")
+                                            else CHATGPT_ACC_IDS
+                                        )
                                         if not is_account_in_cooldown(aid)[0] and aid not in failed_accs_for_mid
                                     ]
                                 if free_accs_now:

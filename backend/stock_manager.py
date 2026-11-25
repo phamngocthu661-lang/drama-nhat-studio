@@ -213,7 +213,7 @@ class StockManager:
         Giúp yt-dlp vượt qua hoàn toàn lỗi 'Sign in to confirm you’re not a bot' trên Windows
         mà không bị lỗi khóa file SQLite hoặc mã hóa DPAPI v20 của Chrome.
         """
-        ports = [9222, 9223, 9224]
+        ports = [9222, 9223, 9224, 9228, 9229]
         try:
             from agent_reach.runtime.browser import configured_port
             ar_port = configured_port()

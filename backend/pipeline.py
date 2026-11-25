@@ -25,6 +25,7 @@ from .voicevox_service import (
 )
 from .renderer import render_drama_nhat_video
 from .logger_service import log_info, log_warn, log_error
+from .project_cleanup import write_video_done_marker, cleanup_after_render
 
 if hasattr(sys.stdout, "reconfigure"):
     try:
@@ -1578,6 +1579,16 @@ class ProductionPipeline:
                                 pass
                         raise RuntimeError(f"Video MP4 chưa hoàn chỉnh ({final_check.get('reason')}) — Không thể công nhận thành công!")
 
+                    # Ghi DẤU VĨNH VIỄN "ĐÃ SẢN XUẤT XONG" vào Folder Project: dù sau này MP4 bị chuyển đi hoặc xóa,
+                    # ứng dụng vẫn nhận biết dự án đã xong và KHÔNG render lại.
+                    write_video_done_marker(
+                        proj_dir,
+                        proj_name,
+                        mp4_path=final_video,
+                        duration_sec=float(final_check.get("duration") or 0.0),
+                        voice_preset=preset_id,
+                    )
+
                     # Dọn sạch thư mục SSD Staging của dự án sau khi MP4 đã hoàn tất 100% và chuyển sang ổ đích
                     if use_ssd and ssd_proj_dir.exists() and ssd_proj_dir.resolve() != proj_dir.resolve():
                         try:
@@ -1643,25 +1654,19 @@ class ProductionPipeline:
                         else:
                             full_seo_txt = seo_tech_block
 
+                        # Kịch bản gốc đã nằm ở script_clean.txt (Folder Project) -> không tạo thêm bản sao _KICH_BAN.txt
                         for r_target in {renders_dir, final_renders_dir}:
                             r_target.mkdir(parents=True, exist_ok=True)
-                            (r_target / f"{proj_name}_KICH_BAN.txt").write_text(script_text, encoding="utf-8")
                             (r_target / f"{proj_name}_SEO.txt").write_text(full_seo_txt, encoding="utf-8")
 
-                        # Nếu Nơi Chứa Video Cuối tách biệt với Folder Project: sao chép Thumbnail + idea_info.json + video_location.json để load được 100% ở cả 2 nơi
+                        # Nếu Nơi Chứa Video Cuối tách biệt với Folder Project: chỉ sao chép bộ file để đăng YouTube
+                        # (MP4 + SEO + Thumbnail). Kịch bản & metadata chỉ giữ 1 bản gốc ở Folder Project.
                         if final_proj_dir.resolve() != proj_dir.resolve():
                             for th_f in renders_dir.glob(f"{proj_name}_THUMBNAIL_*.png"):
                                 try:
                                     shutil.copy2(th_f, final_renders_dir / th_f.name)
                                 except Exception:
                                     pass
-                            for meta_fn in ("idea_info.json", "script_clean.txt", "00_TIEU_DE_VA_SEO_YOUTUBE.txt"):
-                                src_mf = proj_dir / meta_fn
-                                if src_mf.exists():
-                                    try:
-                                        shutil.copy2(src_mf, final_proj_dir / meta_fn)
-                                    except Exception:
-                                        pass
                             loc_payload = {
                                 "ma_id": proj_name,
                                 "video_mp4_path": str(final_video),
@@ -1711,6 +1716,24 @@ class ProductionPipeline:
                         extra={"video_path": str(final_video)},
                     )
                     _update_overall_progress(f"🎉 Hoàn tất xuất MP4 cho {proj_name} ({job_result['duration_formatted']})!", "completed_one")
+
+                    # DỌN DẸP SAU RENDER: xóa Voice WAV, file render dở và các bản sao trùng giữa 2 thư mục
+                    try:
+                        freed_b, removed_l = cleanup_after_render(
+                            proj_dir,
+                            proj_name,
+                            min_pure_chars=40001,
+                            final_proj_dir=final_proj_dir,
+                        )
+                        write_video_done_marker(proj_dir, proj_name, cleaned_at=time.strftime("%Y-%m-%d %H:%M:%S"))
+                        if removed_l:
+                            log_info(
+                                f"🧹 Đã dọn {len(removed_l)} file/thư mục thừa sau khi render '{proj_name}' (Giải phóng {freed_b / 1024 / 1024:,.0f} MB).",
+                                category="RENDER",
+                                project_id=proj_name,
+                            )
+                    except Exception as clean_err:
+                        log_warn(f"Lưu ý khi dọn dẹp file sau render: {clean_err}", category="RENDER", project_id=proj_name)
                     log_info(
                         f"🎉 XUẤT VIDEO THÀNH CÔNG 100%: {final_video} (Giọng: {preset_id} {speed_val}x • Thời lượng: {job_result['duration_formatted']})",
                         category="RENDER",

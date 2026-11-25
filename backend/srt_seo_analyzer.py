@@ -778,7 +778,7 @@ def analyze_project_srt_with_chatgpt_sync(
             raise InterruptedError("Đã dừng tiến trình theo yêu cầu.")
 
         status_map = check_all_web_accounts_status(force_refresh=False).get("accounts", {})
-        logged_accs = [aid for aid in ("acc_1", "acc_2", "acc_3") if status_map.get(aid, {}).get("logged_in")]
+        logged_accs = [aid for aid in tuple(ACCOUNTS_CONFIG.keys()) if status_map.get(aid, {}).get("logged_in")]
         saved_accs = [
             aid
             for aid, cfg in ACCOUNTS_CONFIG.items()
@@ -807,7 +807,7 @@ def analyze_project_srt_with_chatgpt_sync(
                     use_pref = preferred_acc_id if (acc_try == 0 and preferred_acc_id and preferred_acc_id not in excl_accs) else None
                     # Kiểm tra nếu tất cả tài khoản đều đang bị cooldown 30p -> không treo vô ích khi allow_fallback=True
                     avail_non_cd = [
-                        aid for aid in ("acc_1", "acc_2", "acc_3")
+                        aid for aid in tuple(ACCOUNTS_CONFIG.keys())
                         if aid not in excl_accs and not is_account_in_cooldown(aid)[0]
                     ]
                     if not avail_non_cd and allow_fallback:

@@ -167,7 +167,7 @@
     <!-- Row 2: Chrome CDP AI Accounts Toolbar -->
     <div class="chatgpt-control-bar h-10 w-full px-4 flex items-center justify-between bg-surface-container-low/95 text-xs overflow-x-auto border-b border-surface-container">
       <div class="flex items-center gap-4">
-        <!-- ChatGPT CDP Selector (Port 9222 - 9224) -->
+        <!-- ChatGPT CDP Selector (Port 9222 - 9224, 9228 - 9229) -->
         <div class="flex items-center gap-1.5">
           <span class="font-label-sm text-[11px] text-on-surface-variant uppercase tracking-wider font-semibold">ChatGPT CDP:</span>
           <button class="chatgpt-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-high border border-primary-container/40 text-primary-container font-label-sm text-[11px] font-bold" data-acc="acc_1" id="btn-chatgpt-acc-1" type="button">
@@ -181,6 +181,14 @@
           <button class="chatgpt-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[11px]" data-acc="acc_3" id="btn-chatgpt-acc-3" type="button">
             <span class="acc-dot w-2 h-2 rounded-full bg-outline-variant"></span>
             <span class="acc-text">ACC 3 (9224)</span>
+          </button>
+          <button class="chatgpt-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[11px]" data-acc="acc_4" id="btn-chatgpt-acc-4" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-outline-variant"></span>
+            <span class="acc-text">ACC 4 (9228)</span>
+          </button>
+          <button class="chatgpt-acc-btn flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant font-label-sm text-[11px]" data-acc="acc_5" id="btn-chatgpt-acc-5" type="button">
+            <span class="acc-dot w-2 h-2 rounded-full bg-outline-variant"></span>
+            <span class="acc-text">ACC 5 (9229)</span>
           </button>
         </div>
         <div class="w-px h-4 bg-surface-container-highest"></div>
@@ -328,7 +336,7 @@
               <div class="flex flex-col gap-1">
                 <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-ai-provider-select">Công Nghệ AI Provider</label>
                 <select class="h-8 px-2 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-ai-provider-select">
-                  <option value="chatgpt_web" selected>ChatGPT Web CDP (Deep Research • Port 9222–9224)</option>
+                  <option value="chatgpt_web" selected>ChatGPT Web CDP (Deep Research • 5 Nick • Port 9222–9224, 9228–9229)</option>
                   <option value="gemini_4_pro">Gemini 3.8 High (Flash Cao • Port 9225–9227)</option>
                   <option value="hybrid_gemini_chatgpt">Hybrid: Gemini 3.8 High KB + ChatGPT Thumb</option>
                 </select>
@@ -344,10 +352,12 @@
               <div class="flex flex-col gap-1">
                 <label class="font-label-sm text-[10px] text-on-surface-variant uppercase font-semibold" for="adas-acc-select">Luồng Trình Duyệt / Nick</label>
                 <select class="h-8 px-2 bg-surface-container-lowest text-primary font-label-md text-xs rounded border border-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary-container" id="adas-acc-select">
-                  <option value="" selected>Xoay vòng cả 3 Nick đa luồng</option>
+                  <option value="" selected>Xoay vòng cả 5 Nick đa luồng</option>
                   <option value="acc_1">Luồng CDP: Nick 1 (Port 9222)</option>
                   <option value="acc_2">Luồng CDP: Nick 2 (Port 9223)</option>
                   <option value="acc_3">Luồng CDP: Nick 3 (Port 9224)</option>
+                  <option value="acc_4">Luồng CDP: Nick 4 (Port 9228)</option>
+                  <option value="acc_5">Luồng CDP: Nick 5 (Port 9229)</option>
                 </select>
               </div>
               <div class="flex flex-col gap-1">
@@ -540,7 +550,7 @@
                   <span class="material-symbols-outlined text-[13px] text-primary-container">movie_edit</span> Render Sẵn Sàng
                 </button>
                 <button class="flex items-center justify-center gap-1 h-7 rounded bg-primary-container text-on-primary-container font-label-sm text-[11px] font-bold shadow-[0_0_8px_rgba(0,255,135,0.3)] hover:brightness-105 transition-all" id="btn-adas-run-all" type="button">
-                  <span class="material-symbols-outlined text-[13px]">rocket_launch</span> Đa Luồng 3 Nick
+                  <span class="material-symbols-outlined text-[13px]">rocket_launch</span> Đa Luồng 5 Nick
                 </button>
               </div>
             </div>
@@ -1179,7 +1189,7 @@
                     <span class="material-symbols-outlined text-[26px] text-primary-container">lan</span>
                   </div>
                   <div class="flex flex-col min-w-0 w-full">
-                    <span class="font-label-sm text-label-sm text-primary font-bold truncate">Port 9222, 9223, 9224</span>
+                    <span class="font-label-sm text-label-sm text-primary font-bold truncate">Port 9222–9224, 9228, 9229</span>
                     <div class="flex items-center gap-1.5 mt-1 font-label-sm text-label-sm text-secondary" id="gauge-cdp-ports-status">
                       <span class="w-1.5 h-1.5 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.8)]"></span> P1 Ready
                       <span class="w-1.5 h-1.5 rounded-full bg-primary-container shadow-[0_0_6px_rgba(0,255,135,0.8)]"></span> P2 Ready

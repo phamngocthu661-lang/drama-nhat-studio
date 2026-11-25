@@ -2067,12 +2067,13 @@ document.addEventListener("DOMContentLoaded", () => {
       const accs = data.accounts || {};
       let openOrLoggedCount = 0;
 
-      ["acc_1", "acc_2", "acc_3"].forEach((aid, idx) => {
+      const CHATGPT_ACC_PORTS = [9222, 9223, 9224, 9228, 9229];
+      ["acc_1", "acc_2", "acc_3", "acc_4", "acc_5"].forEach((aid, idx) => {
         const btn = document.getElementById(`btn-chatgpt-acc-${idx + 1}`);
         if (!btn) return;
         const info = accs[aid] || {};
         if (info.browser_open) openOrLoggedCount += 1;
-        const port = 9222 + idx;
+        const port = (info.port || CHATGPT_ACC_PORTS[idx]);
         const activeJobs = (info.active_projects || []).length;
 
         if (!info.browser_open) {
@@ -2087,7 +2088,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       const cdpBadge = document.getElementById("adas-cdp-linked-badge");
       if (cdpBadge) {
-        cdpBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-ping"></span>CDP LINKED (${openOrLoggedCount}/3 ACC)`;
+        cdpBadge.innerHTML = `<span class="w-1.5 h-1.5 rounded-full bg-primary-container animate-ping"></span>CDP LINKED (${openOrLoggedCount}/5 ACC)`;
       }
 
       const visBtn = document.getElementById("btn-chatgpt-toggle-vis");
@@ -2322,6 +2323,16 @@ document.addEventListener("DOMContentLoaded", () => {
     listEl.querySelectorAll(".btn-idea-render-mp4").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const mid = btn.dataset.id;
+        const it = (lastSavedIdeasCache || []).find((x) => x.ma_id === mid) || {};
+        const isDone = !!it.has_video_mp4 || it.status === "COMPLETED_VIDEO";
+        if (isDone) {
+          // Dự án đã sản xuất xong (kể cả khi MP4 đã chuyển/xóa) -> chỉ render lại khi người dùng xác nhận rõ ràng
+          if (!confirm(`🎬 Mã [${mid}] đã sản xuất xong Video.
+
+Bạn có chắc muốn RENDER LẠI video mới cho mã này không?`)) return;
+          await triggerRenderOnly([mid], false, true);
+          return;
+        }
         await triggerRenderOnly([mid], false);
       });
     });
@@ -2517,7 +2528,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   window.__renderSavedIdeasGlobal = renderSavedIdeasList;
 
-  async function triggerRenderOnly(maIds = null, onlyUnrendered = false) {
+  async function triggerRenderOnly(maIds = null, onlyUnrendered = false, forceRerender = false) {
     try {
       const res = await fetch("/api/adas/render-only", {
         method: "POST",
@@ -2525,6 +2536,7 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({
           ma_ids: maIds,
           only_unrendered: onlyUnrendered,
+          force_rerender: !!forceRerender,
           video_settings: getCurrentVideoSettings()
         })
       });
@@ -2857,7 +2869,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     }
 
-    // 1. Nút mở từng tài khoản Chrome ChatGPT (Acc #1, Acc #2, Acc #3)
+    // 1. Nút mở từng tài khoản Chrome ChatGPT (Acc #1 → Acc #5)
     document.querySelectorAll(".chatgpt-acc-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const accId = btn.dataset.acc || "acc_1";
@@ -3726,7 +3738,7 @@ Capacity: PASS`;
         const cdpCountEl = document.getElementById("gauge-cdp-count");
         const cdpPortsBox = document.getElementById("gauge-cdp-ports-status");
         if (cdpCountEl && t.cdp_active_count !== undefined) {
-          cdpCountEl.innerText = `${t.cdp_active_count}/3 ACTIVE`;
+          cdpCountEl.innerText = `${t.cdp_active_count}/${Array.isArray(t.cdp_ports) ? t.cdp_ports.length : 5} ACTIVE`;
         }
         if (cdpPortsBox && Array.isArray(t.cdp_ports)) {
           cdpPortsBox.innerHTML = t.cdp_ports.map((p) => {
